@@ -1,0 +1,23 @@
+# Core (recommended stack per design memo)
+anthropic>=1.14
+playwright>=1.64
+aiosqlite
+# Human channel + mail helpers (evaluation only, not wired yet)
+aiogram
+google-api-python-client
+google-auth-oauthlib
+# Alternative executors / frameworks to evaluate
+browser-use==0.13.11
+langchain
+langchain-anthropic
+langgraph
+# Dev
+pytest
+pytest-asyncio
+python-dotenv
+
+# OpenAI SDK + Stagehand Python SDK (evaluation)
+openai>=3
+stagehand
+pyyaml
+httpx

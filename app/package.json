@@ -1,0 +1,20 @@
+{
+  "name": "goat-desktop",
+  "version": "0.1.0",
+  "description": "Desktop shell for goat, Surya's internship application agent",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.surya.goat",
+    "productName": "goat",
+    "files": ["main.js", "package.json"],
+    "win": { "target": ["portable"] }
+  },
+  "devDependencies": {
+    "electron": "44.7.2"
+  }
+}

@@ -1,0 +1,137 @@
+"""Pruned accessibility-style outline of the page with stable refs. The error summary comes first
+so a line like "No location found" is text the model cannot miss. Password values never appear."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from . import js
+from .errors import scan_errors, format_errors
+from .captcha import detect_challenge
+from .executor import Executor
+
+MAX_ITEMS = 220
+MAX_CHARS = 14000
+
+
+@dataclass
+class Snapshot:
+    url: str
+    title: str
+    headings: list[str]
+    items: list[dict]
+    groups: list[dict]
+    errors: dict
+    challenge: dict
+    text: str = ""
+    scroll_y: int = 0
+    page_height: int = 0
+    total_items: int = 0
+    refs: dict[str, dict] = field(default_factory=dict)
+
+    def find(self, ref: str) -> dict | None:
+        return self.refs.get(ref)
+
+    def required_empty(self) -> list[dict]:
+        return list(self.errors.get("empty_required", []))
+
+    def file_inputs(self) -> list[dict]:
+        return [i for i in self.items if i.get("type") == "file"]
+
+    def submit_buttons(self) -> list[dict]:
+        return [i for i in self.items if i.get("submitish")]
+
+
+def _fmt_item(i: dict) -> str:
+    tag = i.get("tag")
+    typ = i.get("type") or ""
+    role = i.get("role") or ""
+    label = (i.get("label") or "").replace('"', "'")
+    pos = f"@({i['bbox'][0]},{i['bbox'][1]})" if i.get("bbox") else ""
+    flags = []
+    if i.get("required"):
+        flags.append("required")
+    if i.get("invalid"):
+        flags.append("INVALID")
+    if i.get("disabled"):
+        flags.append("disabled")
+    if not i.get("inview", True):
+        flags.append("offscreen")
+    fl = (" " + " ".join(flags)) if flags else ""
+    if tag == "input" and typ == "checkbox":
+        return f'[{i["ref"]}] checkbox "{label}"{fl} [{"x" if i.get("checked") else " "}] {pos}'
+    if tag in ("input", "textarea", "richtext"):
+        kind = "textbox" if tag != "input" else (typ or "text")
+        if typ == "file":
+            kind = "file"
+            nm = f' name="{i["name"]}"' if i.get("name") else ""
+            extra = nm + ' value="%s"' % i.get("value", "") + (" (hidden input; use upload_resume)" if i.get("hidden") else "")
+            return f'[{i["ref"]}] file "{label}"{fl}{extra} {pos}'
+        val = i.get("shown") or i.get("value") or ""
+        combo = " combobox" if i.get("combo") else ""
+        ph = f' placeholder="{i["placeholder"][:40]}"' if i.get("placeholder") and not val else ""
+        return f'[{i["ref"]}] {kind}{combo} "{label}"{fl} value="{val}"{ph} {pos}'
+    if tag == "select":
+        opts = i.get("options") or []
+        more = f" (+{i.get('noptions', 0) - len(opts)} more)" if i.get("noptions", 0) > len(opts) else ""
+        return f'[{i["ref"]}] select "{label}"{fl} value="{i.get("value", "")}" options: {" | ".join(opts)}{more} {pos}'
+    if tag == "dropdown":
+        return f'[{i["ref"]}] dropdown "{label}"{fl} value="{i.get("value", "")}" (custom; use choose) {pos}'
+    if tag == "toggle":
+        g = (i.get("group") or "").replace('"', "'")[:120]
+        return f'[{i["ref"]}] toggle "{label}" [{"x" if i.get("pressed") else " "}] for question "{g}" (set with fill_batch + answer_key) {pos}'
+    if tag == "button":
+        s = " SUBMIT-CONTROL(only submit() may click)" if i.get("submitish") else ""
+        return f'[{i["ref"]}] button "{label}"{fl}{s} {pos}'
+    if tag == "a":
+        return f'[{i["ref"]}] link "{label}" {pos}'
+    if tag == "option":
+        return f'[{i["ref"]}] option "{label}"{" selected" if i.get("selected") else ""} {pos}'
+    return f'[{i["ref"]}] {role or tag} "{label}"{fl} {pos}'
+
+
+def _fmt_group(g: dict) -> str:
+    opts = " ".join(f'({o["ref"]}) "{(o["label"] or "").replace(chr(34), "")[:60]}" [{"x" if o.get("checked") else " "}]' for o in g.get("options", []))
+    fl = " required" if g.get("required") else ""
+    fl += " INVALID" if g.get("invalid") else ""
+    return f'{g.get("kind")} group "{(g.get("label") or "").replace(chr(34), "")[:200]}"{fl}: {opts}'
+
+
+def render(s: Snapshot, max_chars: int = MAX_CHARS) -> str:
+    lines = [f"URL: {s.url}", f"TITLE: {s.title}"]
+    err = format_errors(s.errors)
+    lines.append("ERRORS: " + (err if err else "none"))
+    if s.challenge.get("challenge"):
+        lines.append(f"HUMAN-VERIFICATION CHALLENGE PRESENT: {', '.join(s.challenge.get('kinds') or ['unknown'])} (never click it; finish the form then call park)")
+    if s.challenge.get("email_code"):
+        lines.append(f"EMAILED CODE PAGE: {s.challenge.get('code_inputs')} code boxes (call enter_email_code; the code never comes to you)")
+    if s.headings:
+        lines.append("HEADINGS: " + " | ".join(s.headings[:8]))
+    lines.append(f"VIEWPORT scrollY={s.scroll_y} pageHeight={s.page_height} ({s.total_items} interactive elements, {len(s.items)} listed)")
+    for g in s.groups:
+        lines.append(_fmt_group(g))
+    for i in s.items:
+        lines.append(_fmt_item(i))
+    out = "\n".join(lines)
+    if len(out) > max_chars:
+        out = out[: max_chars - 40] + "\n...[outline truncated; scroll or zoom for more]"
+    return out
+
+
+async def take(ex: Executor, max_items: int = MAX_ITEMS, with_text: bool = False) -> Snapshot:
+    raw = await ex.eval(js.JS_SNAPSHOT, max_items)
+    if not isinstance(raw, dict):
+        raw = {"url": ex.url, "title": "", "headings": [], "items": [], "groups": [], "total": 0}
+    errors = await scan_errors(ex)
+    challenge = await detect_challenge(ex)
+    snap = Snapshot(url=raw.get("url", ""), title=raw.get("title", ""), headings=raw.get("headings", []),
+                    items=raw.get("items", []), groups=raw.get("groups", []), errors=errors, challenge=challenge,
+                    scroll_y=raw.get("scrollY", 0), page_height=raw.get("pageHeight", 0), total_items=raw.get("total", 0),
+                    text=raw.get("text_head", ""))
+    for i in snap.items:
+        snap.refs[i["ref"]] = i
+    for g in snap.groups:
+        for o in g.get("options", []):
+            snap.refs[o["ref"]] = {**o, "tag": "input", "type": g.get("kind"), "group": g.get("label")}
+    if with_text:
+        snap.text = await ex.page_text(6000)
+    return snap

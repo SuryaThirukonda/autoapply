@@ -1,0 +1,45 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Acme - Software Engineering Intern (Summer 2027)</title>
+<style>.err{color:#b00;font-size:12px} .hidden{display:none}</style></head>
+<body>
+<h1>Software Engineering Intern</h1>
+<form id="app" onsubmit="return window.__onSubmit(event)">
+  <div class="field"><label for="first">First Name <span>*</span></label><input id="first" name="first_name" required></div>
+  <div class="field"><label for="last">Last Name *</label><input id="last" name="last_name" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" type="email" name="email" required></div>
+  <div class="field"><label for="phone">Phone</label><input id="phone" type="tel" name="phone"></div>
+  <div class="field"><label for="loc">Current location *</label><input id="loc" name="location" required autocomplete="off">
+    <div id="locerr" class="err hidden">No location found. Try entering a different location</div></div>
+  <div class="field"><label for="school">School</label>
+    <select id="school" name="school"><option value="">Select...</option><option value="tamu">Texas A&amp;M University - College Station</option><option value="ut">University of Texas</option></select></div>
+  <fieldset><legend>Are you legally authorized to work in the United States? *</legend>
+    <label><input type="radio" name="auth" value="yes" required> Yes</label>
+    <label><input type="radio" name="auth" value="no" required> No</label></fieldset>
+  <fieldset><legend>Will you now or in the future require sponsorship?</legend>
+    <label><input type="radio" name="spons" value="yes"> Yes</label>
+    <label><input type="radio" name="spons" value="no"> No</label></fieldset>
+  <div class="field"><label for="resume">Resume/CV *</label><input id="resume" type="file" name="resume" required></div>
+  <div class="field"><label for="why">Why Acme? (max 255)</label><textarea id="why" name="why" maxlength="255"></textarea></div>
+  <div class="field"><label><input type="checkbox" id="sms" name="sms"> I agree to receive text messages</label></div>
+  <div class="field"><label><input type="checkbox" id="cert" name="cert" required> I certify that the information provided is true and complete *</label></div>
+  <button type="button" id="next">Save and Continue</button>
+  <button type="submit" id="submit">Submit Application</button>
+</form>
+<div id="done" class="hidden"><h2>Application submitted!</h2><p>Thank you for applying to Acme.</p></div>
+<script>
+  document.getElementById('loc').addEventListener('blur', function(){
+    var v = this.value.trim();
+    document.getElementById('locerr').classList.toggle('hidden', !(v && v.indexOf(', TX, USA') === -1));
+  });
+  window.__submits = 0;
+  window.__onSubmit = function(e){
+    e.preventDefault();
+    window.__submits++;
+    var f = document.getElementById('app');
+    if (!f.checkValidity() || !document.getElementById('locerr').classList.contains('hidden')) { return false; }
+    f.classList.add('hidden'); document.getElementById('done').classList.remove('hidden');
+    history.pushState({}, '', '/confirmation');
+    return false;
+  };
+</script>
+</body></html>

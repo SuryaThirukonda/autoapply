@@ -1,0 +1,832 @@
+"""Function tools the model can call, and the dispatcher that runs them. Every consequential action
+lives here as deterministic code; the model only requests it. Secrets never pass through."""
+from __future__ import annotations
+
+import json
+import re
+import logging
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from .. import answers, db, profile, records, states
+from ..budget import Budget, Parked
+from ..browser import fill, snapshot as snapmod
+from ..browser.captcha import detect_challenge
+from ..browser.executor import ClickRefused, Executor, NavigationRefused
+from ..browser.submit import submit as do_submit
+from ..config import SETTINGS
+from ..gate import guardrail_check, run_gate
+from ..human.questions import BROKER
+
+log = logging.getLogger(__name__)
+
+FUNCTION_TOOLS: list[dict] = [
+    {"type": "function", "name": "snapshot", "strict": True,
+     "description": "Read the page as a pruned accessibility outline with refs [eN], headed by the error summary. Call it on every new page and once after filling a page.",
+     "parameters": {"type": "object", "properties": {"with_text": {"type": "boolean", "description": "also include the first 6000 characters of visible page text"}},
+                    "required": ["with_text"], "additionalProperties": False}},
+    {"type": "function", "name": "fill_batch", "strict": True,
+     "description": "Set many plain fields at once (text, textarea, email, tel, number, native select, radio, checkbox). Each field names a ref and EITHER an answer_key from the ANSWERS list (preferred) OR a literal value with a source. Returns per-field set/failed with the value read back.",
+     "parameters": {"type": "object", "properties": {"fields": {"type": "array", "items": {"type": "object", "properties": {
+         "ref": {"type": "string"},
+         "answer_key": {"type": ["string", "null"], "description": "key from ANSWERS or from lookup_answer"},
+         "value": {"type": ["string", "null"], "description": "literal value when no key applies (true/false for checkboxes and radios)"},
+         "source": {"type": ["string", "null"], "description": "required with a literal: 'generated' for free-response text you wrote under the writing rules, 'resume' for a value copied verbatim from the résumé text, 'clear' with an empty value to blank a field holding a stale or wrong value"},
+         "label": {"type": "string", "description": "the field label as shown"}},
+         "required": ["ref", "answer_key", "value", "source", "label"], "additionalProperties": False}}},
+                    "required": ["fields"], "additionalProperties": False}},
+    {"type": "function", "name": "choose", "strict": True,
+     "description": "Pick an option in a custom dropdown, combobox or autocomplete (react-select, Workday 'Select One', location pickers). Give the option texts to try in order (an answer_key may supply them). Verified by read-back.",
+     "parameters": {"type": "object", "properties": {"ref": {"type": "string"}, "answer_key": {"type": ["string", "null"]},
+                                                     "options": {"type": "array", "items": {"type": "string"}, "description": "option texts to try, most specific first"},
+                                                     "label": {"type": "string"}, "source": {"type": ["string", "null"]}},
+                    "required": ["ref", "answer_key", "options", "label", "source"], "additionalProperties": False}},
+    {"type": "function", "name": "click", "strict": True,
+     "description": "Click an element by ref (Next, Save and Continue, Add, open a section). Submit controls are refused: use submit.",
+     "parameters": {"type": "object", "properties": {"ref": {"type": "string"}, "label": {"type": "string"}},
+                    "required": ["ref", "label"], "additionalProperties": False}},
+    {"type": "function", "name": "upload_resume", "strict": True,
+     "description": "Attach Surya's résumé (or transcript) to a file input by ref. Only files from the résumé folder. Verifies the filename on the page.",
+     "parameters": {"type": "object", "properties": {"ref": {"type": "string"}, "document": {"type": "string", "enum": ["resume", "transcript"]}},
+                    "required": ["ref", "document"], "additionalProperties": False}},
+    {"type": "function", "name": "set_date", "strict": True,
+     "description": "Fill a date field (graduation date, employment dates). Handles Workday's three-section month/day/year widget, which ignores ordinary typing. Give the date as MM/DD/YYYY, MM/YYYY or 'May 2028'; an answer_key may supply it.",
+     "parameters": {"type": "object", "properties": {"ref": {"type": "string"}, "answer_key": {"type": ["string", "null"]},
+                                                     "value": {"type": ["string", "null"]}, "label": {"type": "string"}},
+                    "required": ["ref", "answer_key", "value", "label"], "additionalProperties": False}},
+    {"type": "function", "name": "zoom", "strict": True,
+     "description": "Return a full-resolution crop of the current viewport (x, y, width, height in screenshot pixels) to read small text.",
+     "parameters": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}},
+                    "required": ["x", "y", "width", "height"], "additionalProperties": False}},
+    {"type": "function", "name": "lookup_answer", "strict": True,
+     "description": "Map a form question onto a stored answer. Returns {key, answer, confidence} or a miss. Exact and alias matches first; a model mapping is used only above the confidence threshold.",
+     "parameters": {"type": "object", "properties": {"question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}},
+                    "required": ["question", "options"], "additionalProperties": False}},
+    {"type": "function", "name": "ask_user", "strict": True,
+     "description": "Send the page's unknown REQUIRED questions to Surya's phone right away (one message) and return immediately. Keep filling the rest of the page. Returns the keys to pass to await_answers.",
+     "parameters": {"type": "object", "properties": {"questions": {"type": "array", "items": {"type": "object", "properties": {
+         "question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}, "field_type": {"type": "string"}, "ref": {"type": "string"}},
+         "required": ["question", "options", "field_type", "ref"], "additionalProperties": False}}},
+                    "required": ["questions"], "additionalProperties": False}},
+    {"type": "function", "name": "await_answers", "strict": True,
+     "description": "Wait for Surya's answers to keys from ask_user. The 15-minute clock started at ask time. Call this only when everything else on the page is done. If time runs out the run is parked automatically.",
+     "parameters": {"type": "object", "properties": {"keys": {"type": "array", "items": {"type": "string"}}},
+                    "required": ["keys"], "additionalProperties": False}},
+    {"type": "function", "name": "guardcheck", "strict": True,
+     "description": "Check text you wrote against the accuracy guardrails before typing it. BLOCK means rewrite or park.",
+     "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"], "additionalProperties": False}},
+    {"type": "function", "name": "credentials", "strict": True,
+     "description": "Fill the email and password boxes of a sign-in or account-creation form on this portal through the password helper. Modes: 'login_universal' = Surya's existing password for this ATS family (try FIRST on a Sign In page; most Workday tenants already have his account); 'login' = the password stored for this exact host; 'create' = generate and store a new password for a brand-new account. Returns 'filled', 'filled_universal', 'filled_fallback' or 'exists_unknown'. You never see the password.",
+     "parameters": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["create", "login", "login_universal"]}, "email_ref": {"type": "string"},
+                                                     "password_ref": {"type": "string"}, "confirm_password_ref": {"type": ["string", "null"]}},
+                    "required": ["mode", "email_ref", "password_ref", "confirm_password_ref"], "additionalProperties": False}},
+    {"type": "function", "name": "enter_email_code", "strict": True,
+     "description": "Fetch the verification code this portal just emailed and type it into the code boxes (refs in order). Returns 'entered' or 'not_received'. The code never comes to you.",
+     "parameters": {"type": "object", "properties": {"code_refs": {"type": "array", "items": {"type": "string"}}},
+                    "required": ["code_refs"], "additionalProperties": False}},
+    {"type": "function", "name": "open_verification_link", "strict": True,
+     "description": "After account creation, wait for the portal's verification email and open its link in this tab if, and only if, the link's host matches this portal. Returns verified, host_mismatch or not_received.",
+     "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
+    {"type": "function", "name": "submit", "strict": True,
+     "description": "The only path to submission. Runs the code gate, refuses while the page shows errors or empty required fields, clicks once, and reports submitted / blocked / failed with reasons. Call it when every page is complete.",
+     "parameters": {"type": "object", "properties": {"button_label": {"type": ["string", "null"], "description": "exact submit button text if several submit-like buttons exist"}},
+                    "required": ["button_label"], "additionalProperties": False}},
+    {"type": "function", "name": "park", "strict": True,
+     "description": "End the run with a named reason. Use 'ready_for_you: <what is left>' when only a human-verification challenge and Submit remain; otherwise a hold reason such as 'no_standing_answer: <label>', 'bot_check_question: <text>', 'automation_prohibited: <text>', 'eligibility: <why>'.",
+     "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"], "additionalProperties": False}},
+]
+
+
+@dataclass
+class RunContext:
+    job: dict                      # row from jobs joined with listing fields
+    ex: Executor
+    budget: Budget
+    page_no: int = 1
+    free_text: list[dict] = field(default_factory=list)
+    asked_keys: list[str] = field(default_factory=list)
+    last_snapshot: snapmod.Snapshot | None = None
+    consecutive_failures: int = 0
+    resume_file: str | None = None
+    submitted: dict | None = None
+    gate_result: dict | None = None
+    classifier: Any = None         # agent.classifier.Classifier
+    mail: Any = None               # goat.mail.gmail module-level functions
+    creds: Any = None              # goat.creds.bitwarden
+    code_requested_at: int = 0
+    park_attempts: int = 0
+    posting_text: str = ""         # the posting page's text at open (pay figures, requirements)
+    verify_link_tried: bool = False
+    consent_page_key: str = ""
+
+    @property
+    def job_id(self) -> int:
+        return int(self.job["id"])
+
+    @property
+    def portal(self) -> str:
+        return self.job.get("ats") or "other"
+
+    @property
+    def portal_host(self) -> str:
+        from urllib.parse import urlparse
+        return (urlparse(self.ex.url or self.job.get("url", "")).hostname or "").lower()
+
+
+def _resume_path(ctx: RunContext, document: str) -> Path | None:
+    import yaml
+    deleg = yaml.safe_load((SETTINGS.config_dir / "delegation.yaml").read_text(encoding="utf-8")) or {}
+    res = deleg.get("resumes") or {}
+    if document == "transcript":
+        tf = answers.get("education.transcript_file")
+        if tf and tf.answer:
+            p = SETTINGS.resume_dir / Path(tf.answer).name
+            return p if p.exists() else SETTINGS.resume_dir / "transcripts" / Path(tf.answer).name
+        return None
+    from ..adapters import resume_path_for
+    return resume_path_for(ctx.job)
+
+
+_RESUME_TEXT: str | None = None
+
+
+def _resume_text() -> str:
+    global _RESUME_TEXT
+    if _RESUME_TEXT is None:
+        parts = []
+        for p in SETTINGS.resume_dir.glob("*.txt"):
+            try:
+                parts.append(p.read_text(encoding="utf-8", errors="ignore"))
+            except OSError:
+                pass
+        _RESUME_TEXT = answers.norm(" ".join(parts))
+    return _RESUME_TEXT
+
+
+def _in_resume(value: str) -> bool:
+    """Every comma/semicolon-separated token of the value must appear in the résumé text."""
+    toks = [answers.norm(t) for t in re.split(r"[,;/\n]+", str(value)) if answers.norm(t)]
+    text = _resume_text()
+    return bool(toks) and all(t in text for t in toks)
+
+
+NEGATED = re.compile(r"^(not |no |none|i do not|i am not|unwilling|unable|never|decline|prefer not)", re.I)
+AFFIRMATIVE = {"yes", "true", "checked", "on", "y"}
+
+
+# Yes/no questions about where Surya works or worked, industries, affiliations and relationships.
+# Surya, 2026-10-15: "answer is almost always no (that's default if it stalls)".
+AFFILIATION = re.compile(
+    r"(employed (by|with|at)\b|\bwork(ed|ing)? (for|at)\b|\baffiliat|relationship with|\brelated to\b|\brelatives?\b|family member|"
+    r"household member|immediate family|\bspouse\b|board member|\bofficers?\b|\bdirectors?\b|government official|public official|"
+    r"conflict of interest|financial interest|\bown (stock|shares)|\bvendors?\b|\bsuppliers?\b|\bcustomers?\b|\bclients?\b|"
+    r"\bcompetitors?\b|subsidiar|parent company|former employee|current employee|independent contractor|consultant (for|to)|"
+    r"\bindustry\b)", re.I)
+_YES = re.compile(r"^(yes|y|true)\b", re.I)
+_NO = re.compile(r"^(no|n|false|none)\b", re.I)
+FREE_RESPONSE = re.compile(
+    r"^(why\b|describe|tell (us|me)|explain|share\b|what (interests|excites|motivates|makes|draws|attracts)|how (would|did|have|do) you|"
+    r"please (describe|explain|tell|share|provide a (brief|short))|give (us )?an example|walk (us|me) through|what is (a|one|the) "
+    r"(project|accomplishment|achievement|challenge)|what are you (most )?(proud|passionate|looking)|in (\d+|one|two|three) "
+    r"(words|sentences)|cover letter|anything else)", re.I)
+
+
+SOCIAL_SIGNIN = re.compile(r"(sign in|sign up|log ?in|continue|apply|register)\s+(with|using|via)\s+(google|linkedin|apple|microsoft|facebook|indeed)", re.I)
+
+
+def is_affiliation_question(question: str, options: list[str] | None) -> bool:
+    """A yes/no question in the employer/industry/affiliation family (options empty, or Yes/No-like)."""
+    if not AFFILIATION.search(question or ""):
+        return False
+    if re.search(r"(if (yes|so)|please (explain|describe|list|provide)|who\b|which\b|name of|names of)", question, re.I) and not options:
+        return False
+    opts = [o.strip() for o in (options or []) if o and o.strip() and not re.match(r"^(select|choose|please select)", o.strip(), re.I)]
+    if not opts:
+        return True
+    return len(opts) <= 4 and any(_YES.match(o) for o in opts) and any(_NO.match(o) for o in opts)
+
+
+def consent_question_key(question: str) -> str | None:
+    """Consent / acknowledgement / certification questions Surya answers yes to on every form (his rule,
+    2026-10-15), mapped to the standing key that authorizes it. Marketing opt-ins map to the No key."""
+    from ..adapters import CONSENT, MARKETING, PROCESSING, SMS, consent_key
+    q = question or ""
+    asks_consent = re.search(r"\b(do|will|would) you (agree|accept|acknowledge|consent|certify|authori[sz]e|understand|confirm)\b", q, re.I)
+    if SMS.search(q) and (asks_consent or CONSENT.search(q) or re.search(r"\b(receive|opt in|opt-in)\b", q, re.I)):
+        return "consent.sms"
+    if not CONSENT.search(q) and not MARKETING.search(q) and not asks_consent:
+        return None
+    if MARKETING.search(q) and not SMS.search(q) and not PROCESSING.search(q):
+        return "consent.marketing_email"
+    return consent_key(q)
+
+
+def is_free_response(question: str, options: list[str] | None, field_type: str = "") -> bool:
+    if options:
+        return False
+    if (field_type or "").lower() in ("textarea", "richtext"):
+        return True
+    return bool(FREE_RESPONSE.search((question or "").strip()))
+
+
+def _answer_rows_for_prompt(company: str, ats: str) -> list[tuple[str, str, str]]:
+    """Keys shown in the cached prefix: standing identity/education/work-auth/availability/background,
+    self-ID and bank entries. Policy flags and stories are omitted (looked up on demand)."""
+    con = db.connect()
+    rows = []
+    for r in con.execute("SELECT key, answer, answer_type, note FROM answers WHERE superseded_by IS NULL AND approved=1 AND answer IS NOT NULL "
+                         "AND scope='global' AND (key LIKE 'identity.%' OR key LIKE 'education.%' OR key LIKE 'work_authorization.%' "
+                         "OR key LIKE 'availability.%' OR key LIKE 'background.%' OR key LIKE 'self_id.%' OR key LIKE 'bank.%' "
+                         "OR key LIKE 'defaults.%' OR key LIKE 'experience_pickers.%' OR key LIKE 'how_did_you_hear.%' "
+                         "OR key LIKE 'policy.ai_use_disclosure.%' OR key LIKE 'policy.may_%' "
+                         "OR key LIKE 'consent.%' OR key LIKE 'compliance.%' OR key LIKE 'relationships.%' OR key LIKE 'experience.%' "
+                         "OR key LIKE 'preferences.%' OR key LIKE 'compensation.%') ORDER BY key"):
+        if r["key"].endswith(".note") or r["key"].endswith("_note") or r["key"].endswith("_rule") or r["key"].endswith("_rules"):
+            continue
+        a = str(r["answer"])
+        atype = r["answer_type"] or ""
+        if atype == "blank":
+            a = "(leave empty)"
+        elif atype.startswith("conditional:"):
+            a = f"{a}  [{atype}: pass the key; the harness picks the value]"
+        if len(a) > 160:
+            a = a[:157] + "..."
+        rows.append((r["key"], a, r["note"] or ""))
+    # company-scoped overrides
+    for r in con.execute("SELECT key, answer, note FROM answers WHERE superseded_by IS NULL AND approved=1 AND answer IS NOT NULL "
+                         "AND ((scope='company' AND scope_value=?) OR (scope='ats' AND scope_value=?))", (answers.norm(company), ats)):
+        rows.append((r["key"], str(r["answer"])[:160], f"[{company}] " + (r["note"] or "")))
+    return rows
+
+
+class ToolDispatcher:
+    def __init__(self, ctx: RunContext):
+        self.ctx = ctx
+
+    async def dispatch(self, name: str, arguments: str) -> tuple[str, bytes | None]:
+        """Returns (json text for the model, optional image bytes to attach)."""
+        try:
+            args = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            return json.dumps({"error": "arguments were not valid JSON"}), None
+        fn = getattr(self, f"t_{name}", None)
+        if fn is None:
+            return json.dumps({"error": f"unknown tool {name}"}), None
+        t0 = time.monotonic()
+        try:
+            out, img = await fn(**args)
+            ok = not (isinstance(out, dict) and out.get("error"))
+            self.ctx.consecutive_failures = 0 if ok else self.ctx.consecutive_failures + 1
+            db.event(self.ctx.job_id, f"tool:{name}", {"args": args, "out": out}, latency_ms=int((time.monotonic() - t0) * 1000))
+            return json.dumps(out, default=str), img
+        except (Parked,):
+            raise
+        except (ClickRefused, NavigationRefused) as e:
+            self.ctx.consecutive_failures += 1
+            db.event(self.ctx.job_id, f"tool:{name}:refused", {"args": args, "error": str(e)})
+            return json.dumps({"error": str(e)}), None
+        except Exception as e:  # tool bugs must not kill the run silently
+            self.ctx.consecutive_failures += 1
+            log.exception("tool %s failed", name)
+            db.event(self.ctx.job_id, f"tool:{name}:error", {"args": args, "error": str(e)[:400]})
+            return json.dumps({"error": f"{type(e).__name__}: {str(e)[:300]}"}), None
+
+    # ------------------------------------------------------------------ tools
+    async def t_snapshot(self, with_text: bool = False):
+        import asyncio
+        snap = await snapmod.take(self.ctx.ex, with_text=with_text)
+        # Workday renders its forms late: an apply page with almost nothing on it is usually still loading.
+        for _ in range(3):
+            if "/apply" not in (snap.url or "") or len([i for i in snap.items if i.get("tag") != "a"]) > 2:
+                break
+            await asyncio.sleep(2.5)
+            snap = await snapmod.take(self.ctx.ex, with_text=with_text)
+        # The consent pass runs on every new page, not only the first one the job opened on.
+        page_key = (snap.url or "") + "|" + "|".join(snap.headings[:4])
+        if page_key != self.ctx.consent_page_key:
+            self.ctx.consent_page_key = page_key
+            try:
+                from ..adapters import PrefillResult, for_portal
+                res = PrefillResult(details=[])
+                await for_portal(self.ctx.portal)._consents(self.ctx.ex, snap, self.ctx.job, self.ctx.page_no, res)
+                if res.set:
+                    db.event(self.ctx.job_id, "adapter:consents", {"set": res.set, "details": res.details})
+                    snap = await snapmod.take(self.ctx.ex, with_text=with_text)
+            except Exception as e:
+                db.event(self.ctx.job_id, "adapter:consents:error", {"error": str(e)[:200]})
+        self.ctx.last_snapshot = snap
+        text = snapmod.render(snap)
+        if with_text and snap.text:
+            text += "\n\nPAGE TEXT:\n" + snap.text[:6000]
+        return {"outline": text}, None
+
+    def _resolve_value(self, answer_key: str | None, value: str | None, source: str | None, label: str) -> tuple[str | None, str, str | None]:
+        """-> (value, source_tag, error)"""
+        if answer_key:
+            a = answers.get(answer_key, self.ctx.job.get("company", ""), self.ctx.portal)
+            if a is None:
+                return None, "", f"unknown answer key {answer_key}"
+            if not a.has_value:
+                return None, "", f"{answer_key} has no standing answer: ask_user or park"
+            val, why = answers.concrete_value(a, company=self.ctx.job.get("company", ""), posting_text=self.ctx.posting_text,
+                                              listing_id=self.ctx.job.get("listing_id"))
+            if val is None:
+                return None, "", f"{answer_key}: {why}"
+            tag = f"standing:{answer_key}" if not answer_key.startswith("bank.") else f"bank:{answer_key[5:]}"
+            if why and not a.is_blank:
+                tag += f" ({why[:80]})"
+            return val, tag, None
+        if value is None:
+            return None, "", "neither answer_key nor value given"
+        src = (source or "").lower()
+        if src == "clear":
+            if str(value).strip() not in ("", "false"):
+                return None, "", "source 'clear' only takes an empty value (or false for a checkbox)"
+            return str(value), "cleared", None
+        if src not in ("generated", "resume"):
+            return None, "", "a literal value needs source 'generated' (free text you wrote) or 'resume' (a value copied from the résumé); everything else needs an answer_key"
+        if src == "resume":
+            if not _in_resume(value):
+                return None, "", f"'{str(value)[:60]}' does not appear in the résumé text; use an answer_key or ask_user"
+        if src == "generated":
+            # Generated text is for free-response boxes only. A choice (radio, checkbox, select,
+            # dropdown, yes/no) must come from a stored answer key: call lookup_answer or ask_user.
+            if str(value).strip().lower() in ("true", "false", "yes", "no", "checked", "unchecked", "on", "off", "n/a"):
+                return None, "", "a choice or yes/no value cannot be 'generated'; use an answer_key (lookup_answer) or ask_user"
+            if len(str(value).split()) < 6:
+                return None, "", "'generated' is only for free-response text (6+ words); short facts need an answer_key, 'resume' or 'adapter'"
+            blocks, _ = guardrail_check(value)
+            if blocks:
+                return None, "", f"guardrail block: {blocks}; rewrite"
+            self.ctx.free_text.append({"question": label, "answer": value})
+        return value, src, None
+
+    async def t_fill_batch(self, fields: list[dict]):
+        plan, results = [], []
+        snap = self.ctx.last_snapshot
+        for f in fields:
+            item = snap.find(f.get("ref", "")) if snap else None
+            is_choice = bool(item and (item.get("type") in ("radio", "checkbox") or item.get("tag") in ("select", "dropdown", "toggle")))
+            if item and item.get("tag") == "toggle" and f.get("answer_key"):
+                # A toggle option is pressed only when its own label agrees with the stored answer.
+                a = answers.get(f["answer_key"], self.ctx.job.get("company", ""), self.ctx.portal)
+                if a and a.has_value:
+                    ans = answers.norm(str(a.answer)); lab = answers.norm(item.get("label") or "")
+                    agree = (lab == ans) or (ans in ("yes", "true") and lab in ("yes", "true")) or (ans == "no" and lab in ("no", "false")) \
+                        or (ans in ("yes", "true") and not NEGATED.match(item.get("label") or "") and lab not in ("no", "false")) \
+                        or (ans == "no" and bool(NEGATED.match(item.get("label") or "")))
+                    if not agree:
+                        results.append({"ref": f["ref"], "status": "failed", "error": f"stored answer for {f['answer_key']} is {a.answer!r} but this toggle reads {item.get('label')!r}; press the matching option instead"})
+                        continue
+                    f = {**f, "value": "true", "_force_true": True}
+            if is_choice and not f.get("answer_key") and (f.get("source") or "").lower() == "generated":
+                results.append({"ref": f["ref"], "status": "failed", "error": "choices (radio/checkbox/select) need an answer_key: call lookup_answer, or ask_user if none fits"})
+                continue
+            val, src, err = self._resolve_value(f.get("answer_key"), f.get("value"), f.get("source"), f.get("label", ""))
+            if err:
+                results.append({"ref": f["ref"], "status": "failed", "error": err})
+                continue
+            if f.get("_force_true"):
+                val = "true"
+            # An ordered preference list ("LinkedIn; Job Board; Agency") is for pickers. A text box
+            # takes the first choice only, never the whole chain.
+            if f.get("answer_key") and ";" in str(val) and item and item.get("tag") in ("input", "textarea", "richtext") \
+                    and item.get("type") not in ("radio", "checkbox"):
+                a = answers.get(f["answer_key"], self.ctx.job.get("company", ""), self.ctx.portal)
+                if a is not None and a.answer_type == "choice_chain":
+                    val = str(val).split(";")[0].strip()
+            # Checkbox/radio with a text answer: check it when the option's own label matches the answer
+            # ("Available May 2027" with answer "May 2027"); refuse when it plainly does not.
+            label_matched = False
+            if is_choice and item and item.get("type") in ("radio", "checkbox") and str(val).strip().lower() not in AFFIRMATIVE | {"false", "no", "off", "unchecked"}:
+                lab = answers.norm(item.get("label") or ""); nv = answers.norm(str(val))
+                parts = [answers.norm(p) for p in str(val).split(";") if answers.norm(p)]
+                if nv and (nv == lab or (len(nv) >= 4 and nv in lab) or any(p == lab or (len(p) >= 4 and p in lab) for p in parts)):
+                    val = "true"
+                    # The stored text names this option ("Not Specified"), negated or not: only when the label
+                    # starts with it, so "willing" never ticks "Not willing to relocate".
+                    label_matched = any(lab.startswith(x) for x in [nv, *parts] if x)
+                elif item.get("type") == "checkbox" and parts and parts[0] in AFFIRMATIVE and not NEGATED.match((item.get("label") or "").strip()):
+                    # "Yes; I agree; Accept" on a single consent checkbox: its first choice is a plain yes.
+                    val = "true"
+                else:
+                    results.append({"ref": f["ref"], "status": "failed",
+                                    "error": f"stored answer {str(val)[:40]!r} does not match this option's label {item.get('label', '')[:40]!r}; pick the option whose label matches, or leave it"})
+                    continue
+            # A "Yes" answer must not land on a negated option ("Not willing to relocate").
+            if is_choice and item and item.get("type") in ("radio", "checkbox") and not label_matched:
+                opt_label = (item.get("label") or "")
+                if str(val).strip().lower() in AFFIRMATIVE and NEGATED.match(opt_label.strip()):
+                    results.append({"ref": f["ref"], "status": "failed",
+                                    "error": f"the stored answer is Yes but this option reads '{opt_label[:50]}' (negated); pick the option whose label matches the answer, or leave it unchecked"})
+                    continue
+            plan.append({"ref": f["ref"], "value": val, "_src": src, "_label": f.get("label", "")})
+        if plan:
+            res = await fill.fill_batch(self.ctx.ex, [{"ref": p["ref"], "value": p["value"]} for p in plan])
+            by = {r.ref: r for r in res}
+            for p in plan:
+                r = by.get(p["ref"])
+                d = r.as_dict() if r else {"ref": p["ref"], "status": "failed", "error": "no result"}
+                results.append(d)
+                if r and r.ok:
+                    records.record_decision(self.ctx.job_id, self.ctx.page_no, p["_label"], r.readback, p["_src"], p["ref"])
+        self.ctx.budget.step()
+        set_n = sum(1 for r in results if r.get("status") == "set")
+        return {"summary": f"{set_n} set, {len(results) - set_n} failed", "results": results}, None
+
+    async def t_choose(self, ref: str, answer_key: str | None, options: list[str], label: str, source: str | None):
+        wants = list(options or [])
+        src = "adapter"
+        if answer_key:
+            val, src, err = self._resolve_value(answer_key, None, None, label)
+            if err:
+                return {"error": err}, None
+            wants = [w.strip() for w in str(val).split(";") if w.strip()] + wants
+            # Portal spellings of the same answer ("Texas A & M University" on Workday) live in <key>_variants.
+            variants = answers.get(answer_key + "_variants", self.ctx.job.get("company", ""), self.ctx.portal)
+            if variants and variants.has_value:
+                wants += [w.strip() for w in str(variants.answer).split(";") if w.strip() and w.strip() not in wants]
+        elif not wants:
+            return {"error": "give options or an answer_key"}, None
+        r = await fill.choose(self.ctx.ex, ref, wants)
+        self.ctx.budget.step()
+        if r.ok:
+            records.record_decision(self.ctx.job_id, self.ctx.page_no, label, r.readback, src if answer_key is None else src, ref)
+        return r.as_dict(), None
+
+    async def t_click(self, ref: str, label: str):
+        snap = self.ctx.last_snapshot
+        item = snap.find(ref) if snap else None
+        if item and item.get("submitish"):
+            return {"error": "that is a submit control; call submit instead"}, None
+        if item and SOCIAL_SIGNIN.search(item.get("label") or label or ""):
+            return {"error": "never sign in through Google, LinkedIn, Apple, Microsoft or Facebook. Click 'Sign in with email' "
+                             "(or the email / password form), then call `credentials`."}, None
+        if item and (item.get("type") in ("radio", "checkbox") or item.get("tag") in ("select", "dropdown", "toggle")):
+            return {"error": "that is a choice control; set it with fill_batch (radio/checkbox/toggle, value from an answer_key) or choose (dropdown) so the decision has a source"}, None
+        info = await self.ctx.ex.click_ref(ref)
+        await self.ctx.ex.settle(quiet_ms=400)
+        self.ctx.budget.step()
+        new_url = self.ctx.ex.url
+        if info.get("tag") in ("button", "a") and label.lower().strip() in ("next", "continue", "save and continue", "save & continue", "save", "proceed"):
+            self.ctx.page_no += 1
+        return {"clicked": info.get("label") or label, "url": new_url}, None
+
+    async def t_upload_resume(self, ref: str, document: str):
+        p = _resume_path(self.ctx, document)
+        if not p or not p.exists():
+            return {"error": f"{document} file not available in the résumé folder"}, None
+        if self.ctx.resume_file == p.name and document == "resume":
+            return {"ref": ref, "status": "set", "readback": p.name,
+                    "note": "already attached in this run; do not upload it again"}, None
+        r = await fill.upload_file(self.ctx.ex, ref, p)
+        self.ctx.budget.step()
+        if r.ok:
+            if document == "resume":
+                self.ctx.resume_file = p.name
+            records.record_decision(self.ctx.job_id, self.ctx.page_no, f"{document} upload", p.name, "resume", ref)
+        return r.as_dict(), None
+
+    async def t_set_date(self, ref: str, answer_key: str | None, value: str | None, label: str):
+        src = "adapter"
+        if answer_key:
+            val, src, err = self._resolve_value(answer_key, None, None, label)
+            if err:
+                return {"error": err}, None
+        elif value:
+            val = value
+            src = "resume"
+        else:
+            return {"error": "give a value or an answer_key"}, None
+        r = await fill.set_date(self.ctx.ex, ref, str(val))
+        self.ctx.budget.step()
+        if r.ok:
+            records.record_decision(self.ctx.job_id, self.ctx.page_no, label, r.readback or str(val),
+                                    f"standing:{answer_key}" if answer_key else src, ref)
+        return r.as_dict(), None
+
+    async def t_zoom(self, x: int, y: int, width: int, height: int):
+        png = await self.ctx.ex.zoom_png(x, y, width, height)
+        return {"zoom": f"crop ({x},{y}) {width}x{height} attached"}, png
+
+    def _present(self, a, via: str | None = None, confidence: float | None = None) -> dict:
+        val, why = answers.concrete_value(a, company=self.ctx.job.get("company", ""), posting_text=self.ctx.posting_text,
+                                          listing_id=self.ctx.job.get("listing_id"))
+        out = {"key": a.key, "answer": val, "confidence": a.confidence if confidence is None else confidence,
+               "via": via or a.via, "note": a.note}
+        if a.is_blank:
+            out["note"] = "leave this field empty; if the form requires it, park with reason 'required field Surya leaves blank: <label>'"
+        elif why:
+            out["why"] = why
+        return out
+
+    async def _settle_affiliation(self, question: str, options: list[str]) -> dict:
+        """Employer / industry / affiliation / relationship yes-no questions: answered from the profile,
+        default No (Surya, 2026-10-15), saved so the decision is remembered and reviewable."""
+        facts = profile.affiliations_brief()
+        if self.ctx.classifier is not None and facts:
+            ans, why = await self.ctx.classifier.yes_no_from_profile(self.ctx.job_id, question, options, facts)
+        else:
+            ans, why = "No", "default No"
+        key = answers.key_from_question(question)
+        answers.save_answer(key, ans, answer_type="choice", source="default_no" if ans == "No" else "profile",
+                            note=f"auto from profile: {why[:150]}", aliases=[question])
+        db.event(self.ctx.job_id, "answer:auto_affiliation", {"key": key, "answer": ans, "why": why[:200]})
+        return {"key": key, "answer": ans, "confidence": 1.0, "via": "profile_default_no", "note": f"answered from the profile: {why[:120]}"}
+
+    async def t_lookup_answer(self, question: str, options: list[str]):
+        a = answers.lookup(question, self.ctx.job.get("company", ""), self.ctx.portal)
+        if a is not None and a.has_value:
+            return self._present(a), None
+        if a is not None and a.scope == "company":
+            return {"miss": True, "key": a.key, "hint": f"Surya decides '{a.key}' himself for {self.ctx.job.get('company')}: call ask_user with this question"}, None
+        ck = consent_question_key(question) if (options or not is_free_response(question, options)) else None
+        if ck:
+            a3 = answers.get(ck, self.ctx.job.get("company", ""), self.ctx.portal)
+            if a3 and a3.has_value:
+                out = self._present(a3, via="consent_rule")
+                out["note"] = "Surya consents on every form (his standing rule); pick the option that gives consent" if ck != "consent.marketing_email" \
+                    else "marketing / talent-community opt-in: Surya always declines"
+                return out, None
+        if is_affiliation_question(question, options):
+            return await self._settle_affiliation(question, options), None
+        if self.ctx.classifier is not None:
+            con = db.connect()
+            keys = [(r["key"], str(r["answer"])) for r in con.execute(
+                "SELECT key, answer FROM answers WHERE superseded_by IS NULL AND approved=1 AND answer IS NOT NULL AND scope='global' "
+                "AND key NOT LIKE 'story.%' AND key NOT LIKE 'always_hold.%' ORDER BY key")]
+            key, conf = await self.ctx.classifier.map_question(self.ctx.job_id, question, options, keys)
+            if key and conf >= SETTINGS.models.classifier_min_confidence:
+                a2 = answers.get(key, self.ctx.job.get("company", ""), self.ctx.portal)
+                if a2 and a2.has_value:
+                    answers.record_classifier_alias(question, key, conf)
+                    return self._present(a2, via="classifier", confidence=conf), None
+            return {"miss": True, "hint": "no stored answer; if the field is required call ask_user, if optional leave it blank",
+                    "best_guess_key": key, "confidence": conf}, None
+        return {"miss": True, "hint": "no stored answer; if the field is required call ask_user, if optional leave it blank"}, None
+
+    async def t_ask_user(self, questions: list[dict]):
+        qs, auto, draft = [], [], []
+        for q in questions:
+            text, opts, ftype = q["question"], q.get("options") or [], q.get("field_type") or ""
+            # Never ask Surya to write prose: free-response questions are drafted from the profile.
+            if is_free_response(text, opts, ftype):
+                draft.append(text)
+                continue
+            # Consents and acknowledgements: Surya consents on every form; marketing opt-ins are declined.
+            ck = consent_question_key(text)
+            if ck and (opts or not is_free_response(text, opts, ftype)):
+                a3 = answers.get(ck, self.ctx.job.get("company", ""), self.ctx.portal)
+                if a3 and a3.has_value:
+                    auto.append(self._present(a3, via="consent_rule"))
+                    continue
+            # Employer / industry / affiliation yes-no questions settle from the profile, default No.
+            if is_affiliation_question(text, opts):
+                auto.append(await self._settle_affiliation(text, opts))
+                continue
+            key = answers.key_from_question(text)
+            qs.append({"key": key, "question": text, "options": opts, "field_type": ftype, "ref": q.get("ref")})
+        if not qs:
+            return {"asked": [], "auto_answered": auto, "draft_yourself": draft,
+                    "note": "nothing was sent to Surya. Fill auto_answered with their keys. Draft each draft_yourself question from the "
+                            "PROFILE under the drafting rules, guardcheck it, and fill it with source 'generated'."}, None
+        png = None
+        try:
+            png = await self.ctx.ex.screenshot_png()
+        except Exception:
+            pass
+        keys = await BROKER.ask(self.ctx.job_id, qs, png)
+        self.ctx.asked_keys += [k for k in keys if k not in self.ctx.asked_keys]
+        with db.tx() as con:
+            con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=? AND status=?",
+                        (states.AWAITING_ANSWER, db.now(), self.ctx.job_id, states.FILLING))
+        out = {"asked": keys, "note": "keep filling; call await_answers with these keys when the page is otherwise done"}
+        if auto:
+            out["auto_answered"] = auto
+        if draft:
+            out["draft_yourself"] = draft
+            out["note"] += ". Draft each draft_yourself question from the PROFILE (source 'generated'); Surya is never asked to write prose."
+        return out, None
+
+    async def t_await_answers(self, keys: list[str]):
+        got = await BROKER.await_answers(self.ctx.job_id, keys)   # raises Parked on timeout
+        with db.tx() as con:
+            con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=? AND status=?",
+                        (states.FILLING, db.now(), self.ctx.job_id, states.AWAITING_ANSWER))
+        return {"answers": got, "note": "use these keys in fill_batch / choose"}, None
+
+    async def t_guardcheck(self, text: str):
+        blocks, warns = guardrail_check(text)
+        return {"result": "BLOCK" if blocks else ("WARN" if warns else "OK"), "blocks": blocks, "warns": warns, "chars": len(text)}, None
+
+    async def t_credentials(self, mode: str, email_ref: str, password_ref: str, confirm_password_ref: str | None):
+        if self.ctx.creds is None:
+            return {"error": "credentials helper not configured (Bitwarden CLI)"}, None
+        ex = self.ctx.ex
+        host = self.ctx.portal_host
+        email = SETTINGS.creds.application_email
+
+        async def _type_into(ref: str, text: str, secret: bool) -> None:
+            await ex.focus_ref(ref)
+            await ex.page.keyboard.press("Control+a")
+            await ex.page.keyboard.press("Backspace")
+            if secret:
+                await ex.type_secret(text)
+            else:
+                await ex.type_text(text)
+
+        loop = __import__("asyncio").get_event_loop()
+        # The helper is synchronous and calls the callbacks; bridge them onto the loop.
+        import asyncio
+        def type_email(v: str) -> None:
+            asyncio.run_coroutine_threadsafe(_type_into(email_ref, v, False), loop).result(30)
+        def type_pw(v: str) -> None:
+            asyncio.run_coroutine_threadsafe(_type_into(password_ref, v, True), loop).result(30)
+        status = await asyncio.to_thread(self.ctx.creds.fill_credentials, host, email, type_email, type_pw, mode)
+        if confirm_password_ref and status.startswith("filled"):
+            def type_pw2(v: str) -> None:
+                asyncio.run_coroutine_threadsafe(_type_into(confirm_password_ref, v, True), loop).result(30)
+            await asyncio.to_thread(self.ctx.creds.fill_confirm_password, host, type_pw2)
+        self.ctx.budget.step()
+        records.record_decision(self.ctx.job_id, self.ctx.page_no, f"account {mode} ({host})", "(set)", "policy:may_create_accounts", password_ref)
+        if status == "exists_unknown":
+            raise Parked(f"credentials_unknown: account exists on {host} with no stored credential", "hold")
+        return {"status": status, "email": email}, None
+
+    async def t_enter_email_code(self, code_refs: list[str]):
+        if self.ctx.mail is None:
+            return {"error": "mail helper not configured (Gmail API)"}, None
+        import asyncio
+        with db.tx() as con:
+            con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.AWAITING_CODE, db.now(), self.ctx.job_id))
+        after_ts = self.ctx.code_requested_at or (db.now() - 180)
+        handle = await asyncio.to_thread(self.ctx.mail.fetch_code, self.ctx.portal, self.ctx.portal_host, after_ts)
+        if handle is None:
+            with db.tx() as con:
+                con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))
+            return {"status": "not_received", "hint": "request a new code once if the page offers it, then call again; otherwise park with 'code_not_received'"}, None
+        ex = self.ctx.ex
+        loop = asyncio.get_event_loop()
+        ok_box = {"ok": False}
+
+        def _type(code: str) -> None:
+            ok_box["ok"] = asyncio.run_coroutine_threadsafe(fill.type_code_into(ex, code_refs, code), loop).result(60)
+
+        status = await asyncio.to_thread(handle.enter, _type)
+        with db.tx() as con:
+            con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))
+        self.ctx.budget.step()
+        records.record_decision(self.ctx.job_id, self.ctx.page_no, "emailed verification code", "(set)", "policy:may_enter_emailed_verification_code")
+        return {"status": status if ok_box["ok"] else "entered_unverified", "message_id": getattr(handle, "message_id", None)}, None
+
+    async def t_open_verification_link(self):
+        if self.ctx.mail is None:
+            return {"error": "mail helper not configured (Gmail API)"}, None
+        import asyncio
+        # Look back a day: an account created in an earlier attempt is still waiting on its email, and only
+        # links on THIS portal's host (from this tenant) are ever accepted.
+        after_ts = db.now() - 86400
+        self.ctx.verify_link_tried = True
+        res = await asyncio.to_thread(self.ctx.mail.fetch_verification_link, self.ctx.portal, self.ctx.portal_host, after_ts)
+        status = getattr(res, "status", "not_received")
+        if status == "verified_link" and getattr(res, "url", None):
+            await self.ctx.ex.goto(res.url)
+            self.ctx.budget.step()
+            return {"status": "verified", "url": self.ctx.ex.url}, None
+        if status == "host_mismatch":
+            raise Parked("host_mismatch: verification link pointed at another host", "hold")
+        return {"status": status}, None
+
+    # The portal did not load or stalled (a spinner, a disabled Save and Continue): retried later, not held.
+    NOT_LOADING = re.compile(r"(fail(ed|s)? to load|did not load|didn'?t load|not loading|still loading|is loading|stuck (on )?loading|"
+                             r"spinner|blank page|page (is |was )?blank|timed? ?out|remains disabled|stays disabled|unresponsive)", re.I)
+
+    ACCOUNT_LABEL = re.compile(r"^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|"
+                               r"save & continue|verify|verify email|send code|resend|back|apply|apply now|apply manually)$", re.I)
+
+    async def t_submit(self, button_label: str | None):
+        ctx = self.ctx
+        if button_label and self.ACCOUNT_LABEL.match(button_label.strip()):
+            return {"error": f"'{button_label}' is a navigation / account button: press it with `click`. `submit` is only for the "
+                             "application's final Submit button, once every page is filled."}, None
+        snap = await snapmod.take(ctx.ex)
+        ctx.last_snapshot = snap
+        if any(i.get("type") == "password" for i in snap.items):
+            return {"error": "this page has a password field: it is a sign-in or account page, not the application. Use `credentials` "
+                             "for the email and password, then `click` Sign In / Create Account, and fill the application that follows."}, None
+        page_text = await ctx.ex.page_text(30000)
+        gate = run_gate(job=ctx.job, snapshot=snap, page_text=page_text, expected_resume=ctx.resume_file,
+                        free_text_answers=[f["answer"] for f in ctx.free_text], portal=ctx.portal)
+        ctx.gate_result = gate.as_dict()
+        db.event(ctx.job_id, f"gate:{gate.result}", gate.as_dict())
+        with db.tx() as con:
+            con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.GATED, db.now(), ctx.job_id))
+        if gate.result == "captcha_present":
+            raise Parked("ready_for_you: " + "; ".join(gate.reasons), "ready_for_you")
+        if gate.result in ("automation_prohibited", "guardrail_block", "already_applied"):
+            raise Parked(f"{gate.result}: " + "; ".join(gate.reasons)[:300], "hold")
+        if gate.result == "blocked":
+            with db.tx() as con:
+                con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), ctx.job_id))
+            return {"status": "blocked", "gate": "blocked", "fix_these_then_call_submit_again": gate.reasons}, None
+        if gate.result == "pass_shadow":
+            ctx.submitted = {"status": "shadow", "gate": gate.as_dict()}
+            raise Parked("shadow_mode: gate passed; stopping before the final click", "hold")
+        res = await do_submit(ctx.ex, ctx.job_id, label=button_label or "")
+        db.event(ctx.job_id, f"submit:{res.status}", res.as_dict())
+        if res.status == "submitted":
+            ctx.submitted = res.as_dict()
+            return {"status": "submitted", "signal": res.signal, "note": "done; the worker records the ledger"}, None
+        if res.status == "failed":
+            ctx.budget.failed_submit()   # may raise BudgetExceeded
+            with db.tx() as con:
+                con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), ctx.job_id))
+            return {"status": "failed", "why": res.why, "note": "do not click again; fix a named blocker then call submit once more, or park"}, None
+        with db.tx() as con:
+            con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), ctx.job_id))
+        return {"status": "blocked", "fix_these_then_call_submit_again": res.why}, None
+
+    SATISFIED = re.compile(r"(work authorization|authorized to work|sponsorship|citizen|bachelor|gpa|18 years|relocat|onsite|on-site|hybrid|remote|2028|rising senior|eligible to obtain|clearance eligib|"
+                           r"\bsatisf|40 hours|full[- ]time|hours (per|a) week|\d+ weeks|start date|begin|beginning|available from|"
+                           r"(may|june) \d{1,2},? 2027|summer 2027|weekend|in[- ]person|commut|related (field|discipline|major|area|degree)|computer science|local to|during the internship)", re.I)
+    DISQUALIFIERS = re.compile(r"(master'?s|ph\.?d|doctoral|graduate program|active (secret|top secret|ts/sci|clearance)|returning intern|co-?op|fall 2027|spring 2028|within \d+ miles|quant|own (transportation|vehicle|car)|reliable vehicle)", re.I)
+
+    async def t_park(self, reason: str):
+        # A portal failure page (Workday "Something went wrong ... Error Code") cannot be fixed on the form:
+        # park it as a portal error at once; the watchdog retries it in a fresh tab later.
+        from ..gate import portal_error
+        try:
+            perr = portal_error(await self.ctx.ex.page_text(30000))
+        except Exception:
+            perr = None
+        if perr:
+            db.event(self.ctx.job_id, "park:portal_error", {"reason": reason[:200], "page": perr})
+            raise Parked(f"portal_error: {perr}", "hold")
+        state = "ready_for_you" if reason.lower().startswith("ready_for_you") else "hold"
+        low = reason.lower()
+        if (low.startswith("credentials") or "verify your" in low or "verification" in low) and not self.ctx.verify_link_tried \
+                and self.ctx.mail is not None:
+            # An account that exists but cannot sign in is usually waiting on its verification email.
+            try:
+                out, _ = await self.t_open_verification_link()
+            except Parked:
+                out = {}
+            if out.get("status") == "verified":
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "verified": True})
+                return {"error": "not parked: opened the account verification link from this portal's email. Sign in again "
+                                 "(credentials mode 'login_universal', then click Sign In) and continue the application."}, None
+        pending = [k for k in self.ctx.asked_keys
+                   if not ((a := answers.get(k, self.ctx.job.get("company", ""), self.ctx.portal)) and a.has_value)]
+        stalled = bool(self.NOT_LOADING.search(reason)) and not low.startswith(
+            ("answer_", "ready_for_you", "eligibility", "bot_check", "credentials", "host_mismatch", "code_not", "shadow_mode"))
+        if stalled and self.ctx.park_attempts >= 1:
+            raise Parked(f"portal_error: the portal did not load or stalled ({reason[:150]})", "hold")
+        if stalled:
+            self.ctx.park_attempts += 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200]})
+            return {"error": "not parked yet: reload once (navigate back to the posting and click Apply / Apply Manually again, or "
+                             "snapshot after a short wait). If it still does not load, park again with the same reason."}, None
+        if low.startswith("automation_prohibited") and self.ctx.park_attempts >= 2:
+            from ..gate import scan_page_prohibitions
+            if not scan_page_prohibitions(await self.ctx.ex.page_text(30000)):
+                reason = "stuck: " + reason.split(":", 1)[-1].strip()      # never label a hold "prohibited" without the page saying so
+                low = reason.lower()
+        if self.ctx.park_attempts < 2 and (low.startswith("automation_prohibited") or "password" in low or "credential" in low or "create account" in low or "sign in" in low):
+            # "Prohibited" must be on the page, not inferred; account pages are handled by the credentials tool.
+            from ..gate import scan_page_prohibitions
+            text = await self.ctx.ex.page_text(30000)
+            hits = scan_page_prohibitions(text)
+            if not hits:
+                self.ctx.park_attempts += 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200]})
+                return {"error": "not parked: the page text contains no prohibition on automated or AI-assisted applications, and nothing here is "
+                                 "forbidden. On a Sign In / Create Account page call `credentials` (mode 'login' first, 'create' if the account does not exist) "
+                                 "with the email and password field refs; the helper fills them and you may click Create Account / Sign In (those are not "
+                                 "submit controls). Then continue filling."}, None
+            reason = "automation_prohibited: " + "; ".join(hits)[:300]
+        if low.startswith("eligibility") and self.SATISFIED.search(reason) and not self.DISQUALIFIERS.search(reason) \
+                and self.ctx.park_attempts < 2:
+            self.ctx.park_attempts += 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200]})
+            return {"error": "not parked: that requirement is SATISFIED by the standing facts (U.S. citizen, authorized, no sponsorship, "
+                             "Bachelor's in progress, GPA 4.0, relocates anywhere, graduates May 2028). A posting stating it is not a restriction. "
+                             "Continue: open the application (click Apply / Apply Manually) and fill it."}, None
+        hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch"))
+        if not hard and self.ctx.park_attempts < 2:
+            # An eager park: run the gate first. If it passes, the right move is submit; if it blocks,
+            # the model gets the concrete blockers instead of giving up.
+            self.ctx.park_attempts += 1
+            snap = await snapmod.take(self.ctx.ex)
+            self.ctx.last_snapshot = snap
+            page_text = await self.ctx.ex.page_text(30000)
+            gate = run_gate(job=self.ctx.job, snapshot=snap, page_text=page_text, expected_resume=self.ctx.resume_file,
+                            free_text_answers=[f["answer"] for f in self.ctx.free_text], portal=self.ctx.portal)
+            db.event(self.ctx.job_id, "park:checked", {"reason": reason[:200], "gate": gate.as_dict()})
+            if gate.passed:
+                return {"error": "not parked: the code gate PASSES on this page. Call submit now (the gate decides; in shadow mode it stops before the click)."}, None
+            if gate.result == "blocked":
+                return {"error": "not parked yet: the gate names concrete blockers. Fix them, then call submit; park only if one truly has no stored answer.",
+                        "blockers": gate.reasons}, None
+        raise Parked(reason, state, blocked_on=pending if state == "hold" else None)

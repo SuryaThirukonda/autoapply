@@ -1,0 +1,43 @@
+# --- secrets: never committed -------------------------------------------------
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*token*.json
+*client_secret*.json
+
+# --- personal data: stays on Surya's machine (this repo is public) -------------
+# Answers, self-identification, contact details, résumé and transcript. See config/LOCAL_FILES.md.
+config/profile.md
+config/questionnaire.yaml
+config/standing_answers.json
+config/surya_facts.md
+config/answer_bank.json
+config/delegation.yaml
+config/guardrails.md
+resumes/
+transcripts/
+
+# --- runtime state -------------------------------------------------------------
+data/
+*.db
+*.db-wal
+*.db-shm
+*.bak-*
+records/
+chrome-profile/
+logs/
+*.log
+proposals/
+
+# --- tooling -------------------------------------------------------------------
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+.claude/
+.DS_Store
+Thumbs.db

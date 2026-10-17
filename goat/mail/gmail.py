@@ -1,0 +1,668 @@
+"""Gmail API read-only helper: emailed verification codes and verification links, portal-scoped.
+
+The code is the secret here. It is never returned to a caller, logged, or placed in an
+exception: `fetch_code` hands back a `CodeHandle` whose only way out is `enter(type_into)`,
+which types the code through the browser executor's callback and returns the word "entered".
+Everything that reads mail goes through a `MailClient` so tests run with a fake.
+"""
+from __future__ import annotations
+
+import os
+import base64
+import html as _html
+import logging
+import re
+import time
+from dataclasses import dataclass
+from email.utils import parseaddr
+from pathlib import Path
+from typing import Any, Callable, Protocol
+from urllib.parse import urlparse
+
+from ..config import SETTINGS
+
+log = logging.getLogger("goat.mail")
+
+SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+
+class MailUnavailable(RuntimeError):
+    """Gmail cannot be reached or is not set up. Never carries message content."""
+
+
+# --------------------------------------------------------------------------------------
+# Portal registry
+# --------------------------------------------------------------------------------------
+
+SIX_DIGITS = r"\b\d{6}\b"
+EIGHT_ALNUM = r"\b[A-Za-z0-9]{8}\b"
+
+# link_host_rule: "same_host" = link host must be the portal host or a subdomain of it (shared
+# multi-tenant ATS domains, where a sibling tenant is a different company); "registrable" =
+# any host within the portal host's registrable domain (a company's own domain).
+PORTALS: dict[str, dict[str, Any]] = {
+    "greenhouse": dict(
+        senders=["greenhouse-mail.io", "greenhouse.io"],
+        subject_hints=["Security code", "verification code"],
+        code_regex=EIGHT_ALNUM,
+        link_host_rule="same_host",
+    ),
+    "workday": dict(
+        senders=["myworkday.com", "myworkdayjobs.com", "workday.com"],
+        subject_hints=["Verify", "verification", "Confirm"],
+        code_regex=SIX_DIGITS,
+        link_host_rule="same_host",
+    ),
+    "oracle": dict(
+        senders=["oraclecloud.com", "oracle.com"],
+        # onsemi's tenant titles its one-time code email "onsemi Confirm Your Identity".
+        subject_hints=["code", "Verify", "verification", "Confirm", "Identity", "passcode", "one-time"],
+        code_regex=SIX_DIGITS,
+        link_host_rule="same_host",
+    ),
+    "icims": dict(
+        senders=["icims.com"],
+        subject_hints=["code", "Verify", "verification"],
+        code_regex=SIX_DIGITS,
+        link_host_rule="same_host",
+    ),
+    "ashby": dict(
+        senders=["ashbyhq.com"],
+        subject_hints=["code", "Verify", "verification", "Confirm"],
+        code_regex=SIX_DIGITS,
+        link_host_rule="same_host",
+    ),
+}
+
+# Multi-tenant ATS base domains: a sibling subdomain is another company's tenant.
+SHARED_ATS_DOMAINS: frozenset[str] = frozenset(
+    {s for p in PORTALS.values() for s in p["senders"] if "@" not in s}
+    | {"lever.co", "smartrecruiters.com", "jobvite.com", "taleo.net", "successfactors.com",
+       "ultipro.com", "workable.com", "bamboohr.com", "breezy.hr", "applytojob.com",
+       "rippling.com", "paylocity.com", "adp.com", "dayforcehcm.com", "phenom.com",
+       "eightfold.ai", "avature.net", "teamtailor.com", "recruitee.com", "pinpointhq.com"}
+)
+
+# Two-level public suffixes where the registrable domain is three labels long.
+TWO_LEVEL_SUFFIXES: frozenset[str] = frozenset({
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "co.in", "co.jp", "co.nz", "co.za", "co.kr",
+    "com.au", "net.au", "org.au", "com.br", "com.mx", "com.sg", "com.hk", "com.tw", "com.cn",
+    "com.ar", "com.tr", "co.il", "co.id", "com.my", "com.ph",
+})
+
+FORBIDDEN_RE = re.compile(
+    r"(?i)(password reset|reset your password|account recovery|recover your account|bank|chase|"
+    r"wells fargo|capital one|paypal|venmo|zelle|payment|invoice|two-factor|2fa|sign-in attempt|"
+    r"new login)"
+)
+
+# Eight-letter English words that could pass the Greenhouse 8-alphanumeric pattern.
+COMMON_WORDS: frozenset[str] = frozenset({
+    "security", "password", "personal", "download", "continue", "complete", "internet",
+    "question", "response", "received", "position", "thursday", "saturday", "november",
+    "december", "february", "possible", "together", "business", "services", "software",
+    "engineer", "yourself", "verified", "verifies", "expiring", "requests", "required",
+    "entering", "accounts", "anywhere", "whenever", "applying", "attempts", "activate",
+    "activity", "messages", "contacts", "username", "identity", "customer", "settings",
+    "practice", "standard", "original", "specific", "whatever", "problems", "included",
+    "reserved", "thankyou", "learning", "sincerely", "greenhouse", "recruiting",
+})
+
+CODE_WORD_RE = re.compile(r"(?i)\bcodes?\b")
+URL_RE = re.compile(r"https?://[^\s<>\"'`\]\)\}]+", re.IGNORECASE)
+LINK_PATH_HINT_RE = re.compile(r"(?i)(verify|confirm|activate|token)")
+TAG_RE = re.compile(r"<[^>]+>")
+DROP_BLOCK_RE = re.compile(r"(?is)<(script|style|head)\b.*?</\1\s*>")
+
+
+# --------------------------------------------------------------------------------------
+# Pure helpers (no Gmail; unit-tested directly)
+# --------------------------------------------------------------------------------------
+
+def registrable_domain(host: str) -> str:
+    """Last two labels, or three when the suffix is a known two-level public suffix (co.uk)."""
+    h = (host or "").strip().lower().rstrip(".")
+    h = h.split(":", 1)[0]
+    labels = [x for x in h.split(".") if x]
+    if len(labels) <= 2:
+        return ".".join(labels)
+    if ".".join(labels[-2:]) in TWO_LEVEL_SUFFIXES:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def _from_domain(from_header: str) -> tuple[str, str]:
+    """(address, domain) from a From header; both lowercased."""
+    _, addr = parseaddr(from_header or "")
+    addr = addr.strip().lower()
+    if "@" not in addr:
+        m = re.search(r"[\w.+-]+@[\w.-]+", (from_header or "").lower())
+        addr = m.group(0) if m else ""
+    domain = addr.rsplit("@", 1)[1] if "@" in addr else ""
+    return addr, domain
+
+
+def is_forbidden(subject: str | None, snippet: str | None) -> bool:
+    """Mail we never read, whatever a page asks: resets, recovery, money, 2FA, login alerts."""
+    text = f"{subject or ''}\n{snippet or ''}"
+    return bool(FORBIDDEN_RE.search(text))
+
+
+GENERIC_LOCALS = {"noreply", "no-reply", "donotreply", "do-not-reply", "workday", "notifications", "notification", "mail",
+                  "mailer", "careers", "recruiting", "jobs", "talent"}
+
+
+def tenant_mismatch(from_header: str, portal_host: str) -> bool:
+    """Workday sends every tenant's mail from the same domains with the tenant as the local part
+    (brunswick@otp.workday.com). A message from ANOTHER tenant is someone else's code or link."""
+    ph = (portal_host or "").lower()
+    addr, _domain = _from_domain(from_header)
+    if ph.endswith("oraclecloud.com"):
+        # Oracle Recruiting Cloud: "<pod>.fa.sender@workflow.email....oraclecloud.com" for host "<pod>.fa.us2.oraclecloud.com".
+        local = (addr or "").split("@")[0]
+        return local.endswith(".fa.sender") and local.split(".")[0] != ph.split(".")[0]
+    if not ph.endswith(("myworkdayjobs.com", "myworkday.com")):
+        return False
+    local = (addr or "").split("@")[0]
+    if not local or local in GENERIC_LOCALS:
+        return False
+    return local != ph.split(".")[0]
+
+
+def sender_allowed(from_header: str, portal: str | None, portal_host: str) -> bool:
+    """Known portal: From must be one of the portal's sender domains/addresses. Unknown portal:
+    From domain must share the portal host's registrable domain."""
+    addr, domain = _from_domain(from_header)
+    if not domain:
+        return False
+    spec = PORTALS.get((portal or "").lower())
+    if spec is None:
+        rd = registrable_domain(portal_host)
+        return bool(rd) and registrable_domain(domain) == rd
+    if tenant_mismatch(from_header, portal_host):
+        return False
+    for s in spec["senders"]:
+        s = s.lower()
+        if "@" in s:
+            if addr == s:
+                return True
+        elif domain == s or domain.endswith("." + s):
+            return True
+    return False
+
+
+def strip_html(raw: str) -> str:
+    raw = DROP_BLOCK_RE.sub(" ", raw or "")
+    raw = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</td>|</tr>|</li>|</h\d>", "\n", raw)
+    text = TAG_RE.sub(" ", raw)
+    text = _html.unescape(text)
+    return re.sub(r"[ \t\r\f\v]+", " ", text).strip()
+
+
+def extract_code(text: str, portal: str) -> str | None:
+    """Pick the verification code out of a message body. Prefers tokens near the word "code";
+    for 8-alphanumeric portals prefers tokens mixing letters and digits and excludes words."""
+    if not text:
+        return None
+    spec = PORTALS.get((portal or "").lower())
+    pattern = spec["code_regex"] if spec else SIX_DIGITS
+    body = URL_RE.sub(" ", text)  # URL segments are not codes
+    code_positions = [m.start() for m in CODE_WORD_RE.finditer(body)]
+
+    def distance(pos: int) -> int:
+        if not code_positions:
+            return 10 ** 6
+        return min(abs(pos - c) for c in code_positions)
+
+    candidates: list[tuple[int, int, int, str]] = []
+    for m in re.finditer(pattern, body):
+        tok = m.group(0)
+        if tok.lower() in COMMON_WORDS:
+            continue
+        mixed = any(ch.isdigit() for ch in tok) and any(ch.isalpha() for ch in tok)
+        rank = 0
+        if pattern == EIGHT_ALNUM and not mixed:
+            # a plain word or plain number only counts when it sits right next to "code"
+            if distance(m.start()) > 40:
+                continue
+            rank = 1 if tok.isdigit() else 2
+        candidates.append((rank, distance(m.start()), m.start(), tok))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][3]
+
+
+def extract_links(text: str) -> list[str]:
+    """http(s) links in order of appearance, de-duplicated, HTML entities decoded."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in URL_RE.finditer(text or ""):
+        url = _html.unescape(m.group(0)).rstrip(".,;:!?\"'")
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def link_host_ok(url: str, portal_host: str, portal: str | None = None) -> bool:
+    """Shared ATS domain: the link host must equal the portal host or be a subdomain of it
+    (a sibling tenant is someone else). Company domain: any host within its registrable domain."""
+    try:
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    ph = (portal_host or "").lower().strip().rstrip(".")
+    if not host or not ph:
+        return False
+    if host == ph or host.endswith("." + ph):
+        return True
+    rd = registrable_domain(ph)
+    spec = PORTALS.get((portal or "").lower())
+    if spec:
+        rule = spec["link_host_rule"]
+    else:
+        rule = "same_host" if rd in SHARED_ATS_DOMAINS else "registrable"
+    if rule == "registrable":
+        return host == rd or host.endswith("." + rd)
+    return False
+
+
+def _company_tokens(company: str) -> list[str]:
+    stop = {"inc", "llc", "ltd", "corp", "corporation", "co", "the", "and", "of", "company",
+            "group", "holdings", "technologies", "technology", "labs", "plc", "gmbh"}
+    raw = [t for t in re.split(r"[^A-Za-z0-9]+", company or "") if t]
+    toks = [t for t in raw if t.lower() not in stop and len(t) >= 2]
+    return toks or raw[:1]
+
+
+# --------------------------------------------------------------------------------------
+# Message model + client protocol
+# --------------------------------------------------------------------------------------
+
+@dataclass(repr=False)
+class Message:
+    """A parsed message. `text` and `raw` may contain the secret; never log or repr them."""
+    id: str
+    from_header: str
+    subject: str
+    snippet: str
+    ts: int                 # epoch seconds (internalDate / 1000)
+    text: str               # plain text + stripped HTML
+    raw: str                # plain text + raw HTML (for href extraction)
+
+    def __repr__(self) -> str:
+        return f"Message(id={self.id!r}, ts={self.ts})"
+
+    __str__ = __repr__
+
+
+class MailClient(Protocol):
+    def list_messages(self, q: str, max_results: int = 10) -> list[dict]: ...
+    def get_message(self, msg_id: str) -> dict: ...
+
+
+def _b64url(data: str | None) -> str:
+    if not data:
+        return ""
+    pad = "=" * (-len(data) % 4)
+    try:
+        return base64.urlsafe_b64decode(data + pad).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _walk_parts(payload: dict, plain: list[str], htmls: list[str]) -> None:
+    mt = (payload.get("mimeType") or "").lower()
+    data = (payload.get("body") or {}).get("data")
+    if data:
+        if mt.startswith("text/html"):
+            htmls.append(_b64url(data))
+        elif mt.startswith("text/") or not mt:
+            plain.append(_b64url(data))
+    for part in payload.get("parts") or []:
+        _walk_parts(part, plain, htmls)
+
+
+def parse_message(msg: dict) -> Message:
+    payload = msg.get("payload") or {}
+    headers = {(h.get("name") or "").lower(): h.get("value") or "" for h in payload.get("headers") or []}
+    plain: list[str] = []
+    htmls: list[str] = []
+    _walk_parts(payload, plain, htmls)
+    text = "\n".join(plain + [strip_html(h) for h in htmls])
+    raw = "\n".join(plain + htmls)
+    try:
+        ts = int(int(msg.get("internalDate") or 0) / 1000)
+    except (TypeError, ValueError):
+        ts = 0
+    return Message(
+        id=str(msg.get("id") or ""),
+        from_header=headers.get("from", ""),
+        subject=headers.get("subject", ""),
+        snippet=msg.get("snippet") or "",
+        ts=ts,
+        text=text,
+        raw=raw,
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Gmail client (lazy; everything network-y becomes MailUnavailable)
+# --------------------------------------------------------------------------------------
+
+def _load_credentials():
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+
+    tok = Path(SETTINGS.mail.token_json)
+    if not tok.exists():
+        raise MailUnavailable(
+            f"Gmail token not found at {tok}. Run the one-time authorization "
+            f"(goat.mail.gmail.authorize_interactive) with the OAuth client file at "
+            f"{SETTINGS.mail.credentials_json}."
+        )
+    try:
+        creds = Credentials.from_authorized_user_file(str(tok), SCOPES)
+    except Exception as e:  # malformed token file
+        raise MailUnavailable(f"Gmail token at {tok} is unreadable ({type(e).__name__})") from None
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                raise MailUnavailable(f"Gmail token refresh failed ({type(e).__name__})") from None
+            try:
+                tok.write_text(creds.to_json())
+            except OSError:
+                log.warning("mail: could not persist refreshed token to %s", tok)
+        else:
+            raise MailUnavailable(
+                "Gmail token is invalid and cannot be refreshed; re-run authorize_interactive()"
+            )
+    return creds
+
+
+def _build_service():
+    from googleapiclient.discovery import build
+
+    creds = _load_credentials()
+    try:
+        return build("gmail", "v1", credentials=creds, cache_discovery=False)
+    except Exception as e:
+        raise MailUnavailable(f"Gmail service build failed ({type(e).__name__})") from None
+
+
+def authorize_interactive() -> str:
+    """One-time: run the installed-app OAuth flow in a local browser and store the token.
+    Returns the token path. The service runs unattended afterwards."""
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    cj = Path(SETTINGS.mail.credentials_json)
+    tok = Path(SETTINGS.mail.token_json)
+    if not cj.exists():
+        raise MailUnavailable(
+            f"Gmail OAuth client file not found at {cj}. Create a Desktop OAuth client in Google "
+            f"Cloud Console (Gmail API enabled) and save its JSON there."
+        )
+    flow = InstalledAppFlow.from_client_secrets_file(str(cj), SCOPES)
+    # A "Desktop app" client accepts any localhost port. A "Web application" client only accepts
+    # redirect URIs registered in the console, so use a fixed port and tell the user what to register.
+    import json as _json
+    client_type = next(iter(_json.loads(cj.read_text(encoding="utf-8")).keys()), "installed")
+    port = 0
+    if client_type == "web":
+        port = int(os.environ.get("GMAIL_OAUTH_PORT", "8765"))
+        print(f"Web-application OAuth client detected: the console must list http://localhost:{port}/ under "
+              f"'Authorized redirect URIs' for this client (or recreate it as a Desktop app).")
+    creds = flow.run_local_server(port=port, open_browser=True)
+    tok.parent.mkdir(parents=True, exist_ok=True)
+    tok.write_text(creds.to_json())
+    log.info("mail: stored Gmail token at %s", tok)
+    return str(tok)
+
+
+class GmailClient:
+    """Thin wrapper over users().messages(). Built lazily on first use."""
+
+    def __init__(self) -> None:
+        self._service = None
+
+    def _svc(self):
+        if self._service is None:
+            self._service = _build_service()
+        return self._service
+
+    def list_messages(self, q: str, max_results: int = 10) -> list[dict]:
+        try:
+            resp = (self._svc().users().messages()
+                    .list(userId="me", q=q, maxResults=max_results).execute())
+        except MailUnavailable:
+            raise
+        except Exception as e:
+            raise MailUnavailable(f"Gmail list failed ({type(e).__name__})") from None
+        return list(resp.get("messages") or [])
+
+    def get_message(self, msg_id: str) -> dict:
+        try:
+            return (self._svc().users().messages()
+                    .get(userId="me", id=msg_id, format="full").execute())
+        except MailUnavailable:
+            raise
+        except Exception as e:
+            raise MailUnavailable(f"Gmail get failed ({type(e).__name__})") from None
+
+
+_default_client: MailClient | None = None
+
+
+def default_client() -> MailClient:
+    global _default_client
+    if _default_client is None:
+        _default_client = GmailClient()
+    return _default_client
+
+
+# --------------------------------------------------------------------------------------
+# Query building + polling
+# --------------------------------------------------------------------------------------
+
+def _quote(term: str) -> str:
+    return f'"{term}"' if " " in term else term
+
+
+def build_code_query(portal: str, portal_host: str, after_ts: int) -> str:
+    spec = PORTALS.get((portal or "").lower())
+    if spec:
+        senders = spec["senders"]
+        hints = spec["subject_hints"]
+    else:
+        senders = [registrable_domain(portal_host)]
+        hints = ["code", "Verify", "verification", "Confirm"]
+    q = f"from:({' OR '.join(senders)}) after:{int(after_ts)} newer_than:1d"
+    if hints:
+        q += " (" + " OR ".join(f"subject:{_quote(h)}" for h in hints) + ")"
+    return q
+
+
+def _poll_newest(
+    client: MailClient,
+    query: str,
+    portal: str,
+    portal_host: str,
+    after_ts: int,
+    timeout_s: float,
+    poll_s: float,
+    sleep: Callable[[float], None],
+    accept: Callable[[Message], bool] | None = None,
+) -> Message | None:
+    """List/get every poll_s until a message passes the filters or timeout_s elapses.
+    Returns the NEWEST acceptable message. Always makes at least one pass. `accept` is an extra
+    filter (a verification email must carry a link on this portal's host)."""
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    seen: dict[str, Message | None] = {}
+    while True:
+        best: Message | None = None
+        for ref in client.list_messages(query, 10):
+            mid = str(ref.get("id") or "")
+            if not mid:
+                continue
+            if mid not in seen:
+                m = parse_message(client.get_message(mid))
+                ok = (
+                    m.ts >= int(after_ts)
+                    and not is_forbidden(m.subject, m.snippet)
+                    and sender_allowed(m.from_header, portal, portal_host)
+                    and (accept is None or accept(m))
+                )
+                if not ok:
+                    log.info("mail: skipped message id=%s (filtered)", mid)
+                seen[mid] = m if ok else None
+            m = seen[mid]
+            if m is not None and (best is None or m.ts > best.ts):
+                best = m
+        if best is not None:
+            log.info("mail: accepted message id=%s from=%s ts=%s",
+                     best.id, _from_domain(best.from_header)[0], best.ts)
+            return best
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        sleep(min(poll_s, remaining) if poll_s > 0 else remaining)
+
+
+# --------------------------------------------------------------------------------------
+# Public results
+# --------------------------------------------------------------------------------------
+
+class CodeHandle:
+    """Carries a verification code without exposing it. The only way out is `enter`."""
+
+    def __init__(self, code: str, message_id: str) -> None:
+        self.__code = code
+        self.message_id = message_id
+
+    def enter(self, type_into: Callable[[str], None]) -> str:
+        type_into(self.__code)
+        return "entered"
+
+    def length(self) -> int:
+        return len(self.__code)
+
+    def __repr__(self) -> str:
+        return f"CodeHandle(len={len(self.__code)}, msg={self.message_id})"
+
+    __str__ = __repr__
+
+    def __reduce__(self):  # never pickled / deep-copied into records
+        raise TypeError("CodeHandle cannot be serialized")
+
+
+@dataclass(frozen=True)
+class LinkResult:
+    status: str                 # verified_link | host_mismatch | not_received
+    url: str | None
+    message_id: str | None
+
+
+def fetch_code(
+    portal: str,
+    portal_host: str,
+    after_ts: int,
+    *,
+    timeout_s: float | None = None,
+    poll_s: float | None = None,
+    client: MailClient | None = None,
+    _sleep: Callable[[float], None] = time.sleep,
+) -> CodeHandle | None:
+    """Wait for the newest matching code email and return a CodeHandle, or None on timeout."""
+    client = client or default_client()
+    timeout_s = SETTINGS.budgets.code_wait_s if timeout_s is None else timeout_s
+    poll_s = SETTINGS.mail.poll_interval_s if poll_s is None else poll_s
+    query = build_code_query(portal, portal_host, after_ts)
+    msg = _poll_newest(client, query, portal, portal_host, after_ts, timeout_s, poll_s, _sleep)
+    if msg is None:
+        log.info("mail: no code email for portal=%s host=%s within %ss", portal, portal_host, timeout_s)
+        return None
+    code = extract_code(msg.text, portal) or extract_code(msg.subject, portal)
+    if not code:
+        log.info("mail: message id=%s matched but no code pattern found", msg.id)
+        return None
+    return CodeHandle(code, msg.id)
+
+
+def fetch_verification_link(
+    portal: str,
+    portal_host: str,
+    after_ts: int,
+    *,
+    timeout_s: float | None = None,
+    poll_s: float | None = None,
+    client: MailClient | None = None,
+    _sleep: Callable[[float], None] = time.sleep,
+) -> LinkResult:
+    """Wait for the newest matching email and return a verification link on the portal's host."""
+    client = client or default_client()
+    timeout_s = SETTINGS.budgets.code_wait_s if timeout_s is None else timeout_s
+    poll_s = SETTINGS.mail.poll_interval_s if poll_s is None else poll_s
+    query = build_code_query(portal, portal_host, after_ts)
+
+    def _has_portal_link(m: Message) -> bool:
+        return any(link_host_ok(u, portal_host, portal) for u in (extract_links(m.raw) or extract_links(m.text)))
+
+    # Keep waiting past emails for other tenants/hosts: the newest email is not always ours.
+    msg = _poll_newest(client, query, portal, portal_host, after_ts, timeout_s, poll_s, _sleep, accept=_has_portal_link)
+    if msg is None:
+        other = _poll_newest(client, query, portal, portal_host, after_ts, 0, poll_s, _sleep)
+        return LinkResult("host_mismatch" if other is not None else "not_received", None, other.id if other else None)
+    links = extract_links(msg.raw) or extract_links(msg.text)
+    ok = [u for u in links if link_host_ok(u, portal_host, portal)]
+    if not ok:
+        log.info("mail: message id=%s had %d link(s), none on host %s", msg.id, len(links), portal_host)
+        return LinkResult("host_mismatch", None, msg.id)
+    preferred = [u for u in ok if LINK_PATH_HINT_RE.search(urlparse(u).path or "")]
+    url = (preferred or ok)[0]
+    log.info("mail: verification link from message id=%s host=%s", msg.id, urlparse(url).hostname)
+    return LinkResult("verified_link", url, msg.id)
+
+
+def find_confirmation_email(
+    company: str,
+    after_ts: int,
+    portal: str | None,
+    *,
+    client: MailClient | None = None,
+) -> str | None:
+    """Newest 'application received' email mentioning the company, or None."""
+    client = client or default_client()
+    toks = _company_tokens(company)
+    if not toks:
+        return None
+    company_q = " ".join(_quote(t) for t in toks)
+    q = f'subject:(application OR applying OR received OR "thank you") after:{int(after_ts)} {company_q}'
+    best: Message | None = None
+    for ref in client.list_messages(q, 10):
+        mid = str(ref.get("id") or "")
+        if not mid:
+            continue
+        m = parse_message(client.get_message(mid))
+        if m.ts < int(after_ts) or is_forbidden(m.subject, m.snippet):
+            continue
+        hay = f"{m.from_header}\n{m.subject}\n{m.snippet}".lower()
+        if not any(t.lower() in hay for t in toks):
+            continue
+        if best is None or m.ts > best.ts:
+            best = m
+    if best is None:
+        return None
+    log.info("mail: confirmation candidate id=%s from=%s ts=%s portal=%s",
+             best.id, _from_domain(best.from_header)[0], best.ts, portal)
+    return best.id
+
+
+__all__ = [
+    "MailUnavailable", "PORTALS", "CodeHandle", "LinkResult", "MailClient", "GmailClient",
+    "authorize_interactive", "fetch_code", "fetch_verification_link", "find_confirmation_email",
+    "extract_code", "extract_links", "is_forbidden", "sender_allowed", "link_host_ok",
+    "registrable_domain", "strip_html", "parse_message", "build_code_query",
+]

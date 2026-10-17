@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>goat dashboard</title>
+<style>
+:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#667085;--card:#fff;--line:#e4e7ec;--accent:#0b6bcb;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--chip:#eef2f6;--shadow:0 1px 2px rgba(16,24,40,.06)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f1115;--fg:#e6e8ec;--muted:#98a2b3;--card:#171a21;--line:#262b35;--accent:#5aa9ff;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--chip:#1f2430;--shadow:0 1px 2px rgba(0,0,0,.4)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+a{color:var(--accent)}
+header{display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:4}
+.brand{font-size:17px;font-weight:700;letter-spacing:.2px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;background:var(--chip)}
+.pill.working{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
+.pill.needs{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.pill.idle{color:var(--muted)}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.pill.working .dot{animation:blink 1.4s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+header .meta{color:var(--muted);font-size:12px;margin-left:4px}
+nav{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+nav button{background:none;border:1px solid var(--line);color:var(--fg);padding:5px 11px;border-radius:7px;cursor:pointer;font-size:13px}
+nav button:hover{background:var(--chip)}
+nav button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+nav button .badge{display:inline-block;margin-left:5px;padding:0 5px;border-radius:8px;background:var(--warn);color:#fff;font-size:11px;font-weight:700}
+main{padding:16px 18px 40px;max-width:1500px;margin:0 auto}
+h3{margin:18px 0 8px;font-size:14px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;box-shadow:var(--shadow)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px}
+.card .k{color:var(--muted);font-size:12px}
+.card .v{font-size:24px;font-weight:650;line-height:1.2;margin-top:2px}
+.card .s{font-size:12px;color:var(--muted)}
+.card.clickable{cursor:pointer}.card.clickable:hover{border-color:var(--accent)}
+.now{display:grid;grid-template-columns:1.25fr 1fr;gap:12px;margin-bottom:12px}
+@media(max-width:900px){.now{grid-template-columns:1fr}}
+.now h2{margin:0 0 2px;font-size:17px}
+.doing{display:flex;align-items:center;gap:8px;font-size:15px;margin:10px 0 6px}
+.spin{width:13px;height:13px;border:2px solid var(--accent);border-right-color:transparent;border-radius:50%;animation:spin .9s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.facts{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:8px}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
+th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:600;background:var(--chip)}
+tr:last-child td{border-bottom:none}
+tr.row{cursor:pointer}tr.row:hover{background:var(--chip)}
+.chip{display:inline-block;padding:1px 8px;border-radius:999px;background:var(--chip);font-size:12px;white-space:nowrap}
+.st-queued{color:var(--muted)}
+.st-filling,.st-awaiting_answer,.st-awaiting_code,.st-gated,.st-submitting{color:var(--accent);font-weight:600}
+.st-submitted,.st-confirmed{color:var(--ok);font-weight:600}
+.st-hold{color:var(--warn)}.st-ready_for_you{color:var(--accent);font-weight:600}.st-dead{color:var(--bad)}
+.toolbar{display:flex;gap:8px;align-items:center;margin:10px 0;flex-wrap:wrap}
+.toolbar input,.toolbar select{padding:6px 9px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--fg)}
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.filters button{padding:4px 11px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer;font-size:13px}
+.filters button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.muted{color:var(--muted)}.small{font-size:12px}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.feed{max-height:360px;overflow:auto}
+.ev{display:grid;grid-template-columns:62px 1fr auto;gap:10px;padding:5px 0;border-bottom:1px dashed var(--line);font-size:12.5px;align-items:baseline}
+.ev:last-child{border-bottom:none}
+.ev.err .what{color:var(--bad)}.ev.ok .what{color:var(--ok)}
+.ev .what{overflow:hidden;text-overflow:ellipsis}
+.drawer{position:fixed;top:0;right:0;width:min(780px,96vw);height:100vh;background:var(--card);border-left:1px solid var(--line);box-shadow:-10px 0 30px rgba(0,0,0,.18);overflow:auto;padding:16px 18px;z-index:6;display:none}
+.drawer.open{display:block}
+.drawer h2{margin:4px 0 6px;font-size:17px}
+.x{float:right;cursor:pointer;border:1px solid var(--line);background:none;color:var(--fg);border-radius:7px;padding:3px 10px}
+pre{white-space:pre-wrap;word-break:break-word;background:var(--chip);padding:9px;border-radius:7px;max-height:260px;overflow:auto;font-size:12px}
+.shots{display:flex;gap:8px;flex-wrap:wrap}.shots img{width:210px;border:1px solid var(--line);border-radius:6px;cursor:zoom-in}
+.bars{display:flex;align-items:flex-end;gap:3px;height:56px}.bars div{flex:1;background:var(--accent);opacity:.75;min-height:2px;border-radius:2px 2px 0 0}
+button.primary{background:var(--accent);color:#fff;border:1px solid var(--accent);padding:6px 14px;border-radius:7px;cursor:pointer;font-size:13px}
+button.ghost{background:var(--card);color:var(--fg);border:1px solid var(--line);padding:6px 12px;border-radius:7px;cursor:pointer;font-size:13px}
+button.ghost:hover{background:var(--chip)}
+.banner{display:flex;align-items:center;gap:12px;background:color-mix(in srgb,var(--warn) 12%,var(--card));border:1px solid color-mix(in srgb,var(--warn) 45%,var(--line));border-radius:10px;padding:10px 14px;margin-bottom:12px}
+.banner b{color:var(--warn)}
+.modal{position:fixed;inset:0;background:rgba(10,12,16,.55);display:none;align-items:center;justify-content:center;z-index:10;padding:20px}
+.modal.open{display:flex}
+.modal .box{background:var(--card);border:1px solid var(--line);border-radius:14px;max-width:620px;width:100%;padding:20px 22px;box-shadow:0 24px 60px rgba(0,0,0,.35)}
+.modal h2{margin:0 0 4px;font-size:18px}
+.modal .q{font-size:15px;margin:12px 0 14px;line-height:1.45}
+.modal input[type=text]{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:14px}
+.opts{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.opts button{padding:7px 13px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+.opts button:hover{border-color:var(--accent);color:var(--accent)}
+.row-end{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+form.inline{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+form.inline input{padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);min-width:230px}
+</style></head>
+<body>
+<header>
+  <span class="brand">goat</span>
+  <span id="status" class="pill idle"><span class="dot"></span>…</span>
+  <span class="meta" id="meta"></span>
+  <nav>
+    <button data-v="now" class="on">Now</button>
+    <button data-v="jobs">Jobs</button>
+    <button data-v="questions">Questions<span class="badge" id="qbadge" hidden>0</span></button>
+    <button data-v="answers">Answers</button>
+    <button data-v="usage">Usage</button>
+    <button data-v="settings">Settings</button>
+  </nav>
+</header>
+<main>
+  <div id="banner"></div>
+
+  <section id="v-now">
+    <div class="now">
+      <div class="card" id="current"></div>
+      <div class="card"><div class="k">Live activity</div><div class="feed" id="feed"></div></div>
+    </div>
+    <div class="cards" id="cards"></div>
+    <h3>Needs you</h3><div id="needs"></div>
+  </section>
+
+  <section id="v-jobs" hidden>
+    <div class="toolbar">
+      <div class="filters" id="jfilters"></div>
+      <input id="jsearch" placeholder="search company, title, portal, reason">
+      <span class="muted small" id="jcount"></span>
+    </div>
+    <div id="jtable"></div>
+  </section>
+
+  <section id="v-questions" hidden><div id="qtable"></div></section>
+
+  <section id="v-answers" hidden>
+    <div class="toolbar"><input id="ansearch" placeholder="search key, answer or note">
+      <div class="filters" id="ankind"><button data-k="all" class="on">All</button><button data-k="asked">You answered</button><button data-k="auto">Settled from profile</button><button data-k="questionnaire">Questionnaire</button><button data-k="open">Open</button></div>
+      <span class="muted small" id="ancount"></span></div>
+    <p class="muted small">Every decision the agent remembers. Edit changes it for future forms (the old version is kept). Forget makes the agent ask again or settle it fresh.</p>
+    <div id="antable"></div>
+  </section>
+
+  <section id="v-usage" hidden>
+    <div class="cards" id="ucards"></div>
+    <div class="now" style="margin-top:12px">
+      <div class="card"><div class="k">Requests per model</div><div id="umodel"></div></div>
+      <div class="card"><div class="k">Requests per day (30d)</div><div id="uday"></div></div>
+    </div>
+    <h3>Cost per job</h3><div id="ujob"></div>
+  </section>
+
+  <section id="v-settings" hidden>
+    <div class="card" style="max-width:900px">
+      <div class="k">Saved to <span class="mono">.env</span>. Secrets show masked — leave a masked value alone to keep it. Changes marked (restart) apply after Restart agent in the goat menu, or the next launch.</div>
+      <form id="sform" onsubmit="return saveSettings()"><table id="stable"></table>
+        <div style="margin-top:12px"><button type="submit" class="primary">Save</button> <span id="smsg" class="small muted"></span></div>
+      </form>
+    </div>
+    <div class="card" style="max-width:900px;margin-top:12px"><div class="k">Integrations</div><div id="sstatus" class="small" style="margin-top:6px"></div></div>
+  </section>
+</main>
+
+<div class="drawer" id="drawer"></div>
+<div class="modal" id="qmodal"><div class="box" id="qbox"></div></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ts=t=>t?new Date(t*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+const dt=t=>t?new Date(t*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+const ago=t=>{if(!t)return'';const d=Math.max(0,Date.now()/1000-t);return d<60?Math.round(d)+'s ago':d<3600?Math.round(d/60)+'m ago':d<86400?Math.round(d/3600)+'h ago':Math.round(d/86400)+'d ago'};
+const dur=s=>{s=Math.max(0,Math.round(s));return s<60?s+'s':Math.floor(s/60)+'m '+(s%60)+'s'};
+const api=async p=>(await fetch(p)).json();
+const post=async(p,b)=>(await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})})).json();
+let view='now', jfilter='active', dismissed=new Set(), lastNow=null;
+
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  view=b.dataset.v;
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('main section').forEach(s=>s.hidden=s.id!=='v-'+view);
+  refresh();
+});
+
+/* ---------------- live status, current job, questions ---------------- */
+async function tick(){
+  let n; try{ n=await api('/api/now') }catch(e){ return }
+  lastNow=n;
+  const q=n.questions||[];
+  const pill=$('#status');
+  if(q.length){ pill.className='pill needs'; pill.innerHTML='<span class="dot"></span>Needs you' }
+  else if(n.current){ pill.className='pill working'; pill.innerHTML='<span class="dot"></span>Working' }
+  else { pill.className='pill idle'; pill.innerHTML='<span class="dot"></span>Idle' }
+  $('#meta').textContent=`${n.mode}${n.live_portals.length?' · live: '+n.live_portals.join(','):''} · ${n.executor} · $${(n.spend_24h.c||0).toFixed(3)} today`;
+  const badge=$('#qbadge'); badge.hidden=!q.length; badge.textContent=q.length;
+  $('#banner').innerHTML = q.length ? `<div class="banner"><b>${q.length} question${q.length>1?'s':''} waiting</b><span class="small muted">${esc(q[0].question.slice(0,90))}${q[0].question.length>90?'…':''}</span><span style="margin-left:auto"></span><button class="primary" onclick="openQ(${q[0].id})">Answer</button></div>` : '';
+  const next=q.find(x=>!dismissed.has(x.id));
+  if(next && !$('#qmodal').classList.contains('open')) openQ(next.id);
+  if(view==='now') renderNow(n);
+}
+
+function renderNow(n){
+  const c=n.current;
+  $('#current').innerHTML = c ? `
+    <div class="k">Working on</div>
+    <h2>#${c.job.id} ${esc(c.job.company)} — ${esc(c.job.title)}</h2>
+    <div class="small muted">${esc(c.job.ats)} · ${stChip(c.job.status)} · <a href="${esc(c.job.apply_url||c.job.url)}" target="_blank">open posting</a></div>
+    <div class="doing"><span class="spin"></span><span>${esc(c.doing)}</span></div>
+    <div class="facts"><span>${dur(c.elapsed_s)} elapsed</span><span>${c.steps||0} steps</span><span>${c.requests} requests</span><span>$${(c.cost_usd||0).toFixed(4)}</span></div>
+    <div class="feed" style="margin-top:10px">${c.recent.map(e=>`<div class="ev ${/error|refus|fail|hold/.test(e.kind)?'err':/submitted|pass|confirmed/.test(e.kind)?'ok':''}"><span class="muted">${ts(e.ts)}</span><span class="what">${esc(e.what)}</span><span></span></div>`).join('')}</div>
+    <div class="row-end"><button class="ghost" onclick="openJob(${c.job.id})">Open draft</button></div>`
+  : `<div class="k">Agent</div><h2>Idle</h2>
+     <div class="small muted" style="margin-top:6px">${n.last_event_age_s==null?'no activity recorded yet':'last activity '+ago(n.now-n.last_event_age_s)}</div>
+     ${n.idle_next?`<div class="facts" style="margin-top:10px"><span>next in queue: <b>${esc(n.idle_next.company)}</b> — ${esc(n.idle_next.title)} (${esc(n.idle_next.ats)})</span></div>
+     <div class="small muted" style="margin-top:8px">Start the agent with goat.cmd, or run one job from a terminal.</div>`:'<div class="small muted" style="margin-top:10px">Nothing queued.</div>'}`;
+  $('#feed').innerHTML=(n.feed||[]).map(e=>`<div class="ev ${/error|refus|fail|hold|budget/.test(e.kind)?'err':/submitted|pass|confirmed|saved/.test(e.kind)?'ok':''}">
+      <span class="muted">${ts(e.ts)}</span>
+      <span class="what">${e.company?`<a href="#" onclick="openJob(${e.job_id});return false">#${e.job_id}</a> `:''}${esc(e.what)}</span>
+      <span class="muted small">${e.cost_usd?'$'+e.cost_usd.toFixed(4):''}</span></div>`).join('')||'<span class="muted small">no activity yet</span>';
+  const k=n.counts||{}, g=x=>k[x]||0;
+  const inflight=g('filling')+g('awaiting_answer')+g('awaiting_code')+g('gated')+g('submitting');
+  $('#cards').innerHTML=[
+    ['Queued',g('queued'),'waiting to be filled','queued'],
+    ['In flight',inflight,'being worked now','active'],
+    ['Needs you',g('ready_for_you')+g('hold'),'held or one click from done','needs'],
+    ['Submitted',g('submitted')+g('confirmed'),`${g('confirmed')} confirmed by email`,'submitted'],
+  ].map(([t,v,s,f])=>`<div class="card clickable" onclick="goJobs('${f}')"><div class="k">${t}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join('');
+  api('/api/jobs?status=&limit=200').then(rows=>{
+    const need=rows.filter(r=>r.status==='ready_for_you'||r.status==='hold').slice(0,8);
+    $('#needs').innerHTML=need.length?jobsTable(need):'<div class="card small muted">Nothing is waiting on you.</div>';
+  });
+}
+
+function goJobs(f){ jfilter=f; document.querySelector('nav button[data-v=jobs]').click(); }
+
+/* ---------------- question pop-up ---------------- */
+function openQ(id){
+  const q=(lastNow?.questions||[]).find(x=>x.id===id); if(!q) return;
+  $('#qbox').innerHTML=`<div class="k small muted">Question from job #${q.job_id} · ${esc(q.company||'')}${q.title?' — '+esc(q.title):''}</div>
+    <h2>The agent needs an answer</h2>
+    <div class="q">${esc(q.question)}</div>
+    ${q.expired?'<div class="small warn" style="margin-bottom:10px">That run already parked. Saving the answer still stores it for every future form and re-queues the job.</div>':''}
+    ${(q.options||[]).length?`<div class="opts">${q.options.map(o=>`<button onclick="answerQ(${q.id},${JSON.stringify(o).replace(/"/g,'&quot;')})">${esc(o)}</button>`).join('')}</div>`:''}
+    <form onsubmit="return answerQ(${q.id}, this.t.value)"><input type="text" name="t" placeholder="Type your answer and press Enter" autofocus></form>
+    <div class="small muted" style="margin-top:8px">Saved under <span class="mono">${esc(q.key)}</span>, so this is never asked again.</div>
+    <div class="row-end">
+      <button class="ghost" onclick="holdQ(${q.id})">I don't know yet</button>
+      <button class="ghost" onclick="closeQ(${q.id})">Later</button>
+    </div>`;
+  $('#qmodal').classList.add('open');
+}
+function closeQ(id){ dismissed.add(id); $('#qmodal').classList.remove('open'); }
+async function answerQ(id,text){
+  if(!String(text||'').trim()) return false;
+  const r=await post(`/api/question/${id}/answer`,{text:String(text)});
+  if(!r.ok){ alert(r.reason||'could not save'); return false }
+  dismissed.add(id); $('#qmodal').classList.remove('open'); tick(); refresh(); return false;
+}
+async function holdQ(id){ await post(`/api/question/${id}/hold`); dismissed.add(id); $('#qmodal').classList.remove('open'); tick(); refresh(); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ $('#qmodal').classList.remove('open'); $('#drawer').classList.remove('open') } });
+
+/* ---------------- jobs ---------------- */
+const FILTERS={active:'in flight',queued:'queued',needs:'needs you',submitted:'submitted',all:'all'};
+const MATCH={active:r=>['filling','awaiting_answer','awaiting_code','gated','submitting'].includes(r.status),
+             queued:r=>r.status==='queued', needs:r=>['hold','ready_for_you'].includes(r.status),
+             submitted:r=>['submitted','confirmed'].includes(r.status), all:()=>true};
+function stChip(s){return `<span class="chip st-${s}">${esc(s.replace(/_/g,' '))}</span>`}
+function jobsTable(rows){
+  return `<table><thead><tr><th>#</th><th>status</th><th>company</th><th>title</th><th>portal</th><th>tries</th><th>updated</th><th>reason</th></tr></thead><tbody>${
+    rows.map(r=>`<tr class="row" onclick="openJob(${r.id})"><td>${r.id}</td><td>${stChip(r.status)}</td><td>${esc(r.company)}</td><td>${esc(r.title)}</td>
+      <td class="muted small">${esc(r.ats)}${r.lane?' · '+esc(r.lane):''}</td>
+      <td class="small">${r.attempts}${r.failed_submits?` · ${r.failed_submits} failed`:''}</td>
+      <td class="small muted">${ago(r.updated_at)}</td>
+      <td class="small">${esc((r.hold_reason||'').slice(0,90))}</td></tr>`).join('')||'<tr><td colspan="8" class="muted">none</td></tr>'}</tbody></table>`;
+}
+async function jobs(){
+  $('#jfilters').innerHTML=Object.entries(FILTERS).map(([k,l])=>`<button class="${k===jfilter?'on':''}" onclick="jfilter='${k}';jobs()">${l}</button>`).join('');
+  const s=$('#jsearch').value.toLowerCase();
+  let rows=await api('/api/jobs?status=&limit=400');
+  rows=rows.filter(MATCH[jfilter]);
+  if(s) rows=rows.filter(r=>`${r.company} ${r.title} ${r.ats} ${r.hold_reason||''}`.toLowerCase().includes(s));
+  $('#jcount').textContent=`${rows.length} shown`;
+  $('#jtable').innerHTML=jobsTable(rows);
+}
+
+/* ---------------- questions ---------------- */
+async function questions(){
+  const rows=await api('/api/questions');
+  $('#qtable').innerHTML=`<table><thead><tr><th>asked</th><th>job</th><th>question</th><th>status</th><th>answer</th></tr></thead><tbody>${
+    rows.map(r=>{
+      const open=!r.answered_at, late=open&&r.deadline_at<Date.now()/1000;
+      const box=open?`<form class="inline" onsubmit="return answerQ(${r.id}, this.t.value)"><input name="t" placeholder="answer"><button class="primary" type="submit">Save</button><button class="ghost" type="button" onclick="holdQ(${r.id})">Hold</button></form>`
+                    :esc(r.answer??'(held)');
+      return `<tr><td class="small muted">${dt(r.asked_at)}</td>
+        <td><a href="#" onclick="openJob(${r.job_id});return false">#${r.job_id} ${esc(r.company||'')}</a></td>
+        <td>${esc(r.question)}<div class="small mono muted">${esc(r.key)}</div></td>
+        <td class="small ${late?'warn':''}">${!open?'answered':late?'timed out':'waiting'}</td>
+        <td>${box}</td></tr>`}).join('')||'<tr><td colspan="5" class="muted">none yet</td></tr>'}</tbody></table>`;
+}
+
+/* ---------------- answers ---------------- */
+let ankind='all', anrows=[];
+const SRC={telegram:'you',dashboard:'you (edited)',default_no:'profile: default No',profile:'profile',classifier:'matched',questionnaire:'questionnaire'};
+function ansText(r){
+  if(r.answer_type==='blank') return '<span class="muted">(leave empty)</span>';
+  if(r.answer===null) return '<span class="warn">no answer yet</span>';
+  return esc(String(r.answer).slice(0,160))+(String(r.answer_type||'').startsWith('conditional:')?` <span class="chip">${esc(r.answer_type.slice(12))}</span>`:'');
+}
+async function answers(){
+  anrows=await api('/api/answers?kind='+ankind+'&q='+encodeURIComponent($('#ansearch').value));
+  $('#ancount').textContent=`${anrows.length} shown`;
+  $('#antable').innerHTML=`<table><thead><tr><th>question / key</th><th>answer</th><th>scope</th><th>from</th><th></th></tr></thead><tbody>${
+    anrows.map((r,i)=>`<tr id="anr${i}"><td><div>${esc((r.question||'').slice(0,140))}</div><div class="small mono muted">${esc(r.key)}</div></td>
+      <td>${ansText(r)}</td>
+      <td class="small muted">${esc(r.scope)}${r.scope_value?' '+esc(r.scope_value):''}</td>
+      <td class="small muted">${esc(SRC[r.source]||r.source)}</td>
+      <td class="small" style="white-space:nowrap"><a href="#" onclick="editAns(${i});return false">Edit</a> · <a href="#" onclick="forgetAns(${i});return false">Forget</a></td></tr>`).join('')||'<tr><td colspan="5" class="muted">nothing here</td></tr>'}</tbody></table>`;
+}
+function editAns(i){
+  const r=anrows[i], row=$('#anr'+i);
+  row.children[1].innerHTML=`<input type="text" id="anedit${i}" style="width:100%" value="${esc(r.answer_type==='blank'?'':(r.answer??''))}">
+    <div class="small" style="margin-top:4px"><a href="#" onclick="saveAns(${i});return false">Save</a> · <a href="#" onclick="answers();return false">Cancel</a></div>`;
+  const inp=$('#anedit'+i); inp.focus(); inp.onkeydown=e=>{if(e.key==='Enter')saveAns(i); if(e.key==='Escape')answers();};
+}
+async function saveAns(i){
+  const r=anrows[i]; const v=$('#anedit'+i).value;
+  const out=await post('/api/answer',{key:r.key,scope:r.scope,scope_value:r.scope_value,answer:v});
+  if(!out.ok) alert(out.reason||'not saved'); answers();
+}
+async function forgetAns(i){
+  const r=anrows[i];
+  if(!confirm(`Forget the answer for "${r.question||r.key}"? The agent will ask again (or settle it from your profile) next time.`)) return;
+  await post('/api/answer',{key:r.key,scope:r.scope,scope_value:r.scope_value,forget:true}); answers();
+}
+
+/* ---------------- usage ---------------- */
+async function usage(){
+  const u=await api('/api/usage');
+  $('#ucards').innerHTML=Object.entries(u.windows).map(([k,v])=>`<div class="card"><div class="k">Requests ${k}</div><div class="v">${v.requests}</div><div class="s">$${(v.cost||0).toFixed(4)} · ${v.tokens_in} in / ${v.tokens_out} out</div></div>`).join('');
+  $('#umodel').innerHTML=`<table><thead><tr><th>model</th><th>req</th><th>in</th><th>cached</th><th>out</th><th>cost</th><th>avg s</th></tr></thead><tbody>${
+    u.by_model.map(m=>`<tr><td class="mono">${esc(m.model)}${u.allowed_models.includes(m.model)?'':' <span class="bad">(blocked now)</span>'}</td><td>${m.requests}</td><td>${m.tokens_in}</td><td>${m.cached}</td><td>${m.tokens_out}</td><td>$${(m.cost||0).toFixed(4)}</td><td>${((m.avg_ms||0)/1000).toFixed(1)}</td></tr>`).join('')}</tbody></table>`;
+  const mx=Math.max(1,...u.per_day.map(d=>d.requests));
+  $('#uday').innerHTML=`<div class="bars">${u.per_day.map(d=>`<div title="${d.day}: ${d.requests} requests, $${d.cost}" style="height:${Math.max(2,d.requests/mx*100)}%"></div>`).join('')}</div>
+    <div class="small muted" style="margin-top:6px">${u.per_day.slice(-7).map(d=>`${d.day.slice(5)}: ${d.requests} / $${d.cost}`).join('  ')}</div>`;
+  $('#ujob').innerHTML=`<table><thead><tr><th>job</th><th>company</th><th>title</th><th>requests</th><th>cost</th></tr></thead><tbody>${
+    u.per_job.map(j=>`<tr class="row" onclick="openJob(${j.job_id})"><td>#${j.job_id??'–'}</td><td>${esc(j.company||'')}</td><td>${esc(j.title||'')}</td><td>${j.requests}</td><td>$${(j.cost||0).toFixed(4)}</td></tr>`).join('')}</tbody></table>`;
+}
+
+/* ---------------- settings ---------------- */
+const SF=[['OPENAI_API_KEY','OpenAI API key','password','(restart)'],
+ ['EXECUTOR_MODEL','Executor model','text','(restart; must be in the allowed list)'],
+ ['ADVISOR_MODEL','Advisor model','text','(restart)'],['CLASSIFIER_MODEL','Classifier model','text','(restart)'],
+ ['ALLOWED_MODELS','Allowed models','text','locked to gpt-6-luna'],
+ ['GOAT_MODE','Mode','text','shadow | live (restart)'],['LIVE_PORTALS','Live portals','text','comma list (restart)'],
+ ['LANES_ENABLED','Lanes enabled','text','no_account,ready_for_you[,account] (restart)'],
+ ['BUDGET_STEPS','Step budget per job','text','(restart)'],['ANSWER_WAIT_S','Answer wait seconds','text','(restart)'],
+ ['TELEGRAM_BOT_TOKEN','Telegram bot token','password','(restart)'],['TELEGRAM_OWNER_CHAT_ID','Telegram chat id','text','(restart)'],
+ ['BW_EXE','Bitwarden CLI path','text','(restart)'],['BW_SESSION','Bitwarden session key','password','from bw unlock --raw (restart)'],
+ ['CDP_PORT','Chrome CDP port','text','(restart)']];
+async function settings(){
+  const s=await api('/api/settings');
+  $('#stable').innerHTML=SF.map(([k,l,t,h])=>`<tr><td style="width:210px">${l}</td>
+    <td><input name="${k}" type="${t}" value="${esc(s[k]??'')}" style="width:360px" ${k==='ALLOWED_MODELS'?'readonly':''}></td>
+    <td class="small muted">${h}${s._secrets_set&&k in s._secrets_set?(s._secrets_set[k]?' · set':' · empty'):''}</td></tr>`).join('');
+  const st=s._status||{};
+  $('#sstatus').innerHTML=`<div>Running: mode <b>${esc(s._running.mode)}</b> · executor <b>${esc(s._running.executor)}</b> · allowed ${esc(s._running.allowed.join(','))} · config ${esc(s._running.config_hash)}</div>
+    <div>Gmail: client ${st.gmail_client?'<span class="ok">present</span>':'<span class="warn">missing</span>'}, token ${st.gmail_token?'<span class="ok">authorized</span>':'<span class="warn">not authorized (python -m goat gmail-auth)</span>'}</div>
+    <div>Bitwarden: ${st.bitwarden&&st.bitwarden.available?`<span class="ok">found</span> · vault ${esc(st.bitwarden.status)}`:`<span class="warn">${esc(st.bitwarden?st.bitwarden.status:'unknown')}</span>`}</div>
+    <div>Chrome CDP: ${esc(st.chrome_cdp)}</div>`;
+}
+async function saveSettings(){
+  const body={}; for(const el of $('#sform').querySelectorAll('input[name]')) body[el.name]=el.value;
+  const r=await post('/api/settings',body);
+  $('#smsg').textContent=r.ok?`saved ${r.changed.join(', ')||'nothing'} — restart the agent to apply`:('error: '+r.error);
+  settings(); return false;
+}
+
+/* ---------------- job drawer ---------------- */
+async function openJob(id){
+  const d=await api('/api/job/'+id); if(d.error) return;
+  const j=d.job, shots=d.files.filter(f=>f.endsWith('.png')), docs=d.files.filter(f=>!f.endsWith('.png'));
+  $('#drawer').classList.add('open');
+  $('#drawer').innerHTML=`<button class="x" onclick="document.getElementById('drawer').classList.remove('open')">close</button>
+    <h2>#${j.id} ${esc(j.company)} — ${esc(j.title)}</h2>
+    <div class="small">${stChip(j.status)} ${esc(j.ats)} · lane ${esc(j.lane||'')} · ${j.attempts} tries · ${j.steps_used} steps · ${Math.round((j.wall_ms_used||0)/60000)} min · $${d.cost_usd}
+      · <a href="${esc(j.url)}" target="_blank">posting</a>${j.apply_url?` · <a href="${esc(j.apply_url)}" target="_blank">application</a>`:''}</div>
+    ${j.hold_reason?`<p class="warn"><b>reason:</b> ${esc(j.hold_reason)}${j.blocked_on_question_key?` · blocked on <span class="mono">${esc(j.blocked_on_question_key)}</span>`:''}</p>`:''}
+    <div class="row-end" style="justify-content:flex-start;margin:10px 0">
+      <button class="primary" onclick="act(${j.id},'requeue')">Requeue</button>
+      <button class="ghost" onclick="act(${j.id},'hold')">Hold</button>
+      <button class="ghost" onclick="act(${j.id},'dead')">Mark dead</button></div>
+    ${shots.length?`<h3>Screenshots</h3><div class="shots">${shots.slice(-8).map(f=>`<a href="/records/${j.id}/${f}" target="_blank"><img src="/records/${j.id}/${f}" title="${f}"></a>`).join('')}</div>`:''}
+    ${docs.length?`<p class="small">records: ${docs.map(f=>`<a href="/records/${j.id}/${f}" target="_blank">${f}</a>`).join(' · ')}</p>`:''}
+    <h3>Decisions (${d.decisions.length})</h3>
+    ${d.decisions.length?`<table><thead><tr><th>page</th><th>field</th><th>value</th><th>source</th></tr></thead><tbody>${
+      d.decisions.map(x=>`<tr><td>${x.page}</td><td>${esc(x.field_label)}</td><td>${esc((x.value||'').slice(0,140))}</td>
+        <td class="mono small ${x.source&&x.source!=='judgment'?'':'bad'}">${esc(x.source)}</td></tr>`).join('')}</tbody></table>`:'<span class="muted small">none recorded</span>'}
+    ${d.questions.length?`<h3>Questions</h3>${d.questions.map(q=>`<div class="small"><span class="mono">${esc(q.key)}</span> ${esc(q.question)} → ${q.answered_at?esc(q.answer??'(held)'):'<span class="muted">pending</span>'}</div>`).join('')}`:''}
+    <h3>Events (${d.events.length})</h3>
+    <div class="feed" style="max-height:none">${d.events.map(e=>{
+      const det=e.detail&&typeof e.detail==='object'?(e.detail.reason||e.detail.error||e.detail.summary||e.detail.signal||(e.detail.why?e.detail.why.join(' | '):'')||JSON.stringify(e.detail).slice(0,160)):String(e.detail||'');
+      return `<div class="ev ${/error|refus|fail|hold/.test(e.kind)?'err':/submitted|pass|confirmed/.test(e.kind)?'ok':''}"><span class="muted">${ts(e.ts)}</span>
+        <span class="what"><b>${esc(e.kind)}</b> ${esc(det.slice(0,170))}</span>
+        <span class="muted small">${e.cost_usd?'$'+e.cost_usd.toFixed(4):''}</span></div>`}).join('')}</div>`;
+}
+async function act(id,name){
+  const reason=name==='requeue'?'':prompt('reason?'); if(name!=='requeue'&&reason===null) return;
+  await post(`/api/job/${id}/${name}`,{reason:reason||'dashboard'}); openJob(id); refresh();
+}
+
+/* ---------------- wiring ---------------- */
+async function refresh(){
+  try{
+    if(view==='now') { if(lastNow) renderNow(lastNow); }
+    else if(view==='jobs') await jobs();
+    else if(view==='questions') await questions();
+    else if(view==='answers') await answers();
+    else if(view==='usage') await usage();
+    else if(view==='settings') await settings();
+  }catch(e){ $('#meta').textContent='error: '+e }
+}
+$('#jsearch').oninput=()=>{clearTimeout(window._t);window._t=setTimeout(jobs,250)};
+$('#ansearch').oninput=()=>{clearTimeout(window._a);window._a=setTimeout(answers,250)};
+document.querySelectorAll('#ankind button').forEach(b=>b.onclick=()=>{ankind=b.dataset.k;document.querySelectorAll('#ankind button').forEach(x=>x.classList.toggle('on',x===b));answers();});
+tick(); refresh();
+setInterval(tick,3000);
+setInterval(()=>{ if(view!=='settings'&&view!=='now') refresh() },10000);
+</script></body></html>

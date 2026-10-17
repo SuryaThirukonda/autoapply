@@ -1,0 +1,455 @@
+"""Per-ATS adapters: the application URL to open, a deterministic prefill of the mechanical fields
+(name, contact, education) from the answer store, portal hints for the model, and a few portal
+mechanics written as code (Greenhouse embed URL, Workday rail, Lever location autocomplete).
+
+The model handles only what the adapter cannot. Adapters never submit."""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from urllib.parse import parse_qs, urlparse
+
+from .. import answers, records
+from ..browser import fill
+from ..browser.snapshot import Snapshot
+
+# label regex -> (answer key, kind). kind: text | choose
+GENERIC_FIELD_MAP: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"^(legal )?first ?name\b|^given name", re.I), "identity.first_name", "text"),
+    (re.compile(r"^(legal )?last ?name\b|^surname|^family name", re.I), "identity.last_name", "text"),
+    (re.compile(r"^preferred (first )?name", re.I), "identity.preferred_name", "text"),
+    (re.compile(r"^(full|legal) name$|^name$", re.I), "identity.legal_name", "text"),
+    (re.compile(r"^e-?mail( address)?\b", re.I), "identity.email", "text"),
+    (re.compile(r"^(mobile |cell |primary )?phone( number)?\b|^telephone", re.I), "identity.phone", "text"),
+    (re.compile(r"^(street )?address( line)? ?1?$|^address$|^street", re.I), "identity.address_line", "text"),
+    (re.compile(r"city,? state,? (and |& )?zip", re.I), "identity.city_state_zip", "text"),
+    (re.compile(r"^(current )?location( \(city\))?\s*\*?$|^(current )?city of residence", re.I), "identity.location_city", "choose"),
+    (re.compile(r"^city\b", re.I), "identity.city", "text"),
+    (re.compile(r"^(zip|postal)( code)?\b", re.I), "identity.zip", "text"),
+    (re.compile(r"^linkedin( profile| url)?\b", re.I), "identity.linkedin", "text"),
+    (re.compile(r"^github( profile| url)?\b", re.I), "identity.github", "text"),
+    (re.compile(r"^(website|portfolio|personal site)( url)?\b", re.I), "identity.website", "text"),
+    (re.compile(r"^(school|university|college|institution)( name)?\b", re.I), "education.school", "choose"),
+    (re.compile(r"^(major|field of study|discipline|area of study)\b", re.I), "education.major", "choose"),
+    (re.compile(r"^(gpa|grade point average)\b", re.I), "education.gpa", "text"),
+    (re.compile(r"^(state|state/province|state or province)\b", re.I), "identity.state", "choose"),
+    (re.compile(r"^country\b", re.I), "identity.country", "choose"),
+    (re.compile(r"^(expected |anticipated )?graduation (date|year|month)?\b", re.I), "education.graduation", "text"),
+]
+
+# Consents, acknowledgements and attestations Surya gives on every application (his instruction,
+# 2026-10-15: sign and consent on his behalf). Marketing, newsletters and talent communities stay off.
+CONSENT = re.compile(
+    r"(\bi (have read|agree|acknowledge|consent|certify|understand|accept|authori[sz]e|attest|confirm)|terms (and|&) conditions|"
+    r"terms of (use|service)|privacy (policy|notice|statement)|data (processing|privacy|protection)|\bgdpr\b|\bconsent|acknowledg|"
+    r"\bcertif|\battest|\bauthori[sz]|background (check|screening|investigation)|drug (test|screen)|e-?signature|"
+    r"electronic(ally)? sign|true and (complete|accurate|correct)|anti-nepotism|voluntary disclosure)", re.I)
+MARKETING = re.compile(
+    r"(marketing|newsletter|promotion|job alerts?|talent (community|network|pool)|future (job )?opportunit|similar (jobs|roles|positions)|"
+    r"updates about (new )?(jobs|roles|opportunities)|new job opportunities|keep me (informed|updated)|subscribe|"
+    r"share my (information|data|profile) with|third[- ]part(y|ies) (marketing|partners)|recruiting events?)", re.I)
+SMS = re.compile(r"(\bsms\b|text messag|\btexts?\b about)", re.I)
+# Surya (2026-10-15): consent to processing his information, creating an account or applying is standard on every
+# application: always consent, even when the same box also mentions receiving information or communications.
+PROCESSING = re.compile(r"(process|processing|collect|store|storing|use of (my|your) (personal )?(information|data)|personal (information|data)|"
+                        r"privacy|terms|account|to apply|application|positions with|recruit(ing|ment) purposes|consider (me|my))", re.I)
+SIGNATURE_LABEL = re.compile(r"(e-?signature|electronic signature|^signature\b|^sign (here|your name)|type your (full )?(legal )?name|"
+                             r"signature \(type|applicant signature|full name as signature)", re.I)
+SIGNATURE_DATE_LABEL = re.compile(r"^(today'?s date|date signed|signature date|date of signature|current date|date)\s*\*?$", re.I)
+
+
+def consent_key(label: str) -> str | None:
+    """The standing answer key that authorizes ticking this consent, or None to leave it alone."""
+    if SMS.search(label):
+        return "consent.sms"
+    if MARKETING.search(label) and not PROCESSING.search(label):
+        return None                       # a purely optional marketing / newsletter / talent-community opt-in
+    if not CONSENT.search(label):
+        return None
+    if re.search(r"background (check|screening|investigation)|consumer report", label, re.I):
+        return "compliance.background_check_consent"
+    if re.search(r"drug (test|screen)", label, re.I):
+        return "compliance.drug_test_consent"
+    if re.search(r"anti-nepotism", label, re.I):
+        return "consent.anti_nepotism_ack"
+    if re.search(r"voluntary disclosure|self-identification", label, re.I):
+        return "consent.voluntary_disclosure"
+    if re.search(r"(certif|attest|true and (complete|accurate|correct)|truthful|accurate and complete|signature)", label, re.I):
+        return "consent.truthfulness_attestation"
+    return "consent.privacy_notice"
+
+
+SELF_ID = re.compile(r"(gender|race|ethnicit|hispanic|veteran|disabilit|pronoun|transgender|sexual orientation)", re.I)
+NEGATED = re.compile(r"^(not |no |none|i do not|i am not|unwilling|unable|never|decline|prefer not)", re.I)
+
+
+def _standing_values() -> dict[str, str]:
+    """normalized answer value -> key, for approved global answers with distinctive values (>= 4 chars,
+    not a bare yes/no), so a prefilled field equal to a stored answer can be sourced without retyping."""
+    from .. import db
+    out: dict[str, str] = {}
+    for r in db.connect().execute("SELECT key, answer FROM answers WHERE superseded_by IS NULL AND approved=1 AND answer IS NOT NULL "
+                                  "AND scope='global' AND key NOT LIKE 'story.%' AND key NOT LIKE 'policy.%' AND key NOT LIKE 'hermes.generated.%'"):
+        for part in str(r["answer"]).split(";"):
+            nv = answers.norm(part)
+            if len(nv) >= 4 and nv not in ("yes", "no", "none", "true", "false") and nv not in out:
+                out[nv] = r["key"]
+    return out
+
+
+def resume_path_for(job: dict):
+    """The résumé file for this job's variant, from delegation.yaml (never a file on the never_attach list)."""
+    import yaml
+    from ..config import SETTINGS
+    deleg = yaml.safe_load((SETTINGS.config_dir / "delegation.yaml").read_text(encoding="utf-8")) or {}
+    res = deleg.get("resumes") or {}
+    variant = job.get("resume_variant") or "swe"
+    name = (res.get("by_variant") or {}).get(variant) or (res.get("by_variant") or {}).get("general") or "Surya_Thirukonda_Resume_SWE.pdf"
+    if name in (res.get("never_attach") or []):
+        return None
+    return SETTINGS.resume_dir / name
+
+
+@dataclass
+class PrefillResult:
+    set: int = 0
+    failed: int = 0
+    skipped_self_id: int = 0
+    details: list[dict] | None = None
+
+
+class Adapter:
+    portal = "other"
+    lane = "no_account"
+    hints = ""
+
+    def apply_url(self, listing_url: str) -> str:
+        return listing_url
+
+    def opening_note(self, attempt: int) -> str:
+        base = "Begin: call snapshot, then fill this page. The mechanical fields may already be prefilled by the harness; verify them in the outline."
+        return base + ("\n" + self.hints if self.hints else "")
+
+    def is_review_page(self, snap: Snapshot) -> bool:
+        return any(re.search(r"\breview\b", h, re.I) for h in snap.headings)
+
+    def field_map(self) -> list[tuple[re.Pattern, str, str]]:
+        return GENERIC_FIELD_MAP
+
+    async def prefill(self, ex, snap: Snapshot, job: dict, page_no: int) -> PrefillResult:
+        """Fill empty plain fields whose label matches the map. Never touches self-identification,
+        attestations, password fields or anything already holding a value."""
+        res = PrefillResult(details=[])
+        plan, chooses = [], []
+        # Pass 0: verify fields that already hold a value (a previous attempt, browser or portal prefill).
+        # A value equal to a stored answer is sourced deterministically; anything else is left for the model
+        # to re-set or clear, and the gate will refuse it until then.
+        store = _standing_values()
+        for item in snap.items:
+            if item.get("tag") not in ("input", "textarea", "select", "dropdown") or item.get("type") in ("checkbox", "radio", "file", "password"):
+                continue
+            val = (item.get("shown") or item.get("value") or "").strip()
+            label = item.get("label") or ""
+            if not val or not label:
+                continue
+            nv = answers.norm(val)
+            key = None
+            for pat, k, _kind in self.field_map():
+                if pat.search(label.strip().rstrip("*").strip()):
+                    a = answers.get(k, job.get("company", ""), self.portal)
+                    if a and a.has_value:
+                        na = answers.norm(str(a.answer))
+                        if nv == na or (len(na) >= 6 and nv.startswith(na)) or any(nv == answers.norm(x) for x in str(a.answer).split(";")):
+                            key = k
+                    break
+            if key is None:
+                key = store.get(nv)
+            if key:
+                records.record_decision(job["id"], page_no, label, val, f"standing:{key}", item["ref"])
+                res.set += 1
+                res.details.append({"label": label, "ok": True, "verified": key})
+        # Pressed toggle buttons (Ashby Yes/No) whose question resolves to a stored answer are sourced too.
+        for item in snap.items:
+            if item.get("tag") != "toggle" or not item.get("pressed"):
+                continue
+            q = item.get("group") or ""
+            a = answers.lookup(q, job.get("company", ""), self.portal) if q else None
+            if not a or not a.has_value:
+                continue
+            ans = answers.norm(str(a.answer)); lab = answers.norm(item.get("label") or "")
+            ok = (lab == ans) or (ans in ("yes", "true") and lab == "yes") or (ans == "no" and lab == "no")
+            if ok:
+                records.record_decision(job["id"], page_no, f"{q[:80]} / {item.get('label', '')[:30]}", "pressed", f"standing:{a.key}", item["ref"])
+                res.set += 1
+                res.details.append({"label": f"{q[:40]} / {item.get('label', '')}", "ok": True, "verified": a.key})
+        # Checked radio/checkbox options whose group resolves to a stored answer are sourced the same way.
+        for g in snap.groups:
+            glabel = g.get("label") or ""
+            a = answers.lookup(glabel, job.get("company", ""), self.portal) if glabel else None
+            if not a or not a.has_value:
+                continue
+            ans = answers.norm(str(a.answer))
+            for o in g.get("options", []):
+                if not o.get("checked"):
+                    continue
+                ol = (o.get("label") or "").strip()
+                nol = answers.norm(ol)
+                negated = bool(NEGATED.match(ol))
+                ok = (nol == ans) or (ans in ("yes", "true") and not negated) or (ans == "no" and negated)
+                if ok:
+                    records.record_decision(job["id"], page_no, f"{glabel[:80]} / {ol[:40]}", "checked", f"standing:{a.key}", o["ref"])
+                    res.set += 1
+                    res.details.append({"label": f"{glabel[:40]} / {ol[:30]}", "ok": True, "verified": a.key})
+        await self._consents(ex, snap, job, page_no, res)
+        for item in snap.items:
+            label = item.get("label") or ""
+            if not label or item.get("disabled"):
+                continue
+            if SELF_ID.search(label):
+                res.skipped_self_id += 1
+                continue
+            if item.get("tag") not in ("input", "textarea", "select", "dropdown") or item.get("type") in ("checkbox", "radio", "file", "password"):
+                continue
+            if item.get("value") or item.get("shown"):
+                continue
+            for pat, key, kind in self.field_map():
+                if pat.search(label.strip().rstrip("*").strip()):
+                    a = answers.get(key, job.get("company", ""), self.portal)
+                    if not a or not a.has_value:
+                        break
+                    if item.get("tag") in ("dropdown", "select") or item.get("combo") or kind == "choose" and item.get("tag") != "input":
+                        chooses.append((item["ref"], label, key, str(a.answer)))
+                    else:
+                        plan.append({"ref": item["ref"], "value": str(a.answer), "_label": label, "_key": key})
+                    break
+        if plan:
+            out = await fill.fill_batch(ex, [{"ref": p["ref"], "value": p["value"]} for p in plan])
+            by = {r.ref: r for r in out}
+            for p in plan:
+                r = by.get(p["ref"])
+                if r and r.ok:
+                    res.set += 1
+                    records.record_decision(job["id"], page_no, p["_label"], r.readback, f"standing:{p['_key']}", p["ref"])
+                else:
+                    res.failed += 1
+                res.details.append({"label": p["_label"], "ok": bool(r and r.ok), "error": r.error if r else "no result"})
+        # Résumé: attach deterministically when an empty Resume/CV file input exists (never the cover letter slot);
+        # a slot that already shows the expected file is verified and sourced without re-uploading.
+        for item in snap.items:
+            if item.get("type") != "file":
+                continue
+            label = " ".join([(item.get("label") or ""), (item.get("placeholder") or ""), (item.get("name") or "")])
+            if re.search(r"cover|transcript", label, re.I) or not re.search(r"resume|résumé|\bcv\b|curriculum", label, re.I):
+                continue
+            path = resume_path_for(job)
+            if path is None or not path.exists():
+                break
+            if item.get("value"):
+                if item["value"].lower() == path.name.lower():
+                    records.record_decision(job["id"], page_no, item.get("label") or "resume upload", path.name, "resume", item["ref"])
+                    job["resume_file"] = path.name
+                    res.set += 1
+                    res.details.append({"label": item.get("label"), "ok": True, "verified": "resume already attached"})
+                else:
+                    res.details.append({"label": item.get("label"), "ok": False, "error": f"slot holds {item['value']}, expected {path.name}"})
+                break
+            r = await fill.upload_file(ex, item["ref"], path)
+            if r.ok:
+                res.set += 1
+                records.record_decision(job["id"], page_no, item.get("label") or "resume upload", path.name, "resume", item["ref"])
+                job["resume_file"] = path.name
+            else:
+                res.failed += 1
+            res.details.append({"label": item.get("label"), "ok": r.ok, "error": r.error})
+            break
+        for ref, label, key, value in chooses:
+            wants = [w.strip() for w in value.split(";") if w.strip()]
+            variants = answers.get(key + "_variants")
+            if variants and variants.answer:
+                wants += [w.strip() for w in str(variants.answer).split(";")]
+            fallbacks = answers.get(key.rsplit(".", 1)[0] + ".major_fallbacks") if key.endswith(".major") else None
+            if fallbacks and fallbacks.answer:
+                wants += [w.strip() for w in str(fallbacks.answer).split(";")]
+            r = await fill.choose(ex, ref, wants)
+            if r.ok:
+                res.set += 1
+                records.record_decision(job["id"], page_no, label, r.readback, f"standing:{key}", ref)
+            else:
+                res.failed += 1
+            res.details.append({"label": label, "ok": r.ok, "error": r.error})
+        return res
+
+
+async def _consents_impl(self, ex, snap: Snapshot, job: dict, page_no: int, res: PrefillResult) -> None:
+    """Tick required consents/acknowledgements/attestations, type the e-signature and today's date.
+    Each one is recorded with the standing key that authorizes it; anything unclear is left to the model."""
+    done: set[str] = set()
+    company = job.get("company", "")
+
+    def ok_key(key: str | None) -> bool:
+        if not key:
+            return False
+        a = answers.get(key, company, self.portal)
+        return bool(a and a.has_value and answers.norm(str(a.answer)).split(" ")[0] in ("yes", "true", "i", "accept", "agree"))
+
+    ticks = []
+    for item in snap.items:
+        if item.get("type") != "checkbox" or item.get("checked") or item.get("disabled"):
+            continue
+        label = " ".join([item.get("label") or "", item.get("group") or ""]).strip()
+        key = consent_key(label)
+        if ok_key(key) and not NEGATED.match((item.get("label") or "").strip()):
+            ticks.append((item["ref"], (item.get("label") or label)[:120], key))
+            done.add(item["ref"])
+    for g in snap.groups:
+        glabel = g.get("label") or ""
+        opts = g.get("options", [])
+        if not glabel or any(o.get("checked") for o in opts):
+            continue
+        key = consent_key(glabel)
+        if not ok_key(key):
+            continue
+        yes = [o for o in opts if o.get("ref") not in done and not NEGATED.match((o.get("label") or "").strip())
+               and re.match(r"^(yes|i (agree|accept|acknowledge|consent|certify|understand|authori[sz]e|confirm)|agree|accept|acknowledged?)\b",
+                            (o.get("label") or "").strip(), re.I)]
+        if len(yes) == 1 and (len(opts) <= 3):
+            ticks.append((yes[0]["ref"], f"{glabel[:90]} / {(yes[0].get('label') or '')[:30]}", key))
+            done.add(yes[0]["ref"])
+    if ticks:
+        out = await fill.fill_batch(ex, [{"ref": r, "value": "true"} for r, _, _ in ticks])
+        by = {r.ref: r for r in out}
+        for ref, label, key in ticks:
+            r = by.get(ref)
+            if r and r.ok:
+                res.set += 1
+                records.record_decision(job["id"], page_no, label, "checked", f"standing:{key}", ref)
+            else:
+                res.failed += 1
+            res.details.append({"label": label, "ok": bool(r and r.ok), "consent": key, "error": r.error if r and not r.ok else ""})
+    # Electronic signature: his full legal name, and today's date beside it.
+    sig_refs = []
+    for item in snap.items:
+        label = (item.get("label") or "").strip().rstrip("*").strip()
+        if item.get("tag") not in ("input", "textarea") or item.get("type") in ("checkbox", "radio", "file", "password"):
+            continue
+        if SIGNATURE_LABEL.search(label) and not (item.get("value") or "").strip():
+            sig_refs.append((item["ref"], label))
+    if sig_refs:
+        a = answers.get("bank.signature", company, self.portal) or answers.get("identity.legal_name", company, self.portal)
+        if a and a.has_value:
+            out = await fill.fill_batch(ex, [{"ref": r, "value": str(a.answer)} for r, _ in sig_refs])
+            for (ref, label), r in zip(sig_refs, out):
+                if r.ok:
+                    res.set += 1
+                    records.record_decision(job["id"], page_no, label, r.readback, f"standing:{a.key}", ref)
+                res.details.append({"label": label, "ok": r.ok, "signature": True, "error": r.error})
+    has_signature = bool(sig_refs) or any(SIGNATURE_LABEL.search(i.get("label") or "") for i in snap.items)
+    da = answers.get("consent.signature_date", company, self.portal)
+    if has_signature and da and da.has_value:
+        today, _ = answers.concrete_value(da)
+        for item in snap.items:
+            label = (item.get("label") or "").strip()
+            if item.get("tag") != "input" or item.get("type") in ("checkbox", "radio", "file", "password") or (item.get("value") or "").strip():
+                continue
+            if SIGNATURE_DATE_LABEL.match(label):
+                r = await fill.set_date(ex, item["ref"], today)
+                if r.ok:
+                    res.set += 1
+                    records.record_decision(job["id"], page_no, label, r.readback or today, "standing:consent.signature_date", item["ref"])
+                res.details.append({"label": label, "ok": r.ok, "signature_date": today, "error": r.error})
+
+
+Adapter._consents = _consents_impl
+
+
+class Greenhouse(Adapter):
+    portal = "greenhouse"
+    hints = ("Greenhouse: dropdowns are react-select (use choose; never press Enter in one). Short answers are often capped at 255 "
+             "characters. The 'protected by reCAPTCHA' badge is not a challenge. If the page asks for an emailed security code "
+             "after submit, call enter_email_code with the code box refs, then submit again. School on Greenhouse is "
+             "'Texas A&M University - College Station'.")
+
+    def apply_url(self, listing_url: str) -> str:
+        u = urlparse(listing_url)
+        host = u.netloc.lower()
+        q = parse_qs(u.query)
+        if "gh_jid" in q and "greenhouse.io" not in host:
+            board = host.split(".")[-2] if host.count(".") >= 1 else host
+            if host.startswith(("careers.", "jobs.", "www.")):
+                board = host.split(".")[1]
+            return f"https://job-boards.greenhouse.io/embed/job_app?for={board}&token={q['gh_jid'][0]}"
+        m = re.match(r"^/([^/]+)/jobs/(\d+)", u.path)
+        if "greenhouse.io" in host and m and "/embed/" not in u.path:
+            return f"https://job-boards.greenhouse.io/embed/job_app?for={m.group(1)}&token={m.group(2)}"
+        return listing_url
+
+
+class Ashby(Adapter):
+    portal = "ashby"
+    hints = ("Ashby: short single-page forms; fields are virtualized so take a fresh snapshot after scrolling. Uploading the résumé "
+             "can trigger 'Autofill from resume': read the form back afterwards and correct anything that differs from the stored answers. "
+             "Location is 'Sugar Land, TX'.")
+
+    def apply_url(self, listing_url: str) -> str:
+        u = listing_url.rstrip("/")
+        return u if u.endswith("/application") else u + "/application"
+
+
+class Lever(Adapter):
+    portal = "lever"
+    lane = "ready_for_you"
+    hints = ("Lever: single page, résumé upload at the top (it may overwrite name and contact fields: read back after uploading). "
+             "'Current location' is an autocomplete: use choose with 'Sugar Land, TX, USA' and confirm the error line 'No location found' "
+             "is gone. Lever shows an hCaptcha at submit on nearly every posting: fill everything, then call park with "
+             "'ready_for_you: hCaptcha then Submit'.")
+
+    def apply_url(self, listing_url: str) -> str:
+        u = listing_url.rstrip("/")
+        return u if u.endswith("/apply") else u + "/apply"
+
+
+class Workday(Adapter):
+    portal = "workday"
+    lane = "account"
+    hints = ("Workday: you start on the posting page. Dismiss any cookie banner (Decline or Accept is fine), click 'Apply', then "
+             "'Apply Manually' if a choice is offered (never 'Use My Last Application' or 'Autofill with Resume'). A Sign In / Create "
+             "Account page follows. Order: (1) on the Sign In form call credentials mode 'login_universal' and click Sign In; "
+             "(2) if the page then says wrong email/password, switch to Create Account and call credentials mode 'create', "
+             "fill Verify New Password via confirm_password_ref, click Create Account, then open_verification_link; "
+             "(3) if Create Account says the account already exists, park with 'credentials_unknown'. "
+             "Then a multi-page rail (My Information, My Experience, Application Questions, Voluntary Disclosures, Self Identify, Review). "
+             "Every page's primary button is 'Save and Continue' EXCEPT the last, where the same button says 'Submit': never click it; call submit. "
+             "You usually need a candidate account first: on the Sign In / Create Account dialog call credentials (mode 'login' first; if the "
+             "page says no account, mode 'create'), tick the required checkbox, click Create Account / Sign In. If the page asks you to verify "
+             "the email, call open_verification_link (or enter_email_code for a code). 'Select One' buttons and prompt boxes are custom "
+             "dropdowns: use choose (State -> Texas; Phone Device Type -> Mobile; Country -> United States of America; Field of Study -> "
+             "Computer Science; How Did You Hear -> Job Board then LinkedIn). The school is 'Texas A & M University'. Date widgets: use choose "
+             "or the calendar; a typed year may not commit. 'Enter website' marked for robots only is a honeypot: leave it empty. "
+             "Skills on My Experience come only from the résumé. "
+             "Date fields (graduation, employment dates) are three spinbuttons that ignore ordinary typing: always use "
+             "`set_date` (graduation = education.graduation_mmddyyyy, i.e. 05/15/2028). Revio IS a current role: tick "
+             "'I currently work here' and leave its end date blank.")
+
+    def is_review_page(self, snap: Snapshot) -> bool:
+        return any(re.search(r"\breview\b", h, re.I) for h in snap.headings) or "review" in snap.url.lower()
+
+
+class Oracle(Adapter):
+    portal = "oracle"
+    lane = "account"
+    hints = ("Oracle Recruiting Cloud: an account or an emailed access code is required; use credentials / enter_email_code. "
+             "Sessions time out after 30 idle minutes. Oracle uses role=alert for status chatter such as 'The form Address form loaded'; "
+             "the harness already ignores that. Fill the Address block completely: a missing home address blocked a submit before.")
+
+
+class ICIMS(Adapter):
+    portal = "icims"
+    lane = "account"
+    hints = ("iCIMS: account creation with an emailed six-digit code (enter_email_code). The form runs in an iframe; take a snapshot after each step.")
+
+
+REGISTRY: dict[str, Adapter] = {a.portal: a for a in (Greenhouse(), Ashby(), Lever(), Workday(), Oracle(), ICIMS())}
+
+
+def for_portal(ats: str) -> Adapter:
+    return REGISTRY.get(ats or "", Adapter())

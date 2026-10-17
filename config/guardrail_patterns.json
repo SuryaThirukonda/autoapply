@@ -1,0 +1,27 @@
+{
+  "_comment": "Run by `sweepq.py guardcheck` over every answer the agent typed. block = submit gate fails. warn = shown for a second look.",
+  "block": {
+    "published_paper": "\\b(?:published|publication|co-?author(?:ed)?)\\b[^.\\n]{0,60}\\b(?:paper|journal|conference|manuscript)\\b",
+    "yc_acceptance": "\\b(?:y combinator|\\byc\\b)[^.\\n]{0,60}\\b(?:accepted|backed|funded|alum|batch|founder)\\b",
+    "math_major": "\\b(?:math|mathematics) (?:major|degree|double major)\\b",
+    "typescript_claim": "\\btypescript\\b",
+    "usaco_gold": "\\busaco\\b[^.\\n]{0,30}\\bgold\\b",
+    "revio_uptime": "\\b99(?:\\.\\d+)?%\\+? uptime\\b",
+    "reu_label": "\\(REU\\)",
+    "southwest_employer": "\\b(?:interned|worked|employed|employee) (?:at|for|by) southwest\\b",
+    "southwest_bad_figures": "\\b(?:10% mape|85% accuracy|\\$2m)\\b",
+    "tamuhack_first_overall": "\\b(?:first|1st) (?:place )?overall\\b[^.\\n]{0,40}\\btamuhack\\b|\\btamuhack\\b[^.\\n]{0,40}\\b(?:first|1st) (?:place )?overall\\b",
+    "waiterdock_unmeasured": "\\b(?:sub-?100 ?ms|10\\+ concurrent|50% (?:seating|reduction))\\b",
+    "avvc_beyond_stage1": "\\bventure velocity\\b[^.\\n]{0,60}\\b(?:finalist|winner|won|stage (?:2|3|two|three))\\b",
+    "dekalb_fund": "\\bdekalb\\b[^.\\n]{0,60}\\b(?:hedge fund|institutional|asset manager|aum)\\b",
+    "stale_portland_figures": "\\b7 models\\b|\\b250\\+ (?:rolling )?origins\\b",
+    "revio_100_plus": "\\b100\\+ (?:journal|profiles|conversions)\\b",
+    "em_dash": "\\u2014"
+  },
+  "warn": {
+    "absolute_claims": "\\b(?:always|never fails|guarantee[ds]?|flawless|perfect(?:ly)?|world-class|expert in)\\b",
+    "generic_enthusiasm": "\\b(?:passionate about|thrilled|excited to|dream (?:job|company)|i have always)\\b",
+    "present_tense_ended_roles": "\\b(?:currently|presently)\\b[^.\\n]{0,60}\\b(?:dekalb|portland state)\\b",
+    "line_by_line_authorship": "\\b(?:hand-?wrote|wrote every line|from scratch by hand)\\b"
+  }
+}

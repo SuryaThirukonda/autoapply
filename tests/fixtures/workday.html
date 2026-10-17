@@ -1,0 +1,130 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Acme Careers - Software Engineer Intern - Apply</title>
+<style>
+ body{font-family:Arial;margin:0;padding:20px}
+ .page{display:none}.page.active{display:block}
+ [data-automation-id=selectWidget]{min-width:220px;text-align:left;padding:6px;border:1px solid #888;background:#fff}
+ .popup{position:absolute;background:#fff;border:1px solid #666;z-index:5;max-height:200px;overflow:auto}
+ .popup [role=option]{padding:6px 10px;cursor:pointer}
+ .popup [role=option]:hover{background:#eef}
+ .formField{margin:10px 0}
+ .err{color:#b00000;font-size:12px}
+ .hidden{display:none}
+ .primary{background:#0875e1;color:#fff;padding:10px 18px;border:0;border-radius:4px}
+ .rail span{margin-right:14px;color:#777}.rail span.cur{color:#000;font-weight:bold}
+ #robots{position:absolute;left:-9999px}
+</style></head>
+<body>
+<div class="rail"><span id="r1" class="cur">My Information</span><span id="r2">My Experience</span><span id="r3">Application Questions</span><span id="r4">Review</span></div>
+<h1 id="jobtitle">Software Engineer Intern</h1>
+
+<div id="p1" class="page active">
+  <h2 role="heading">My Information</h2>
+  <div class="formField" data-automation-id="formField-sourcePrompt"><label>How Did You Hear About Us? <span>*</span></label><br>
+    <button type="button" data-automation-id="selectWidget" aria-haspopup="listbox" aria-label="How Did You Hear About Us? Select One Required" data-options="Job Board|LinkedIn|Indeed|Referral|Campus">Select One</button></div>
+  <div class="formField" data-automation-id="formField-country"><label>Country <span>*</span></label><br>
+    <button type="button" data-automation-id="selectWidget" aria-haspopup="listbox" aria-label="Country Select One Required" data-options="Canada|Mexico|United States of America|United Kingdom">Select One</button></div>
+  <div class="formField" data-automation-id="formField-legalName--firstName"><label for="fn">First Name <span>*</span></label><br><input id="fn" data-automation-id="legalNameSection_firstName" required></div>
+  <div class="formField" data-automation-id="formField-legalName--lastName"><label for="ln">Last Name <span>*</span></label><br><input id="ln" required></div>
+  <div class="formField" data-automation-id="formField-addressLine1"><label for="a1">Address Line 1 <span>*</span></label><br><input id="a1" required></div>
+  <div class="formField"><label for="city">City <span>*</span></label><br><input id="city" required></div>
+  <div class="formField" data-automation-id="formField-state"><label>State <span>*</span></label><br>
+    <button type="button" data-automation-id="selectWidget" aria-haspopup="listbox" aria-label="State Select One Required" data-options="Alabama|California|Texas|Utah">Select One</button></div>
+  <div class="formField"><label for="zip">Postal Code <span>*</span></label><br><input id="zip" required></div>
+  <div class="formField"><label for="email">Email Address <span>*</span></label><br><input id="email" type="email" required></div>
+  <div class="formField" data-automation-id="formField-phoneType"><label>Phone Device Type <span>*</span></label><br>
+    <button type="button" data-automation-id="selectWidget" aria-haspopup="listbox" aria-label="Phone Device Type Select One Required" data-options="Fax|Landline|Mobile|Pager">Select One</button></div>
+  <div class="formField"><label for="phone">Phone Number <span>*</span></label><br><input id="phone" type="tel" required></div>
+  <div class="formField" id="robots"><label for="web">Enter website. This input is for robots only, do not enter if you're human</label><input id="web" name="website"></div>
+  <div class="err hidden" id="e1" role="alert">Please enter a value for the required fields</div>
+  <button class="primary" type="button" onclick="next(1)">Save and Continue</button>
+</div>
+
+<div id="p2" class="page">
+  <h2 role="heading">My Experience</h2>
+  <div class="formField"><label for="resume">Resume/CV <span>*</span></label><br><input id="resume" type="file" required><div id="resname"></div></div>
+  <div class="formField"><label for="skills">Skills</label><br><input id="skills" placeholder="Search"></div>
+  <div class="err hidden" id="e2">Please attach a resume</div>
+  <button class="primary" type="button" onclick="next(2)">Save and Continue</button>
+</div>
+
+<div id="p3" class="page">
+  <h2 role="heading">Application Questions</h2>
+  <fieldset><legend>Are you legally authorized to work in the United States? *</legend>
+    <label><input type="radio" name="auth" value="Yes" required> Yes</label> <label><input type="radio" name="auth" value="No" required> No</label></fieldset>
+  <fieldset><legend>Will you now or in the future require sponsorship for employment visa status? *</legend>
+    <label><input type="radio" name="spons" value="Yes" required> Yes</label> <label><input type="radio" name="spons" value="No" required> No</label></fieldset>
+  <fieldset><legend>Do you have any relatives employed by Acme or its affiliates? *</legend>
+    <label><input type="radio" name="rel" value="Yes" required> Yes</label> <label><input type="radio" name="rel" value="No" required> No</label></fieldset>
+  <div class="formField"><label for="why">Why are you interested in this role? <span>*</span></label><br><textarea id="why" required maxlength="500"></textarea></div>
+  <div class="err hidden" id="e3">Please answer all required questions</div>
+  <button class="primary" type="button" onclick="next(3)">Save and Continue</button>
+</div>
+
+<div id="p4" class="page">
+  <h2 role="heading">Review</h2>
+  <div id="summary"></div>
+  <div class="formField"><label><input type="checkbox" id="cert" required> I certify that the information provided is true and complete *</label></div>
+  <div class="err hidden" id="e4">You must certify before submitting</div>
+  <button class="primary" type="button" id="submitBtn" onclick="doSubmit()">Submit</button>
+</div>
+
+<div id="done" class="page"><h2>Your application has been submitted</h2><p>Congratulations! Acme will review your application.</p></div>
+
+<script>
+  // Workday-style button dropdowns: popup with role=option items.
+  let openPopup = null;
+  document.querySelectorAll('[data-automation-id=selectWidget]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (openPopup) { openPopup.remove(); openPopup = null; }
+      const pop = document.createElement('div'); pop.className = 'popup'; pop.setAttribute('role', 'listbox');
+      const r = btn.getBoundingClientRect();
+      pop.style.left = (r.left + window.scrollX) + 'px'; pop.style.top = (r.bottom + window.scrollY) + 'px';
+      btn.dataset.options.split('|').forEach(o => {
+        const d = document.createElement('div'); d.setAttribute('role', 'option'); d.setAttribute('data-automation-id', 'promptOption');
+        d.setAttribute('data-automation-label', o); d.textContent = o;
+        d.addEventListener('click', (ev) => { ev.stopPropagation(); btn.textContent = o; btn.dataset.value = o; pop.remove(); openPopup = null; });
+        pop.appendChild(d);
+      });
+      document.body.appendChild(pop); openPopup = pop;
+    });
+  });
+  document.addEventListener('click', () => { if (openPopup) { openPopup.remove(); openPopup = null; } });
+  window.__submits = 0;
+  function show(n) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('p' + n).classList.add('active');
+    for (let i = 1; i <= 4; i++) document.getElementById('r' + i).classList.toggle('cur', i === n);
+    history.pushState({}, '', '#/apply/page' + n);
+  }
+  function pageValid(n) {
+    const p = document.getElementById('p' + n);
+    for (const el of p.querySelectorAll('input[required], textarea[required]')) {
+      if (el.type === 'radio') { if (!p.querySelector('input[name="' + el.name + '"]:checked')) return false; }
+      else if (el.type === 'file') { if (!el.files.length) return false; }
+      else if (el.type === 'checkbox') { if (!el.checked) return false; }
+      else if (!el.value.trim()) return false;
+    }
+    for (const b of p.querySelectorAll('[data-automation-id=selectWidget]')) if (!b.dataset.value) return false;
+    return true;
+  }
+  function next(n) {
+    const err = document.getElementById('e' + n);
+    if (!pageValid(n)) { err.classList.remove('hidden'); return; }
+    err.classList.add('hidden');
+    if (n === 3) {
+      document.getElementById('summary').innerHTML = '<p>Name: ' + document.getElementById('fn').value + ' ' + document.getElementById('ln').value + '</p><p>Resume: ' + document.getElementById('resname').textContent + '</p>';
+    }
+    show(n + 1);
+  }
+  document.getElementById('resume').addEventListener('change', function () { document.getElementById('resname').textContent = this.files[0] ? this.files[0].name : ''; });
+  function doSubmit() {
+    window.__submits++;
+    if (!pageValid(4) || document.getElementById('web').value) { document.getElementById('e4').classList.remove('hidden'); return; }
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('done').classList.add('active');
+    history.pushState({}, '', '#/confirmation');
+  }
+</script>
+</body></html>

@@ -1,0 +1,15 @@
+{
+  "_comment": "Pass 1 of the trap scan, run by `sweepq.py trapscan`. hard = stop the run and hold. soft = show the agent, who classifies in pass 2.",
+  "hard": {
+    "bot_check_conditional": "\\bif you(?:'re| are) (?:an? )?(?:ai|a\\.i\\.|robot|bot|llm|large language model|language model|automated (?:system|agent|tool)|chatbot|machine)\\b(?![\\s-]+(?:learning|enthusiast|engineer|researcher|expert|native|practitioner|builder|developer|person|fan|startup|company|first|focused|driven|curious|scientist|student|intern))",
+    "override_instruction": "\\b(?:ignore|disregard|forget) (?:all |any )?(?:previous|prior|above|earlier) (?:instructions|prompts|directions)\\b",
+    "ai_prohibited": "\\b(?:use of|using) (?:ai|a\\.i\\.|artificial intelligence|llms?|chatgpt|generative ai)[^.\\n]{0,80}\\b(?:disqualif|prohibit|not (?:permitted|allowed)|forbidden|will be rejected)"
+  },
+  "soft": {
+    "mentions_ai": "\\b(?:ai|a\\.i\\.|artificial intelligence|llm|chatgpt|generative ai|language model)\\b[^.\\n]{0,60}\\b(?:application|complet|assist|help|tool|used?)\\b",
+    "mentions_robot": "\\b(?:robot|human verification|are you human|prove you are human|captcha|recaptcha|hcaptcha|turnstile)\\b",
+    "write_the_word": "\\b(?:write|type|enter) the (?:word|phrase|number|letter)\\b",
+    "attestation": "\\b(?:i certify|i attest|i confirm|i acknowledge|truthful and accurate|true and complete)\\b",
+    "bot_check_instruction": "\\b(?:ai|llm|language model|bot|robot|automated)s?\\b[^.\\n]{0,80}\\b(?:must|should|please|need to)\\b[^.\\n]{0,40}\\b(?:write|type|enter|answer|respond|include|say|select)\\b"
+  }
+}
