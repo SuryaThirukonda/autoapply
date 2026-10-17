@@ -43,10 +43,10 @@ def _env_bool(name: str, default: bool) -> bool:
 
 @dataclass
 class Models:
-    executor: str = _env("EXECUTOR_MODEL", "gpt-6.1-sol")
+    executor: str = _env("EXECUTOR_MODEL", "gpt-6-luna")
     executor_effort: str = _env("EXECUTOR_EFFORT", "low")
     executor_retry_effort: str = _env("EXECUTOR_RETRY_EFFORT", "medium")
-    advisor: str = _env("ADVISOR_MODEL", "gpt-6-astra")
+    advisor: str = _env("ADVISOR_MODEL", "gpt-6-luna")
     advisor_effort: str = _env("ADVISOR_EFFORT", "high")
     advisor_max_calls: int = _env_int("ADVISOR_MAX_CALLS", 3)
     classifier: str = _env("CLASSIFIER_MODEL", "gpt-6-luna")
