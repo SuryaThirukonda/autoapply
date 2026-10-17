@@ -136,6 +136,40 @@ Whenever the agent needs an answer, a **pop-up** appears over any tab with the q
 buttons, a free-text box, and "I don't know yet". The header pill shows Working / Needs you / Idle.
 Answering saves the answer under its key, so it is never asked again, and releases every job held on it.
 
+## Cloud link (RDS, the website and Telegram on AWS)
+
+The agent stays on this PC. Its only link to AWS is an RDS Postgres database, which the website and the
+Telegram worker on one EC2 instance read. Both of those live in the goat-dashboard repo, with deploy
+scripts in `deploy/aws/`.
+
+With `GOAT_DB_URL` set in `.env`, `goat run` starts the link (`goat/cloud.py`):
+
+- **Mirroring.** Every event, plus the jobs, listings, questions, answers, field fills, ledger rows and
+  screenshots it touches, reaches RDS within about two seconds. A heartbeat goes up every 15 seconds.
+  The local SQLite file stays the agent's working store, so a network outage never stops a run.
+- **Commands.** Answers, holds, answer-bank edits, added listings, job actions, queue order, and
+  pause / resume / stop / skip come back as commands. The agent applies them with the same code as the
+  local dashboard (the question broker, `answers.save_answer`, `goat/intake.py`, `worker.CONTROL`).
+- **Telegram.** The local Telegram bot stays off, because the worker on the web server sends questions,
+  progress marks and outcomes.
+- **Browser outages.** When Chrome does not answer (a CDP connect timeout), the job goes back to the queue
+  without spending an attempt. The worker backs off for 1, 2, 5, 10, then 15 minutes and reports the
+  outage once, so it no longer holds the whole queue with "error".
+
+```bash
+.venv\Scripts\python.exe -m goat cloud-sync
+```
+
+This mirrors everything once without starting the worker.
+
+```bash
+.venv\Scripts\python.exe scripts/cloud_smoke.py --env-file <file> --workdir <scratch>
+```
+
+This walks a fake job ("Simulator Co", no Chrome) through every progress mark against a copy of goat.db.
+
+The old all-in-one cloud VM (Docker, Xvfb, noVNC) is in `legacy/vm/`. It is git-ignored and not used.
+
 ## Workday-style workflow test
 
 `tests/fixtures/workday.html` imitates a Workday application: a rail of four pages, "Select One" button

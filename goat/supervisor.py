@@ -81,6 +81,9 @@ def digest_text() -> str:
 
 
 async def send_digest() -> None:
+    if SETTINGS.cloud.enabled:
+        db.event(None, "digest", {"text": digest_text()})   # the cloud Telegram worker sends it
+        return
     from .human import telegram_bot
     await telegram_bot.notify_owner(digest_text())
 
@@ -97,8 +100,12 @@ async def mail_reconciler(stop: asyncio.Event) -> None:
                     if mid:
                         ledger.mark_confirmed(int(app["id"]), mid)
                         with db.tx() as con:
-                            con.execute("UPDATE jobs SET status=? WHERE listing_id=? AND status=?",
-                                        (states.CONFIRMED, app["listing_id"], states.SUBMITTED))
+                            rows = con.execute("SELECT id FROM jobs WHERE listing_id=? AND status=?",
+                                               (app["listing_id"], states.SUBMITTED)).fetchall()
+                            con.execute("UPDATE jobs SET status=?, updated_at=? WHERE listing_id=? AND status=?",
+                                        (states.CONFIRMED, db.now(), app["listing_id"], states.SUBMITTED))
+                        for r in rows:
+                            db.event(r["id"], "job:confirmed", {"email_id": mid})
                         log.info("confirmed %s — %s via email %s", app["company"], app["title"], mid)
         except Exception as e:
             log.warning("mail reconciler: %s", e)
@@ -131,13 +138,21 @@ async def main(run_worker: bool = True, run_scraper: bool = True) -> None:
     except Exception:
         pass
 
-    from .human.telegram_bot import TelegramChannel
     from . import scraper, worker
     from .dashboard import start_in_thread
     start_in_thread(SETTINGS.dashboard_port)
-    tasks = [asyncio.create_task(TelegramChannel().run(), name="telegram"),
-             asyncio.create_task(watchdog(stop), name="watchdog"),
+    tasks = [asyncio.create_task(watchdog(stop), name="watchdog"),
              asyncio.create_task(mail_reconciler(stop), name="mail")]
+    link = None
+    if SETTINGS.cloud.enabled:
+        # RDS is the only link to AWS. Telegram runs on the website's server, so the local bot stays off
+        # (two bots polling one token would fight over updates).
+        from .cloud import CloudLink
+        link = CloudLink()
+        link.start(asyncio.get_running_loop())
+    else:
+        from .human.telegram_bot import TelegramChannel
+        tasks.append(asyncio.create_task(TelegramChannel().run(), name="telegram"))
     if run_scraper:
         tasks.append(asyncio.create_task(scraper.scrape_loop(stop), name="scraper"))
     if run_worker:
@@ -152,6 +167,8 @@ async def main(run_worker: bool = True, run_scraper: bool = True) -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
         keep_awake(False)
         db.event(None, "supervisor:stop", {})
+        if link is not None:
+            await asyncio.to_thread(link.stop, 10.0)
 
 
 if __name__ == "__main__":

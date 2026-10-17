@@ -32,6 +32,10 @@ logs/
 *.log
 proposals/
 
+# --- the old all-in-one cloud VM (Docker + Xvfb + noVNC): kept locally, not used --------
+# The current setup keeps the agent on cadoganpc; only RDS and the website run on AWS.
+legacy/
+
 # --- tooling -------------------------------------------------------------------
 .venv/
 __pycache__/

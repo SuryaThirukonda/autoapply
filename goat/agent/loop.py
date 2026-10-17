@@ -223,6 +223,7 @@ class AgentLoop:
                     out_text, img = await self.tools.dispatch(item.name, item.arguments)
                     if ctx.page_no != page_before:
                         # A new form page: the worker starts a fresh conversation from the cached prefix.
+                        db.event(ctx.job_id, "page:done", {"page": page_before, "next": ctx.page_no})
                         self.items.append({"type": "function_call_output", "call_id": item.call_id, "output": out_text})
                         return LoopResult("page_done", f"page {ctx.page_no}", steps=self.steps)
                     if '"error"' in out_text[:40]:

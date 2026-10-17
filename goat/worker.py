@@ -92,6 +92,8 @@ def ready_for_you_text(company: str, title: str, reason: str, tab_url: str, novn
 
 
 async def notify(text: str, png: bytes | None = None) -> None:
+    if SETTINGS.cloud.enabled:
+        return   # Telegram runs on the website's server and reports outcomes from the mirrored events
     try:
         from .human import telegram_bot
         await telegram_bot.notify_owner(text, png)
@@ -121,6 +123,89 @@ class RunOutcome:
     reason: str = ""
 
 
+BROWSER_DOWN = "browser_down"
+_BROWSER_FAILURE_MARKS = ("connect_over_cdp", "ECONNREFUSED 127.0.0.1", "Browser has been closed",
+                          "Target page, context or browser has been closed", "browser has disconnected")
+
+
+def is_browser_failure(e: BaseException) -> bool:
+    """Chrome itself unreachable (CDP connect timeout, refused, closed): not the posting's fault."""
+    text = f"{type(e).__name__}: {e}"
+    return any(m.lower() in text.lower() for m in _BROWSER_FAILURE_MARKS)
+
+
+def _browser_down(job_id: int, why: str) -> "RunOutcome":
+    """Put a job that never reached the browser back in the queue, attempt not counted."""
+    with db.tx() as con:
+        con.execute("UPDATE jobs SET status=?, hold_reason=NULL, attempts=MAX(attempts-1, 0), updated_at=? WHERE id=?",
+                    (states.QUEUED, db.now(), job_id))
+    db.event(job_id, "job:requeued", {"reason": "browser_unavailable", "detail": why[:300]})
+    return RunOutcome(BROWSER_DOWN, why)
+
+
+class WorkerControl:
+    """Pause / stop requests from the website (through the cloud link, on another thread) and the
+    browser circuit breaker. Pause flags live in the meta table so they survive a restart."""
+
+    def __init__(self) -> None:
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.wake = asyncio.Event()
+        self.stop_current = asyncio.Event()
+        self.stop_mode = ""                 # "stop" (hold it) | "skip" (mark it dead)
+        self.current_job_id: int | None = None
+        self.browser_ok: bool | None = None
+        self.browser_failures = 0
+
+    # -- called from any thread
+    def _call(self, fn) -> None:
+        if self.loop is not None and not self.loop.is_closed():
+            self.loop.call_soon_threadsafe(fn)
+        else:
+            fn()
+
+    def set_paused(self, paused: bool, *, after_current: bool = False, by: str = "") -> None:
+        if after_current:
+            db.meta_set("pause_after_current", True)
+            db.event(self.current_job_id, "worker:pause_after_current", {"by": by})
+        else:
+            db.meta_set("worker_paused", bool(paused))
+            db.meta_set("pause_after_current", False)
+            db.event(None, "worker:paused" if paused else "worker:resumed", {"by": by})
+        self._call(self.wake.set)
+
+    def request_stop(self, mode: str, by: str = "") -> int | None:
+        """Abandon the running job: mode "stop" holds it (and pauses the worker), "skip" marks it dead."""
+        job = self.current_job_id
+        if mode == "stop":
+            db.meta_set("worker_paused", True)
+            db.event(job, "worker:stop_now", {"by": by})
+        else:
+            db.event(job, "worker:skip_current", {"by": by})
+        if job is not None:
+            def _go():
+                self.stop_mode = mode
+                self.stop_current.set()
+            self._call(_go)
+        self._call(self.wake.set)
+        return job
+
+    # -- loop side
+    def bind(self) -> None:
+        """Fresh asyncio events for the running loop (asyncio events belong to one loop)."""
+        loop = asyncio.get_running_loop()
+        if self.loop is not loop:
+            self.loop = loop
+            self.wake = asyncio.Event()
+            self.stop_current = asyncio.Event()
+
+    @staticmethod
+    def paused() -> bool:
+        return bool(db.meta_get("worker_paused", False))
+
+
+CONTROL = WorkerControl()
+
+
 async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutcome:
     job_id = int(job["id"])
     portal = job.get("ats") or "other"
@@ -140,8 +225,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
         return RunOutcome(states.DEAD, "posting_closed")
 
     if not await chrome.ensure_running():
-        set_status(job_id, states.HOLD, reason="browser_unavailable: CDP endpoint not answering")
-        return RunOutcome(states.HOLD, "browser_unavailable")
+        return _browser_down(job_id, "CDP endpoint not answering")
 
     ex = Executor(policy=HostPolicy([job["url"], apply_url]), job_id=job_id)
     mail, creds = _helpers()
@@ -242,6 +326,12 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
         outcome = RunOutcome(states.HOLD, b.reason)
         await notify(f"Budget spent: {job['company']} — {job['title']}\n{b.reason}")
     except Exception as e:
+        if tab_id is None and is_browser_failure(e):
+            # Chrome did not answer (no page was opened): the posting is fine, so the job goes back to
+            # the queue untouched and the worker loop backs off instead of burning the next job too.
+            log.warning("run_job %s: browser not reachable: %s", job_id, str(e)[:200])
+            outcome = _browser_down(job_id, f"{type(e).__name__}: {str(e)[:200]}")
+            return outcome
         log.exception("run_job %s failed", job_id)
         set_status(job_id, states.HOLD, reason=f"error: {type(e).__name__}: {str(e)[:200]}", tab_target_id=tab_id)
         db.event(job_id, "job:error", {"error": str(e)[:500]})
@@ -326,22 +416,88 @@ def reconcile_after_restart() -> dict:
     return out
 
 
+async def _wait(events: list[asyncio.Event], timeout: float) -> None:
+    waiters = [asyncio.create_task(e.wait()) for e in events]
+    try:
+        await asyncio.wait(waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for w in waiters:
+            w.cancel()
+
+
+BROWSER_BACKOFF_S = (60, 120, 300, 600, 900)
+
+
+async def _run_controlled(job: dict) -> RunOutcome:
+    """run_job as a task the website can stop (hold) or skip (dead) while it runs."""
+    job_id = int(job["id"])
+    CONTROL.bind()
+    CONTROL.current_job_id = job_id
+    CONTROL.stop_current.clear()
+    task = asyncio.create_task(run_job(job))
+    stopper = asyncio.create_task(CONTROL.stop_current.wait())
+    try:
+        await asyncio.wait({task, stopper}, return_when=asyncio.FIRST_COMPLETED)
+        if task.done():
+            return task.result()
+        mode = CONTROL.stop_mode or "stop"
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            log.exception("worker: job %s raised while stopping", job_id)
+        if mode == "skip":
+            set_status(job_id, states.DEAD, reason="skipped: from the website while running", finished=True)
+            return RunOutcome(states.DEAD, "skipped")
+        set_status(job_id, states.HOLD, reason="manual_review: stopped from the website while running")
+        return RunOutcome(states.HOLD, "stopped")
+    finally:
+        stopper.cancel()
+        CONTROL.current_job_id = None
+        CONTROL.stop_current.clear()
+        CONTROL.stop_mode = ""
+
+
 async def worker_loop(stop: asyncio.Event, idle_s: float = 20.0) -> None:
+    CONTROL.bind()
     log.info("worker: reconcile %s", reconcile_after_restart())
+    backoff_until = 0.0
     while not stop.is_set():
+        CONTROL.wake.clear()
+        if CONTROL.paused():
+            await _wait([stop, CONTROL.wake], 30)
+            continue
+        if time.monotonic() < backoff_until:
+            await _wait([stop, CONTROL.wake], min(30.0, backoff_until - time.monotonic()))
+            continue
         job = claim_next()
         if job is None:
-            try:
-                await asyncio.wait_for(stop.wait(), idle_s)
-            except asyncio.TimeoutError:
-                pass
+            await _wait([stop, CONTROL.wake], idle_s)
             continue
         log.info("worker: running job %s %s — %s (%s)", job["id"], job["company"], job["title"], job["ats"])
         t0 = time.monotonic()
         try:
-            out = await run_job(job)
+            out = await _run_controlled(job)
         except Exception as e:  # run_job already handles; this is the last line of defence
             log.exception("worker: run_job crashed")
             set_status(int(job["id"]), states.HOLD, reason=f"error: {e}")
             out = RunOutcome(states.HOLD, str(e))
         log.info("worker: job %s -> %s (%s) in %.0fs", job["id"], out.status, out.reason[:120], time.monotonic() - t0)
+        if out.status == BROWSER_DOWN:
+            CONTROL.browser_failures += 1
+            wait_s = BROWSER_BACKOFF_S[min(CONTROL.browser_failures, len(BROWSER_BACKOFF_S)) - 1]
+            if CONTROL.browser_ok is not False:
+                db.event(None, "browser:down", {"reason": out.reason[:300], "retry_in_s": wait_s})
+            CONTROL.browser_ok = False
+            backoff_until = time.monotonic() + wait_s
+            continue
+        if CONTROL.browser_ok is False:
+            db.event(None, "browser:up", {"after_failures": CONTROL.browser_failures})
+        CONTROL.browser_ok = True
+        CONTROL.browser_failures = 0
+        if db.meta_get("pause_after_current", False):
+            db.meta_set("pause_after_current", False)
+            db.meta_set("worker_paused", True)
+            db.event(None, "worker:paused", {"by": "pause_after_current"})

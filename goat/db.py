@@ -218,6 +218,21 @@ def redact(obj: Any) -> Any:
     return obj
 
 
+# Called (with no arguments) after every event is written, from whatever thread wrote it. The cloud
+# link registers one to wake its push thread; a listener must be quick and must never raise.
+_event_listeners: list = []
+
+
+def add_event_listener(fn) -> None:
+    if fn not in _event_listeners:
+        _event_listeners.append(fn)
+
+
+def remove_event_listener(fn) -> None:
+    if fn in _event_listeners:
+        _event_listeners.remove(fn)
+
+
 def event(job_id: int | None, kind: str, detail: Any = None, *, latency_ms: int | None = None,
           model: str | None = None, tokens_in: int = 0, tokens_cached: int = 0,
           tokens_out: int = 0, cost_usd: float = 0.0) -> None:
@@ -228,3 +243,8 @@ def event(job_id: int | None, kind: str, detail: Any = None, *, latency_ms: int 
             (job_id, now(), kind, json.dumps(redact(detail), default=str) if detail is not None else None,
              latency_ms, model, tokens_in, tokens_cached, tokens_out, cost_usd),
         )
+    for fn in list(_event_listeners):
+        try:
+            fn()
+        except Exception:
+            pass

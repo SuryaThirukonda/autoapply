@@ -258,13 +258,15 @@ class QuestionBroker:
             ev.clear()
 
     # ------------------------------------------------------------------ replies
-    def _save_row(self, con, row, text: str, source_ref: str) -> tuple[str, str, int]:
+    def _save_row(self, con, row, text: str, source_ref: str, source: str = "telegram",
+                  scope: str = "global", scope_value: str = "") -> tuple[str, str, int]:
         d = _row_dict(row)
         options = d.get("options")
         value = _normalize_choice(text, options)
         atype = _answer_type(d.get("field_type"), options)
-        released = answers.save_answer(d["key"], value, answer_type=atype, source="telegram",
-                                       source_ref=source_ref, aliases=[d["question"]])
+        released = answers.save_answer(d["key"], value, answer_type=atype, source=source,
+                                       source_ref=source_ref, aliases=[d["question"]],
+                                       scope=scope, scope_value=scope_value)
         con.execute("UPDATE pending_questions SET answered_at=?, answer=? WHERE id=?",
                     (db.now(), value, d["id"]))
         return d["key"], value, released
@@ -272,7 +274,8 @@ class QuestionBroker:
     def _decline_row(self, con, row) -> None:
         con.execute("UPDATE pending_questions SET answered_at=?, answer=NULL WHERE id=?", (db.now(), row["id"]))
 
-    def _apply(self, rows, text: str, source_ref: str, from_user_id: int) -> dict:
+    def _apply(self, rows, text: str, source_ref: str, from_user_id: int, source: str = "telegram",
+               scope: str = "global", scope_value: str = "") -> dict:
         parts = split_reply(text, len(rows))
         saved: list[dict] = []
         declined: list[str] = []
@@ -289,13 +292,14 @@ class QuestionBroker:
                     declined.append(row["key"])
                     jobs.add(row["job_id"])
                     continue
-                key, value, released = self._save_row(con, row, part, source_ref)
+                key, value, released = self._save_row(con, row, part, source_ref, source, scope, scope_value)
                 saved.append({"key": key, "answer": value, "released": released})
                 released_total += released
                 jobs.add(row["job_id"])
         for j in jobs:
             db.event(j, "question:answered", {"saved": [s["key"] for s in saved], "declined": declined,
-                                              "from_user": from_user_id, "released": released_total})
+                                              "from_user": from_user_id, "released": released_total,
+                                              "via": source, "scope": scope})
             self._wake(j)
         if not saved and not declined:
             return {"ok": False, "reason": "empty_reply", "unanswered": unanswered}
@@ -316,14 +320,16 @@ class QuestionBroker:
             return {"ok": False, "reason": "no_pending_question"}
         return self._apply(rows, text, str(chat_message_id), from_user_id)
 
-    def answer_pending(self, pending_id: int, text: str, from_user_id: int = 0) -> dict:
-        """Answer exactly one pending row by its id (inline button path)."""
+    def answer_pending(self, pending_id: int, text: str, from_user_id: int = 0, *, source: str = "telegram",
+                       scope: str = "global", scope_value: str = "") -> dict:
+        """Answer exactly one pending row by its id (inline button, dashboard, website, cloud Telegram).
+        scope "company" saves the answer for that company only (scope_value = the company)."""
         row = db.connect().execute(
             "SELECT * FROM pending_questions WHERE id=? AND answered_at IS NULL", (int(pending_id),)).fetchone()
         if row is None:
             return {"ok": False, "reason": "no_pending_question"}
         ref = str(row["chat_message_id"]) if row["chat_message_id"] is not None else f"pq:{pending_id}"
-        return self._apply([row], text, ref, from_user_id)
+        return self._apply([row], text, ref, from_user_id, source, scope, scope_value)
 
     def hold_it(self, chat_message_id: int) -> dict:
         """The owner declined: mark the rows answered with no answer and wake the waiter, which
@@ -335,14 +341,19 @@ class QuestionBroker:
             return {"ok": False, "reason": "no_pending_question"}
         return self._decline_rows(rows)
 
-    def hold_pending(self, pending_id: int) -> dict:
+    def hold_pending(self, pending_id: int, *, source: str = "telegram") -> dict:
         row = db.connect().execute(
             "SELECT * FROM pending_questions WHERE id=? AND answered_at IS NULL", (int(pending_id),)).fetchone()
         if row is None:
             return {"ok": False, "reason": "no_pending_question"}
-        return self._decline_rows([row])
+        return self._decline_rows([row], source)
 
-    def _decline_rows(self, rows) -> dict:
+    def wake_all(self) -> None:
+        """Wake every waiting job (an answer saved outside a question reply may satisfy any of them)."""
+        for j in list(self.arrived):
+            self._wake(j)
+
+    def _decline_rows(self, rows, source: str = "telegram") -> dict:
         jobs: set[int] = set()
         keys: list[str] = []
         with db.tx() as con:
@@ -351,7 +362,7 @@ class QuestionBroker:
                 keys.append(row["key"])
                 jobs.add(row["job_id"])
         for j in jobs:
-            db.event(j, "question:held", {"keys": keys})
+            db.event(j, "question:held", {"keys": keys, "via": source})
             self._wake(j)
         return {"ok": True, "keys": keys, "job_ids": sorted(jobs)}
 

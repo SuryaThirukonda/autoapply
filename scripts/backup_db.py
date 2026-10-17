@@ -1,13 +1,13 @@
 """Nightly backup of goat.db: a consistent online copy (SQLite's backup API, what the sqlite3 shell's
 `.backup` uses, safe while goat is writing), checked with PRAGMA quick_check, gzip-compressed into
 data/backups/, oldest copies pruned. With --upload-cmd (or BACKUP_UPLOAD_CMD) the finished file is
-handed to an uploader for off-box storage, e.g. `rclone copy {file} neon:goat-backups`; {file} is
+handed to an uploader for off-box storage, e.g. `rclone copy {file} remote:goat-backups`; {file} is
 replaced by the path, or the path is appended. The command runs without a shell.
 
   python scripts/backup_db.py [--db data/goat.db] [--dest data/backups] [--keep 14] [--upload-cmd "..."]
 
-On the VM, cron runs it inside the container (docs/CLOUD_DEPLOY.md):
-  15 3 * * * cd ~/autoapply && docker compose exec -T goat python scripts/backup_db.py >> data/backups/backup.log 2>&1
+On the PC, a daily Task Scheduler task can run it:
+  python scripts/backup_db.py >> data/backups/backup.log 2>&1
 
 Exit codes: 0 ok, 1 backup failed (nothing new kept), 2 backup kept but the upload failed.
 """

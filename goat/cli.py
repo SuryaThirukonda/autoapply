@@ -204,6 +204,26 @@ def cmd_demo(a) -> None:
     runpy.run_path(str(SETTINGS.config_dir.parent / "scripts" / "demo_workday.py"), run_name="__main__")
 
 
+def cmd_cloud_sync(_a) -> None:
+    """Mirror everything to RDS once (no worker, no browser): fills the website after a deploy."""
+    from .cloud import CloudLink
+    if not SETTINGS.cloud.enabled:
+        print("GOAT_DB_URL is not set in .env: the cloud link is off"); return
+    link = CloudLink()
+    total: dict = {}
+    try:
+        while True:
+            sent = link.push_now()
+            for k, v in sent.items():
+                total[k] = total.get(k, 0) + v
+            link._last_heartbeat = 0
+            if sent.get("events", 0) < 500 and sent.get("screenshots", 0) < 8 and not link._shot_backlog:
+                break
+    finally:
+        link._close_push()
+    _print({"sent": total})
+
+
 def cmd_chrome(_a) -> None:
     from .browser import chrome
     ok = asyncio.run(chrome.ensure_running())
@@ -231,6 +251,7 @@ def main(argv=None) -> None:
     sub.add_parser("digest").set_defaults(fn=cmd_digest)
     s = sub.add_parser("check-api"); s.add_argument("--models", default=""); s.set_defaults(fn=cmd_check_api)
     sub.add_parser("chrome").set_defaults(fn=cmd_chrome)
+    sub.add_parser("cloud-sync").set_defaults(fn=cmd_cloud_sync)
     s = sub.add_parser("dashboard"); s.add_argument("--port", type=int, default=8787); s.set_defaults(fn=cmd_dashboard)
     s = sub.add_parser("demo"); s.add_argument("--live", action="store_true"); s.add_argument("--real", action="store_true"); s.set_defaults(fn=cmd_demo)
     a = p.parse_args(argv)

@@ -1,5 +1,6 @@
-"""The cloud-deploy pieces (docs/CLOUD_DEPLOY.md), offline: Chrome on Linux under Xvfb, the noVNC link in
-ready_for_you pings and on the dashboard, /healthz, the SQLite backup script, and the container files."""
+"""Runtime pieces that outlived the old cloud-VM plan (now in legacy/, not used), offline: Chrome's
+per-platform launch, the optional noVNC link in ready_for_you pings and on the dashboard, /healthz and
+the SQLite backup script."""
 from __future__ import annotations
 
 import gzip
@@ -13,7 +14,6 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-import yaml
 
 from goat import config, dashboard, db, worker
 from goat.browser import chrome
@@ -172,7 +172,7 @@ def test_backup_main_exit_codes_and_upload(tmp_path, monkeypatch):
     con.commit()
     con.close()
     f = Path("/b/goat-x.db.gz")
-    assert bk.upload_argv("rclone copy {file} neon:goat-backups", f) == ["rclone", "copy", str(f), "neon:goat-backups"]
+    assert bk.upload_argv("rclone copy {file} remote:goat-backups", f) == ["rclone", "copy", str(f), "remote:goat-backups"]
     assert bk.upload_argv("aws s3 cp --quiet", f)[-1] == str(f)
     py = Path(sys.executable).as_posix()
     assert bk.main(["--db", str(tmp_path / "missing.db"), "--dest", str(tmp_path / "b1")]) == 1
@@ -180,33 +180,3 @@ def test_backup_main_exit_codes_and_upload(tmp_path, monkeypatch):
     assert bk.main(["--db", str(src), "--dest", str(tmp_path / "b2"), "--upload-cmd", ok_cmd]) == 0
     assert bk.main(["--db", str(src), "--dest", str(tmp_path / "b3"), "--upload-cmd", f'"{py}" -c "raise SystemExit(3)"']) == 2
     assert len(list((tmp_path / "b3").glob("goat-*.db.gz"))) == 1     # a failed upload keeps the local copy
-
-
-# ------------------------------------------------------------------ container files
-def _patterns(path: Path) -> set[str]:
-    out = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        s = line.strip()
-        if s and not s.startswith("#"):
-            out.add(s.removeprefix("**/").rstrip("/"))
-    return out
-
-
-def test_image_excludes_everything_git_does():
-    """The repo is public and an image can be pushed: whatever .gitignore keeps out of git (secrets,
-    personal config, résumés, runtime data) .dockerignore keeps out of the image."""
-    assert _patterns(ROOT / ".gitignore") <= _patterns(ROOT / ".dockerignore")
-
-
-def test_compose_publishes_nothing_publicly_and_mounts_the_state():
-    c = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
-    for svc in c["services"].values():
-        for p in svc.get("ports", []):
-            assert str(p).startswith("127.0.0.1:"), p
-    goat = c["services"]["goat"]
-    mounts = {v.split(":")[1] for v in goat["volumes"]}
-    assert {"/app/data", "/app/records", "/app/chrome-profile", "/app/secrets", "/app/resumes", "/app/config", "/app/.env"} <= mounts
-    env = goat["environment"]
-    assert env["CHROME_EXE"] == "" and env["CHROME_DISPLAY"] == ":99" and env["DASHBOARD_HOST"] == "0.0.0.0"
-    test = c["services"]["goat-test"]
-    assert all(v.endswith(":ro") for v in test["volumes"]) and test["environment"]["GOAT_DB"].startswith("/tmp/")

@@ -161,6 +161,23 @@ class Creds:
 
 
 @dataclass
+class Cloud:
+    # The RDS Postgres URL for the goat_agent role (written by goat-dashboard's scripts/db-roles.mjs).
+    # Set = the cloud link runs: this PC mirrors its state to RDS and takes commands from the website and
+    # Telegram (which then runs on the website's server, not here). Empty = local only. Never logged.
+    db_url: str = _env("GOAT_DB_URL")
+    agent_name: str = _env("GOAT_AGENT_NAME", "cadoganpc")
+    push_interval_s: float = _env_float("CLOUD_PUSH_INTERVAL_S", 2.0)
+    command_poll_s: float = _env_float("CLOUD_COMMAND_POLL_S", 5.0)
+    heartbeat_s: float = _env_float("CLOUD_HEARTBEAT_S", 15.0)
+    screenshot_max_w: int = _env_int("CLOUD_SCREENSHOT_MAX_W", 1280)
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.db_url)
+
+
+@dataclass
 class Settings:
     openai_api_key: str = _env("OPENAI_API_KEY")
     db_path: Path = Path(_env("GOAT_DB", str(ROOT / "data" / "goat.db")))
@@ -198,6 +215,7 @@ class Settings:
     human: Human = field(default_factory=Human)
     mail: Mail = field(default_factory=Mail)
     creds: Creds = field(default_factory=Creds)
+    cloud: Cloud = field(default_factory=Cloud)
 
     def portal_is_live(self, portal: str) -> bool:
         return self.mode == "live" and portal in self.live_portals
@@ -218,6 +236,7 @@ class Settings:
         d["creds"].pop("bw_passwordfile", None)
         d["creds"].pop("bw_clientid", None)
         d["creds"].pop("bw_clientsecret", None)
+        d["cloud"].pop("db_url", None)
         blob = json.dumps(d, sort_keys=True, default=str).encode()
         return hashlib.sha256(blob).hexdigest()[:12]
 
