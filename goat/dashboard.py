@@ -269,9 +269,9 @@ def edit_answer(body: dict) -> dict:
 
 ENV_PATH = SETTINGS.config_dir.parent / ".env"
 EDITABLE_KEYS = ("OPENAI_API_KEY", "EXECUTOR_MODEL", "EXECUTOR_EFFORT", "ADVISOR_MODEL", "CLASSIFIER_MODEL", "ALLOWED_MODELS",
-                 "GOAT_MODE", "LIVE_PORTALS", "LANES_ENABLED", "TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_CHAT_ID",
+                 "GOAT_MODE", "LIVE_PORTALS", "LANES_ENABLED", "TELEGRAM_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_CHAT_ID",
                  "BW_EXE", "BW_SESSION", "BW_PASSWORDFILE", "CDP_PORT", "CHROME_USER_DATA_DIR", "BUDGET_STEPS", "ANSWER_WAIT_S")
-SECRET_KEYS = ("OPENAI_API_KEY", "TELEGRAM_BOT_TOKEN", "BW_SESSION", "BW_PASSWORDFILE")
+SECRET_KEYS = ("OPENAI_API_KEY", "TELEGRAM_KEY", "TELEGRAM_BOT_TOKEN", "BW_SESSION", "BW_PASSWORDFILE")
 
 
 def _read_env() -> dict[str, str]:
@@ -306,8 +306,76 @@ def api_settings() -> dict:
         "gmail_client": Path(SETTINGS.mail.credentials_json).exists(),
         "bitwarden": _bw_status(),
         "chrome_cdp": SETTINGS.browser.cdp_url,
+        "telegram": {"token": bool(_telegram_token(env)), "chat_id": _chat_id(env) != 0,
+                     "running": bool(SETTINGS.human.telegram_token) and SETTINGS.human.telegram_owner_chat_id != 0},
     }
     return vals
+
+
+# ------------------------------------------------------------------ Telegram setup (Settings tab)
+TELEGRAM_API = "https://api.telegram.org"
+
+
+def _telegram_token(env: dict[str, str]) -> str:
+    return env.get("TELEGRAM_KEY") or env.get("TELEGRAM_BOT_TOKEN") or ""
+
+
+def _chat_id(env: dict[str, str]) -> int:
+    try:
+        return int(env.get("TELEGRAM_OWNER_CHAT_ID") or 0)
+    except ValueError:
+        return 0
+
+
+def _telegram_call(token: str, method: str, **params) -> dict:
+    import httpx
+    try:
+        r = httpx.post(f"{TELEGRAM_API}/bot{token}/{method}", json=params, timeout=15)
+        return r.json()
+    except Exception as e:   # never echo the URL: it contains the token
+        return {"ok": False, "description": type(e).__name__}
+
+
+def telegram_detect() -> dict:
+    """Find the chat id of whoever messaged the bot and save it as TELEGRAM_OWNER_CHAT_ID (only when
+    exactly one private chat has written to it). Reads the token from .env, so it works before a restart."""
+    token = _telegram_token(_read_env())
+    if not token:
+        return {"ok": False, "error": "no bot token yet: paste it in 'Telegram bot token' and Save first"}
+    me = _telegram_call(token, "getMe")
+    if not me.get("ok"):
+        return {"ok": False, "error": f"Telegram rejected the token ({me.get('description', 'unknown error')})"}
+    bot = (me.get("result") or {}).get("username", "")
+    upd = _telegram_call(token, "getUpdates", limit=50)
+    if not upd.get("ok"):
+        if "409" in str(upd.get("error_code", "")) or "conflict" in str(upd.get("description", "")).lower():
+            return {"ok": False, "bot": bot, "error": "the agent's bot is already running and reading messages; the chat id is set"
+                    if _chat_id(_read_env()) else "the agent's bot is reading messages; stop the agent, then press Find again"}
+        return {"ok": False, "bot": bot, "error": upd.get("description", "getUpdates failed")}
+    chats: dict[int, str] = {}
+    for u in upd.get("result") or []:
+        m = u.get("message") or u.get("edited_message") or {}
+        ch = m.get("chat") or {}
+        if ch.get("type") == "private" and ch.get("id"):
+            chats[int(ch["id"])] = " ".join(x for x in (ch.get("first_name"), ch.get("username") and "@" + ch["username"]) if x)
+    if not chats:
+        return {"ok": False, "bot": bot, "error": f"no messages yet: open Telegram, send /start to @{bot}, then press Find again"}
+    if len(chats) > 1:
+        return {"ok": False, "bot": bot, "chats": [{"id": k, "name": v} for k, v in chats.items()],
+                "error": "more than one person messaged the bot: type your chat id into the field and Save"}
+    cid, name = next(iter(chats.items()))
+    update_settings({"TELEGRAM_OWNER_CHAT_ID": str(cid)})
+    return {"ok": True, "bot": bot, "chat_id": cid, "name": name, "saved": True}
+
+
+def telegram_test() -> dict:
+    env = _read_env()
+    token, cid = _telegram_token(env), _chat_id(env)
+    if not token or not cid:
+        return {"ok": False, "error": "set the bot token and chat id first (Find my chat ID fills the id)"}
+    r = _telegram_call(token, "sendMessage", chat_id=cid,
+                       text="goat: test message from Settings. Questions, ready-for-you jobs and the daily digest will arrive here.")
+    return {"ok": bool(r.get("ok")), "error": None if r.get("ok") else r.get("description", "send failed")}
 
 
 def _bw_status() -> dict:
@@ -472,6 +540,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(answer_question(int(m.group(1)), m.group(2), str(body.get("text") or "")))
         if u.path == "/api/settings":
             return self._json(update_settings(body))
+        if u.path == "/api/telegram/detect":
+            return self._json(telegram_detect())
+        if u.path == "/api/telegram/test":
+            return self._json(telegram_test())
         if u.path == "/api/answer":
             return self._json(edit_answer(body))
         return self._json({"error": "not found"}, 404)

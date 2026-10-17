@@ -106,7 +106,8 @@ class Browser:
 
 @dataclass
 class Human:
-    telegram_token: str = _env("TELEGRAM_BOT_TOKEN")
+    # The bot token from @BotFather. TELEGRAM_KEY is the name the Settings tab writes; TELEGRAM_BOT_TOKEN still works.
+    telegram_token: str = _env("TELEGRAM_KEY") or _env("TELEGRAM_BOT_TOKEN")
     telegram_owner_chat_id: int = _env_int("TELEGRAM_OWNER_CHAT_ID", 0)
 
 

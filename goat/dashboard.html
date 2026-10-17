@@ -145,6 +145,11 @@ form.inline input{padding:5px 8px;border:1px solid var(--line);border-radius:6px
         <div style="margin-top:12px"><button type="submit" class="primary">Save</button> <span id="smsg" class="small muted"></span></div>
       </form>
     </div>
+    <div class="card" style="max-width:900px;margin-top:12px"><div class="k">Telegram notifications</div>
+      <div class="small" style="margin:6px 0 10px">1. Paste the bot token above and Save. 2. In Telegram, send <span class="mono">/start</span> to your bot. 3. Press Find my chat ID. 4. Send a test, then restart the agent.</div>
+      <button type="button" onclick="tgDetect()">Find my chat ID</button> <button type="button" onclick="tgTest()">Send test message</button>
+      <span id="tgmsg" class="small muted" style="margin-left:8px"></span>
+    </div>
     <div class="card" style="max-width:900px;margin-top:12px"><div class="k">Integrations</div><div id="sstatus" class="small" style="margin-top:6px"></div></div>
   </section>
 </main>
@@ -342,7 +347,7 @@ const SF=[['OPENAI_API_KEY','OpenAI API key','password','(restart)'],
  ['GOAT_MODE','Mode','text','shadow | live (restart)'],['LIVE_PORTALS','Live portals','text','comma list (restart)'],
  ['LANES_ENABLED','Lanes enabled','text','no_account,ready_for_you[,account] (restart)'],
  ['BUDGET_STEPS','Step budget per job','text','(restart)'],['ANSWER_WAIT_S','Answer wait seconds','text','(restart)'],
- ['TELEGRAM_BOT_TOKEN','Telegram bot token','password','(restart)'],['TELEGRAM_OWNER_CHAT_ID','Telegram chat id','text','(restart)'],
+ ['TELEGRAM_KEY','Telegram bot token','password','from @BotFather (restart)'],['TELEGRAM_OWNER_CHAT_ID','Telegram chat id','text','Find my chat ID fills it (restart)'],
  ['BW_EXE','Bitwarden CLI path','text','(restart)'],['BW_SESSION','Bitwarden session key','password','from bw unlock --raw (restart)'],
  ['CDP_PORT','Chrome CDP port','text','(restart)']];
 async function settings(){
@@ -354,7 +359,19 @@ async function settings(){
   $('#sstatus').innerHTML=`<div>Running: mode <b>${esc(s._running.mode)}</b> · executor <b>${esc(s._running.executor)}</b> · allowed ${esc(s._running.allowed.join(','))} · config ${esc(s._running.config_hash)}</div>
     <div>Gmail: client ${st.gmail_client?'<span class="ok">present</span>':'<span class="warn">missing</span>'}, token ${st.gmail_token?'<span class="ok">authorized</span>':'<span class="warn">not authorized (python -m goat gmail-auth)</span>'}</div>
     <div>Bitwarden: ${st.bitwarden&&st.bitwarden.available?`<span class="ok">found</span> · vault ${esc(st.bitwarden.status)}`:`<span class="warn">${esc(st.bitwarden?st.bitwarden.status:'unknown')}</span>`}</div>
-    <div>Chrome CDP: ${esc(st.chrome_cdp)}</div>`;
+    <div>Chrome CDP: ${esc(st.chrome_cdp)}</div>
+    <div>Telegram: token ${st.telegram&&st.telegram.token?'<span class="ok">set</span>':'<span class="warn">missing</span>'}, chat id ${st.telegram&&st.telegram.chat_id?'<span class="ok">set</span>':'<span class="warn">missing</span>'}, agent ${st.telegram&&st.telegram.running?'<span class="ok">sending</span>':'<span class="warn">not sending until restart</span>'}</div>`;
+}
+async function tgDetect(){
+  $('#tgmsg').textContent='looking…';
+  const r=await post('/api/telegram/detect',{});
+  $('#tgmsg').textContent=r.ok?`found ${r.name||'your chat'} (${r.chat_id}) via @${r.bot}, saved. Restart the agent to start notifications.`:('@'+(r.bot||'bot')+': '+r.error);
+  settings();
+}
+async function tgTest(){
+  $('#tgmsg').textContent='sending…';
+  const r=await post('/api/telegram/test',{});
+  $('#tgmsg').textContent=r.ok?'sent. Check Telegram.':('error: '+r.error);
 }
 async function saveSettings(){
   const body={}; for(const el of $('#sform').querySelectorAll('input[name]')) body[el.name]=el.value;
