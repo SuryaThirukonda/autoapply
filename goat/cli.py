@@ -210,13 +210,14 @@ def cmd_cloud_sync(_a) -> None:
     if not SETTINGS.cloud.enabled:
         print("GOAT_DB_URL is not set in .env: the cloud link is off"); return
     link = CloudLink()
+    # No heartbeat: the agent is not running, and a heartbeat that stops would read as "went silent".
+    link._last_heartbeat = float("inf")
     total: dict = {}
     try:
         while True:
             sent = link.push_now()
             for k, v in sent.items():
                 total[k] = total.get(k, 0) + v
-            link._last_heartbeat = 0
             if sent.get("events", 0) < 500 and sent.get("screenshots", 0) < 8 and not link._shot_backlog:
                 break
     finally:
