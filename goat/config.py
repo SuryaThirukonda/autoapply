@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
@@ -89,15 +90,37 @@ class Budgets:
     max_held_tabs: int = _env_int("MAX_HELD_TABS", 4)
 
 
+LINUX_CHROME_CANDIDATES = ("/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+                           "/usr/bin/chromium", "/usr/bin/chromium-browser")
+
+
+def default_chrome_exe(platform: str = sys.platform, exists=os.path.exists) -> str:
+    """CHROME_EXE when .env leaves it empty: Chrome stable on Windows and macOS; on Linux the first
+    installed of Google Chrome or Chromium (Google ships no ARM build, so the ARM image has Chromium)."""
+    if platform == "win32":
+        return r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    if platform == "darwin":
+        return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    for p in LINUX_CHROME_CANDIDATES:
+        if exists(p):
+            return p
+    return LINUX_CHROME_CANDIDATES[0]
+
+
 @dataclass
 class Browser:
-    chrome_exe: str = _env("CHROME_EXE", r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+    chrome_exe: str = _env("CHROME_EXE", default_chrome_exe())
     user_data_dir: str = _env("CHROME_USER_DATA_DIR", str(ROOT / "chrome-profile"))
     cdp_port: int = _env_int("CDP_PORT", 9223)
     viewport_w: int = _env_int("VIEWPORT_W", 1440)
     viewport_h: int = _env_int("VIEWPORT_H", 900)
     screenshot_detail: str = _env("SCREENSHOT_DETAIL", "original")  # original | auto | "" (omit)
     launch_if_missing: bool = _env_bool("CHROME_LAUNCH_IF_MISSING", True)
+    # Linux only: the Xvfb display Chrome draws on (scripts/entrypoint.sh starts it; noVNC shows it).
+    display: str = _env("CHROME_DISPLAY", ":99")
+    # Linux only: Docker's default seccomp profile blocks the namespaces Chrome's sandbox needs, so the
+    # container sets this; the container is then the sandbox boundary.
+    no_sandbox: bool = _env_bool("CHROME_NO_SANDBOX", False)
 
     @property
     def cdp_url(self) -> str:
@@ -109,6 +132,9 @@ class Human:
     # The bot token from @BotFather. TELEGRAM_KEY is the name the Settings tab writes; TELEGRAM_BOT_TOKEN still works.
     telegram_token: str = _env("TELEGRAM_KEY") or _env("TELEGRAM_BOT_TOKEN")
     telegram_owner_chat_id: int = _env_int("TELEGRAM_OWNER_CHAT_ID", 0)
+    # The cloud browser in noVNC (the VM's Tailscale address, port 6080). Sent with every
+    # ready_for_you notification so a CAPTCHA can be clicked from the phone. Empty on the PC.
+    novnc_url: str = _env("NOVNC_URL")
 
 
 @dataclass
@@ -124,6 +150,10 @@ class Creds:
     bw_exe: str = _env("BW_EXE", "bw")
     bw_session: str = _env("BW_SESSION")
     bw_passwordfile: str = _env("BW_PASSWORDFILE")  # path; used only to unlock, never logged
+    # Unattended login (the cloud VM): a personal API key from the web vault. Never logged.
+    bw_clientid: str = _env("BW_CLIENTID")
+    bw_clientsecret: str = _env("BW_CLIENTSECRET")
+    bw_server: str = _env("BW_SERVER")  # e.g. https://vault.bitwarden.eu; empty = bw's default
     application_email: str = _env("APPLICATION_EMAIL", "")
     # Surya uses one login on every Workday tenant; this vault item holds it. Sign-in AND sign-up on
     # any myworkdayjobs tenant reuse it instead of generating a per-tenant password.
@@ -157,6 +187,11 @@ class Settings:
     safety_salt: str = _env("SAFETY_IDENTIFIER_SALT", "goat")
     log_level: str = _env("LOG_LEVEL", "INFO")
     dashboard_port: int = _env_int("DASHBOARD_PORT", 8787)
+    # 127.0.0.1 on the PC. The container binds 0.0.0.0 and docker-compose publishes it on the VM's
+    # loopback only; Tailscale carries it to Surya's devices.
+    dashboard_host: str = _env("DASHBOARD_HOST", "127.0.0.1")
+    # /healthz fails when the newest event is older than this (0 = report the age, never fail on it).
+    health_max_event_age_s: int = _env_int("HEALTH_MAX_EVENT_AGE_S", 0)
     models: Models = field(default_factory=Models)
     budgets: Budgets = field(default_factory=Budgets)
     browser: Browser = field(default_factory=Browser)
@@ -181,6 +216,8 @@ class Settings:
         d["human"].pop("telegram_token", None)
         d["creds"].pop("bw_session", None)
         d["creds"].pop("bw_passwordfile", None)
+        d["creds"].pop("bw_clientid", None)
+        d["creds"].pop("bw_clientsecret", None)
         blob = json.dumps(d, sort_keys=True, default=str).encode()
         return hashlib.sha256(blob).hexdigest()[:12]
 

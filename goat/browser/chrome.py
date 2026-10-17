@@ -1,10 +1,13 @@
 """Launch and health-check the dedicated Chrome profile. Chrome 136+ refuses CDP on the default
-profile, so we always pass our own --user-data-dir; the port is bound to 127.0.0.1 only."""
+profile, so we always pass our own --user-data-dir; the port is bound to 127.0.0.1 only. On Linux
+(the cloud VM) Chrome draws on the Xvfb display that scripts/entrypoint.sh starts, which noVNC shows."""
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -25,8 +28,10 @@ CHROME_FLAGS = [
     "--disable-session-crashed-bubble",
     "--hide-crash-restore-bubble",
     "--password-store=basic",
-    "--window-size=1456,1000",
 ]
+WINDOWS_FLAGS = ["--window-size=1456,1000"]
+# Xvfb has no window manager or frame: the window is the whole 1440x900 screen noVNC shows.
+LINUX_FLAGS = ["--window-size=1440,900", "--window-position=0,0", "--lang=en-US"]
 
 
 async def cdp_version(cdp_url: str | None = None, timeout: float = 3.0) -> dict | None:
@@ -45,24 +50,47 @@ async def is_healthy() -> bool:
     return (await cdp_version()) is not None
 
 
-def launch() -> subprocess.Popen | None:
-    b = SETTINGS.browser
-    exe = Path(b.chrome_exe)
-    if not exe.exists():
-        log.error("chrome.exe not found at %s", exe)
-        return None
-    Path(b.user_data_dir).mkdir(parents=True, exist_ok=True)
+def launch_command(b=None, platform: str = sys.platform) -> tuple[list[str], dict[str, str] | None]:
+    """argv and environment (None = inherit) for the dedicated Chrome on this platform."""
+    b = b or SETTINGS.browser
     args = [
-        str(exe),
+        str(b.chrome_exe),
         f"--remote-debugging-port={b.cdp_port}",
         "--remote-debugging-address=127.0.0.1",
         f"--user-data-dir={b.user_data_dir}",
         *CHROME_FLAGS,
-        "about:blank",
     ]
-    log.info("launching Chrome on 127.0.0.1:%s with profile %s", b.cdp_port, b.user_data_dir)
-    creationflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    return subprocess.Popen(args, creationflags=creationflags, close_fds=True)
+    if platform == "win32":
+        return [*args, *WINDOWS_FLAGS, "about:blank"], None
+    args += LINUX_FLAGS if platform.startswith("linux") else []
+    if b.no_sandbox:
+        args.append("--no-sandbox")
+    env = dict(os.environ)
+    if platform.startswith("linux"):
+        env["DISPLAY"] = b.display
+        env.setdefault("LANG", "en_US.UTF-8")
+        env["LANGUAGE"] = "en_US:en"
+    return [*args, "about:blank"], env
+
+
+def launch() -> subprocess.Popen | None:
+    b = SETTINGS.browser
+    exe = Path(b.chrome_exe)
+    if not exe.exists():
+        log.error("Chrome not found at %s (set CHROME_EXE)", exe)
+        return None
+    Path(b.user_data_dir).mkdir(parents=True, exist_ok=True)
+    args, env = launch_command(b)
+    log.info("launching Chrome on 127.0.0.1:%s with profile %s%s", b.cdp_port, b.user_data_dir,
+             f" on display {env['DISPLAY']}" if env and "DISPLAY" in env else "")
+    if sys.platform == "win32":
+        creationflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        return subprocess.Popen(args, creationflags=creationflags, close_fds=True)
+    # Own session so a Ctrl+C aimed at goat does not take Chrome (and the held tabs) with it. Chrome is
+    # chatty on Xvfb (dbus, GPU); its output goes to data/chrome.log, not the container log.
+    with open(SETTINGS.db_path.parent / "chrome.log", "ab") as out:
+        return subprocess.Popen(args, env=env, start_new_session=True, close_fds=True,
+                                stdout=subprocess.DEVNULL, stderr=out)
 
 
 async def ensure_running(wait_s: float = 25.0) -> bool:

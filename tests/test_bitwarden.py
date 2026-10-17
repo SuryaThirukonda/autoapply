@@ -24,6 +24,8 @@ class FakeBW:
         self.envs: list[dict] = []
         self.next_id = 100
         self.passwords = passwords or {}
+        self.server = None
+        self.lock_before_next_get = False   # the session lapses after `bw status` said unlocked
 
     def __call__(self, argv: list[str], env: dict) -> subprocess.CompletedProcess:
         self.calls.append(list(argv))
@@ -40,6 +42,14 @@ class FakeBW:
 
         if args == ["status"]:
             return ok(json.dumps({"status": self.status, "userEmail": "x@y.z"}))
+        if args[:2] == ["config", "server"]:
+            self.server = args[2]
+            return ok("Saved setting `config`.")
+        if args == ["login", "--apikey"]:
+            if not (env.get("BW_CLIENTID") and env.get("BW_CLIENTSECRET")):
+                return subprocess.CompletedProcess(argv, 1, "", "client_id is required.")
+            self.status = "locked"
+            return ok("You are logged in!")
         if args[:1] == ["unlock"]:
             self.status = "unlocked"
             return ok("SESSION-FROM-UNLOCK")
@@ -68,6 +78,11 @@ class FakeBW:
                     out.append({**it, "id": iid, "revisionDate": "2026-10-14T00:00:00Z"})
             return ok(json.dumps(out))
         if args[:2] == ["get", "password"]:
+            if self.lock_before_next_get:
+                self.lock_before_next_get = False
+                self.status = "locked"
+            if self.status != "unlocked":
+                return subprocess.CompletedProcess(argv, 1, "", "Vault is locked.")
             item_id = args[2]
             if item_id in self.items:
                 return ok(self.items[item_id]["login"]["password"])
@@ -85,6 +100,9 @@ def fake(monkeypatch, tmp_path):
     monkeypatch.setattr(bw, "_session", None)
     monkeypatch.setattr(bw.SETTINGS.creds, "bw_session", "ENV-SESSION-123")
     monkeypatch.setattr(bw.SETTINGS.creds, "bw_passwordfile", "")
+    monkeypatch.setattr(bw.SETTINGS.creds, "bw_clientid", "")
+    monkeypatch.setattr(bw.SETTINGS.creds, "bw_clientsecret", "")
+    monkeypatch.setattr(bw.SETTINGS.creds, "bw_server", "")
     yield f
     db.reset_for_tests(tmp_path / "t2.db")
 
@@ -264,3 +282,68 @@ def test_login_universal_prefers_the_account_created_on_this_tenant(fake, monkey
     emails, pws = [], []
     st = bw.fill_credentials("gevernova.wd5.myworkdayjobs.com", "me@example.com", emails.append, pws.append, mode="login_universal")
     assert st == "filled" and fake.calls[-1][1:4] == ["get", "password", gev]
+
+
+def _pwfile(tmp_path, monkeypatch):
+    pf = tmp_path / "pw.txt"
+    pf.write_text("master\n")
+    monkeypatch.setattr(bw.SETTINGS.creds, "bw_passwordfile", str(pf))
+    return pf
+
+
+def test_lapsed_session_mid_run_unlocks_again_and_retries(fake, monkeypatch, tmp_path, caplog):
+    """A long unattended run: `bw status` said unlocked, then the get found the vault locked. The call
+    unlocks with the password file and is retried once; the new session never reaches the log."""
+    caplog.set_level(logging.DEBUG)
+    pf = _pwfile(tmp_path, monkeypatch)
+    bw.create_account_credentials("boards.greenhouse.io", "me@example.com")
+    fake.lock_before_next_get = True
+    emails, pws = [], []
+    st = bw.fill_credentials("boards.greenhouse.io", "me@example.com", emails.append, pws.append, mode="login")
+    assert st == "filled" and pws == [PW]
+    args = [c[1:-1] for c in fake.calls]
+    gets = [i for i, a in enumerate(args) if a[:2] == ["get", "password"]]
+    assert len(gets) == 2
+    assert args[gets[0] + 1:gets[1]] == [["status"], ["unlock", "--passwordfile", str(pf), "--raw"], ["status"]]
+    assert fake.envs[gets[1]]["BW_SESSION"] == "SESSION-FROM-UNLOCK"
+    assert "SESSION-FROM-UNLOCK" not in caplog.text and "Vault is locked." not in caplog.text
+
+
+def test_locked_report_without_passwordfile_fails_once_without_output(fake):
+    bw.create_account_credentials("boards.greenhouse.io", "me@example.com")
+    fake.lock_before_next_get = True
+    with pytest.raises(bw.CredentialsUnavailable) as ei:
+        bw.fill_credentials("boards.greenhouse.io", "me@example.com", lambda s: None, lambda s: None, mode="login")
+    assert "locked" in str(ei.value) and "Vault is locked." not in str(ei.value)
+    assert sum(1 for c in fake.calls if c[1:3] == ["get", "password"]) == 1
+
+
+def test_unattended_api_key_login_then_unlock(fake, monkeypatch, tmp_path, caplog):
+    """The cloud VM: the CLI starts logged out; BW_CLIENTID/BW_CLIENTSECRET log in (through the subprocess
+    environment only, never argv or the log), then BW_PASSWORDFILE unlocks."""
+    caplog.set_level(logging.DEBUG)
+    pf = _pwfile(tmp_path, monkeypatch)
+    monkeypatch.setattr(bw.SETTINGS.creds, "bw_session", "")
+    monkeypatch.setattr(bw.SETTINGS.creds, "bw_clientid", "user.0f6e-client")
+    monkeypatch.setattr(bw.SETTINGS.creds, "bw_clientsecret", "S3cret-API-key-value")
+    monkeypatch.setattr(bw.SETTINGS.creds, "bw_server", "https://vault.bitwarden.eu")
+    fake.status = "unauthenticated"
+    bw.ensure_unlocked()
+    assert [c[1:-1] for c in fake.calls] == [
+        ["status"], ["config", "server", "https://vault.bitwarden.eu"], ["login", "--apikey"], ["status"],
+        ["unlock", "--passwordfile", str(pf), "--raw"], ["status"]]
+    assert fake.envs[2]["BW_CLIENTID"] == "user.0f6e-client" and fake.envs[2]["BW_CLIENTSECRET"] == "S3cret-API-key-value"
+    assert fake.envs[4].get("BW_CLIENTSECRET") != "S3cret-API-key-value"
+    assert not any("S3cret-API-key-value" in a for c in fake.calls for a in c)
+    assert "S3cret-API-key-value" not in caplog.text
+    # later calls carry the unlocked session
+    bw.create_account_credentials("a.com", "me@example.com")
+    assert fake.envs[-1]["BW_SESSION"] == "SESSION-FROM-UNLOCK"
+
+
+def test_logged_out_without_api_key_says_what_to_set(fake):
+    fake.status = "unauthenticated"
+    with pytest.raises(bw.CredentialsUnavailable) as ei:
+        bw.ensure_unlocked()
+    assert "BW_CLIENTID" in str(ei.value)
+    assert [c[1:-1] for c in fake.calls] == [["status"]]

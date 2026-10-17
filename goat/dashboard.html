@@ -166,6 +166,7 @@ const ago=t=>{if(!t)return'';const d=Math.max(0,Date.now()/1000-t);return d<60?M
 const dur=s=>{s=Math.max(0,Math.round(s));return s<60?s+'s':Math.floor(s/60)+'m '+(s%60)+'s'};
 const api=async p=>(await fetch(p)).json();
 const post=async(p,b)=>(await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})})).json();
+const novncLink=u=>/^https?:\/\//i.test(u||'')?`<a class="primary" style="text-decoration:none;padding:6px 14px;border-radius:7px;background:var(--accent);color:#fff" href="${esc(u)}" target="_blank" rel="noopener">Open cloud browser</a>`:'';
 let view='now', jfilter='active', dismissed=new Set(), lastNow=null;
 
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
@@ -186,7 +187,9 @@ async function tick(){
   else { pill.className='pill idle'; pill.innerHTML='<span class="dot"></span>Idle' }
   $('#meta').textContent=`${n.mode}${n.live_portals.length?' · live: '+n.live_portals.join(','):''} · ${n.executor} · $${(n.spend_24h.c||0).toFixed(3)} today`;
   const badge=$('#qbadge'); badge.hidden=!q.length; badge.textContent=q.length;
-  $('#banner').innerHTML = q.length ? `<div class="banner"><b>${q.length} question${q.length>1?'s':''} waiting</b><span class="small muted">${esc(q[0].question.slice(0,90))}${q[0].question.length>90?'…':''}</span><span style="margin-left:auto"></span><button class="primary" onclick="openQ(${q[0].id})">Answer</button></div>` : '';
+  const ready=(n.counts||{}).ready_for_you||0;
+  $('#banner').innerHTML = (q.length ? `<div class="banner"><b>${q.length} question${q.length>1?'s':''} waiting</b><span class="small muted">${esc(q[0].question.slice(0,90))}${q[0].question.length>90?'…':''}</span><span style="margin-left:auto"></span><button class="primary" onclick="openQ(${q[0].id})">Answer</button></div>` : '')
+    + (ready && n.novnc_url ? `<div class="banner"><b>${ready} job${ready>1?'s':''} one click from done</b><span class="small muted">a CAPTCHA or Submit is left in the cloud browser</span><span style="margin-left:auto"></span>${novncLink(n.novnc_url)}</div>` : '');
   const next=q.find(x=>!dismissed.has(x.id));
   if(next && !$('#qmodal').classList.contains('open')) openQ(next.id);
   if(view==='now') renderNow(n);
@@ -390,6 +393,7 @@ async function openJob(id){
     <div class="small">${stChip(j.status)} ${esc(j.ats)} · lane ${esc(j.lane||'')} · ${j.attempts} tries · ${j.steps_used} steps · ${Math.round((j.wall_ms_used||0)/60000)} min · $${d.cost_usd}
       · <a href="${esc(j.url)}" target="_blank">posting</a>${j.apply_url?` · <a href="${esc(j.apply_url)}" target="_blank">application</a>`:''}</div>
     ${j.hold_reason?`<p class="warn"><b>reason:</b> ${esc(j.hold_reason)}${j.blocked_on_question_key?` · blocked on <span class="mono">${esc(j.blocked_on_question_key)}</span>`:''}</p>`:''}
+    ${j.status==='ready_for_you'&&d.novnc_url?`<p>${novncLink(d.novnc_url)} <span class="small muted">The tab is open there: click the challenge, then Submit.</span></p>`:''}
     <div class="row-end" style="justify-content:flex-start;margin:10px 0">
       <button class="primary" onclick="act(${j.id},'requeue')">Requeue</button>
       <button class="ghost" onclick="act(${j.id},'hold')">Hold</button>

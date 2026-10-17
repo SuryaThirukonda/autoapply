@@ -77,6 +77,20 @@ def set_status(job_id: int, status: str, *, reason: str | None = None, blocked_o
     db.event(job_id, f"job:{status}", {"reason": reason, "blocked_on": blocked_on})
 
 
+READY_TEXT_MAX = 1024   # a Telegram photo caption
+
+
+def ready_for_you_text(company: str, title: str, reason: str, tab_url: str, novnc_url: str = "") -> str:
+    """The ready_for_you ping. The noVNC link (the cloud browser, where Surya clicks the CAPTCHA from his
+    phone) comes before the long tab URL and the reason is shortened first, so the caption limit never
+    cuts the link off."""
+    head = f"One click from done: {company} — {title}"
+    link = f"Finish it in the cloud browser: {novnc_url}" if novnc_url else ""
+    tab = f"Tab: {tab_url[:300]}" if tab_url else ""
+    room = READY_TEXT_MAX - len(head) - len(link) - len(tab) - 3
+    return "\n".join(x for x in (head, reason[:max(0, min(300, room))], link, tab) if x)
+
+
 async def notify(text: str, png: bytes | None = None) -> None:
     try:
         from .human import telegram_bot
@@ -207,7 +221,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             try:
                 png = await ex.screenshot_png()
                 records.save_screenshot(job_id, png, "ready_for_you")
-                await notify(f"One click from done: {job['company']} — {job['title']}\n{reason[:300]}\nTab: {ex.url}", png)
+                await notify(ready_for_you_text(job["company"], job["title"], reason, ex.url, SETTINGS.human.novnc_url), png)
             except Exception:
                 pass
         else:

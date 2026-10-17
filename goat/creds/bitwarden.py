@@ -60,12 +60,29 @@ def _env() -> dict[str, str]:
     return env
 
 
-def _bw(*args: str, what: str) -> str:
+# What bw prints when the session key no longer opens the vault (it locked, or the CLI was logged out).
+LOCKED_MARKERS = ("vault is locked", "not logged in")
+
+
+def _reports_locked(proc: subprocess.CompletedProcess) -> bool:
+    """Inspects the output only to classify the failure; the output itself is never kept or logged."""
+    text = f"{proc.stdout or ''}\n{proc.stderr or ''}".lower()
+    return any(m in text for m in LOCKED_MARKERS)
+
+
+def _bw(*args: str, what: str, relock: bool = True, extra_env: dict[str, str] | None = None) -> str:
     """Run `bw <args> --nointeraction` and return trimmed stdout. Failures become
     CredentialsUnavailable carrying only `what` and the exit code (never stdout/stderr, which
-    could echo a secret argument)."""
+    could echo a secret argument). A call that finds the vault locked unlocks it again and is
+    retried once, so a long unattended run survives a lapsed session."""
+    global _session
     argv = [SETTINGS.creds.bw_exe, *args, "--nointeraction"]
-    proc = _run(argv, _env())
+    proc = _run(argv, {**_env(), **(extra_env or {})})
+    if proc.returncode != 0 and relock and _reports_locked(proc):
+        log.info("creds: bw %s found the vault locked; unlocking again", what)
+        _session = None
+        ensure_unlocked()
+        proc = _run(argv, {**_env(), **(extra_env or {})})
     if proc.returncode != 0:
         raise CredentialsUnavailable(f"bw {what} failed (exit {proc.returncode})")
     return (proc.stdout or "").strip()
@@ -77,24 +94,39 @@ def _bw(*args: str, what: str) -> str:
 
 def status() -> str:
     """`bw status` -> "unlocked" | "locked" | "unauthenticated"."""
-    out = _bw("status", what="status")
+    out = _bw("status", what="status", relock=False)
     try:
         return str(json.loads(out).get("status") or "unknown")
     except (ValueError, AttributeError):
         raise CredentialsUnavailable("bw status returned no JSON") from None
 
 
+def _login_apikey() -> None:
+    """`bw login --apikey`: the unattended login on the cloud VM. The client id and secret travel in the
+    subprocess environment (bw reads BW_CLIENTID / BW_CLIENTSECRET), never in argv or the log."""
+    c = SETTINGS.creds
+    if c.bw_server:
+        _bw("config", "server", c.bw_server, what="config server", relock=False)
+    _bw("login", "--apikey", what="login --apikey", relock=False,
+        extra_env={"BW_CLIENTID": c.bw_clientid, "BW_CLIENTSECRET": c.bw_clientsecret})
+    log.info("creds: bw logged in with the API key")
+
+
 def ensure_unlocked() -> None:
-    """Make sure the vault is unlocked, unlocking with the password file if one is configured."""
+    """Make sure the vault is unlocked: log in with the API key if the CLI is logged out and one is
+    configured, then unlock with the password file if one is configured."""
     global _session
     st = status()
     if st == "unlocked":
         return
+    if st == "unauthenticated" and SETTINGS.creds.bw_clientid and SETTINGS.creds.bw_clientsecret:
+        _login_apikey()
+        st = status()
     if st == "locked" and SETTINGS.creds.bw_passwordfile:
         pf = SETTINGS.creds.bw_passwordfile
         if not os.path.isfile(pf):
             raise CredentialsUnavailable("bw vault is locked and BW_PASSWORDFILE does not exist")
-        session = _bw("unlock", "--passwordfile", pf, "--raw", what="unlock")
+        session = _bw("unlock", "--passwordfile", pf, "--raw", what="unlock", relock=False)
         if not session:
             raise CredentialsUnavailable("bw unlock returned no session")
         _session = session
@@ -104,7 +136,7 @@ def ensure_unlocked() -> None:
             raise CredentialsUnavailable("bw vault still locked after unlock")
         return
     raise CredentialsUnavailable(
-        f"bw vault is {st}" + ("" if st == "locked" else "; run `bw login` first")
+        f"bw vault is {st}" + ("" if st == "locked" else "; run `bw login` or set BW_CLIENTID/BW_CLIENTSECRET")
         + ("; set BW_SESSION or BW_PASSWORDFILE" if st == "locked" else "")
     )
 

@@ -158,8 +158,35 @@ def api_now() -> dict:
                           (now - 86400,)),
         "mode": SETTINGS.mode, "live_portals": SETTINGS.live_portals, "executor": SETTINGS.models.executor,
         "last_event_age_s": (now - int(last["ts"])) if last else None,
+        "novnc_url": SETTINGS.human.novnc_url,
         "now": now,
     }
+
+
+def _cdp_ok() -> bool:
+    import httpx
+    try:
+        return httpx.get(SETTINGS.browser.cdp_url + "/json/version", timeout=3).status_code == 200
+    except Exception:
+        return False
+
+
+def api_healthz() -> tuple[int, dict]:
+    """The Docker healthcheck: 200 when Chrome's CDP answers and goat.db is readable, else 503. Reports the
+    newest event's age; HEALTH_MAX_EVENT_AGE_S > 0 also fails a run that has gone quiet for that long."""
+    now = db.now()
+    try:
+        last = _one("SELECT ts FROM events ORDER BY n DESC LIMIT 1")
+        db_ok = True
+    except Exception:
+        last, db_ok = None, False
+    age = (now - int(last["ts"])) if last else None
+    max_age = SETTINGS.health_max_event_age_s
+    stale = bool(max_age) and (age is None or age > max_age)
+    cdp = _cdp_ok()
+    ok = cdp and db_ok and not stale
+    return (200 if ok else 503), {"ok": ok, "cdp": cdp, "db": db_ok, "last_event_age_s": age, "stale": stale,
+                                  "mode": SETTINGS.mode}
 
 
 def api_jobs(q: dict) -> list[dict]:
@@ -189,6 +216,7 @@ def api_job(job_id: int) -> dict | None:
     files = sorted(p.name for p in rec.iterdir()) if rec.exists() else []
     cost = sum((e.get("cost_usd") or 0) for e in events)
     return {"job": job, "events": events, "decisions": decisions, "questions": questions, "files": files, "cost_usd": round(cost, 4),
+            "novnc_url": SETTINGS.human.novnc_url,
             "hermes_history": _json_detail(_rows("SELECT ts, kind, detail FROM events WHERE job_id IS NULL AND kind LIKE 'hermes:%' AND detail LIKE ? ORDER BY n DESC LIMIT 40",
                                                  (f'%{job["listing_id"]}%',)))}
 
@@ -487,6 +515,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if p in ("/", "/index.html"):
                 return self._send(200, HTML.encode(), "text/html; charset=utf-8")
+            if p == "/healthz":
+                code, body = api_healthz()
+                return self._json(body, code)
             if p == "/api/overview":
                 return self._json(api_overview())
             if p == "/api/now":
@@ -549,7 +580,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"error": "not found"}, 404)
 
 
-def serve(port: int = 8787, host: str = "127.0.0.1") -> ThreadingHTTPServer:
+def serve(port: int = 8787, host: str | None = None) -> ThreadingHTTPServer:
+    host = host or SETTINGS.dashboard_host
     db.connect()
     srv = ThreadingHTTPServer((host, port), Handler)
     srv.daemon_threads = True

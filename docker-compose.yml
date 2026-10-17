@@ -1,0 +1,77 @@
+# goat on the cloud VM (docs/CLOUD_DEPLOY.md). One container runs Xvfb + noVNC + Chrome + `python -m goat run`.
+# No public ports: the dashboard (8787) and noVNC (6080) are published on the VM's loopback only, and
+# `tailscale serve` carries them to Surya's devices. Personal files and runtime state are bind mounts,
+# never image layers. Only one runner may run at a time (PC or VM): each has its own ledger.
+#
+#   docker compose build
+#   docker compose run --rm goat-test     # the offline tests, inside the image
+#   docker compose up -d                  # the agent
+
+x-goat-paths: &goat-paths
+  # Paths inside the container. They override the Windows paths a .env built on the PC carries.
+  CHROME_EXE: ""                    # empty = platform default: google-chrome, or chromium on ARM
+  CHROME_USER_DATA_DIR: /app/chrome-profile
+  GOAT_DB: /app/data/goat.db
+  RECORDS_DIR: /app/records
+  PROPOSALS_DIR: /app/proposals
+  RESUME_DIR: /app/resumes
+  GMAIL_CREDENTIALS_JSON: /app/secrets/gmail_client.json
+  GMAIL_TOKEN_JSON: /app/secrets/gmail_token.json
+  BW_EXE: bw
+  TZ: ${TZ:-America/Chicago}
+
+services:
+  goat:
+    build:
+      context: .
+      args:
+        UID: ${GOAT_UID:-1000}
+        GID: ${GOAT_GID:-1000}
+    image: goat:latest
+    container_name: goat
+    hostname: goat                  # fixed, so Chrome's profile lock never names another host
+    restart: unless-stopped
+    shm_size: 1gb                   # Chrome needs more than Docker's 64 MB /dev/shm
+    environment:
+      <<: *goat-paths
+      CHROME_DISPLAY: ":99"
+      CHROME_NO_SANDBOX: "true"     # Docker's seccomp profile blocks Chrome's sandbox; the container is the boundary
+      BW_SESSION: ""                # a session key from the PC means nothing here; BW_CLIENTID/SECRET log in
+      BW_PASSWORDFILE: /app/secrets/bw_password
+      BITWARDENCLI_APPDATA_DIR: /app/secrets/bitwarden-cli
+      DASHBOARD_HOST: 0.0.0.0       # inside the container; the host side is 127.0.0.1 below
+      DASHBOARD_PORT: "8787"
+      NOVNC_PORT: "6080"
+      VNC_PASSWORD: ${VNC_PASSWORD:-}
+    volumes:
+      - ./.env:/app/.env            # read by goat; the dashboard's Settings tab writes it
+      - ./config:/app/config        # the committed files plus the local-only ones (config/LOCAL_FILES.md)
+      - ./resumes:/app/resumes:ro
+      - ./secrets:/app/secrets      # Gmail token refreshes, Bitwarden CLI state, bw_password
+      - ./data:/app/data
+      - ./records:/app/records
+      - ./proposals:/app/proposals
+      - ./chrome-profile:/app/chrome-profile
+    ports:
+      - "127.0.0.1:8787:8787"
+      - "127.0.0.1:6080:6080"
+
+  # The offline test suite inside the image. Reads config/, resumes/ and .env, writes only to /tmp:
+  # it never touches data/, records/ or the Chrome profile, and starts no display or browser.
+  goat-test:
+    image: goat:latest
+    profiles: ["test"]
+    entrypoint: ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+    environment:
+      <<: *goat-paths
+      GOAT_DB: /tmp/goat-test/goat.db
+      RECORDS_DIR: /tmp/goat-test/records
+      PROPOSALS_DIR: /tmp/goat-test/proposals
+      CHROME_USER_DATA_DIR: /tmp/goat-test/chrome-profile
+      BW_SESSION: ""
+      BW_PASSWORDFILE: ""
+      CHROME_LAUNCH_IF_MISSING: "false"
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./config:/app/config:ro
+      - ./resumes:/app/resumes:ro
