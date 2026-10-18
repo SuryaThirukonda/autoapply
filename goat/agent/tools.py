@@ -428,6 +428,12 @@ class ToolDispatcher:
                     # "All offered locations; ..." on a multi-select group: every box is ticked (Surya, 2026-10-18)
                     val = "true"
                     label_matched = True
+                elif str(f.get("answer_key") or "").startswith("preferences.") and not NEGATED.match((item.get("label") or "").strip()):
+                    # A team / organization / track pick is a delegated preference, not a fact: company-specific names
+                    # ("Platform Services", "Foundations") never match the stored list, and the model picks the most
+                    # backend-flavored ones under the preference key (Surya, 2026-10-18).
+                    val = "true"
+                    label_matched = True
                 elif item.get("type") == "checkbox" and parts and parts[0] in AFFIRMATIVE and not NEGATED.match((item.get("label") or "").strip()):
                     # "Yes; I agree; Accept" on a single consent checkbox: its first choice is a plain yes.
                     val = "true"
