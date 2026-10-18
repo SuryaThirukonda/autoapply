@@ -323,7 +323,14 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
                 # Deterministic prefill on every page, not only the first (Workday's My Experience is page 2 or later).
                 try:
                     await ex.settle(quiet_ms=500)
-                    snap = await snapmod.take(ex)
+                    # Workday swaps the step in place: wait until the headings differ from the page just left,
+                    # or the prefill verifies the old page (ICF's My Information, 2026-10-18).
+                    before = tuple((ctx.last_snapshot.headings if ctx.last_snapshot else []) or [])
+                    for _ in range(12):
+                        snap = await snapmod.take(ex)
+                        if tuple(snap.headings or []) != before or not before:
+                            break
+                        await asyncio.sleep(0.5)
                     ctx.last_snapshot = snap
                     pre = await adapter.prefill(ex, snap, client_job, ctx.page_no)
                     if client_job.get("resume_file"):

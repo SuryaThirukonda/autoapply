@@ -313,10 +313,220 @@ class WorkdaySections:
             else:
                 self.report.failed.append(f"website {url}")
 
+    # ---- Skills: Workday's "Type to Add Skills" multi-select ----------------------------------------------
+    # Verified on ICF (2026-10-18): the search runs on Enter and lists rows with checkboxes; clicking the
+    # matching promptOption row selects exactly that skill. Once a chip exists the search box hides inside
+    # the chip list and keyboard focus lands on a chip (an Enter or Ctrl+A there selects whole lists), so the
+    # box is focused explicitly and re-checked before every keystroke.
+    JS_SKILLS = r"""() => {
+      const q = (s) => Array.from(document.querySelectorAll(s));
+      let inp = document.getElementById('skills--skills') || q('input[id$="--skills"], input[id*="skill" i]')[0] || null;
+      if (!inp) {
+        const h = q('h2,h3,h4,[role=heading],label').find(e => /^(skills|type to add skills)$/i.test(e.textContent.trim()));
+        let box = h; for (let i = 0; i < 6 && box && !box.querySelector('input'); i++) box = box.parentElement;
+        inp = box ? box.querySelector('input') : null;
+      }
+      if (!inp) return { found: false };
+      const cont = inp.closest('[data-automation-id="multiSelectContainer"], [data-automation-id^="formField"]') || inp.parentElement;
+      const r = cont.getBoundingClientRect();
+      const icon = cont.querySelector('[data-automation-id="promptIcon"]');
+      const ir = icon ? icon.getBoundingClientRect() : null;
+      const chips = q('[data-automation-id="selectedItem"]').filter(e => cont.contains(e)).map(e => e.textContent.trim());
+      const seen = new Set();
+      const opts = q('[data-automation-id="promptOption"]').filter(e => e.getBoundingClientRect().height > 0)
+        .map(e => e.textContent.trim()).filter(t => t && !seen.has(t) && seen.add(t));
+      const txt = (document.body.innerText || '');
+      const m = /Search Results\s*\((\d+)\)/i.exec(txt);
+      return { found: true, active: document.activeElement === inp, value: inp.value || '', chips, opts,
+               results: m ? parseInt(m[1], 10) : -1,
+               box: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)],
+               icon: ir ? [Math.round(ir.x + ir.width / 2), Math.round(ir.y + ir.height / 2)] : null };
+    }"""
+    JS_FOCUS_SKILLS = r"""() => { const inp = document.getElementById('skills--skills') || document.querySelector('input[id$="--skills"], input[id*="skill" i]');
+      if (!inp) return false; inp.scrollIntoView({block: 'center'}); inp.focus(); return document.activeElement === inp; }"""
+    JS_CLICK_OPTION = r"""(text) => { const o = Array.from(document.querySelectorAll('[data-automation-id="promptOption"]')).find(e => e.textContent.trim() === text && e.getBoundingClientRect().height > 0);
+      if (!o) return false; const cb = o.closest('[role="option"], li, label') && o.closest('[role="option"], li, label').querySelector('input[type="checkbox"], [role="checkbox"]'); (cb || o).click(); return true; }"""
+
+    async def _skills_state(self) -> dict:
+        try:
+            d = await self.ex.eval(self.JS_SKILLS)
+        except Exception:
+            return {"found": False}
+        return d if isinstance(d, dict) else {"found": False}
+
+    async def _focus_skills_box(self, prefer_click: bool = True) -> bool:
+        st = await self._skills_state()
+        if not st.get("found"):
+            return False
+        x, y, w, h = st["box"]
+
+        async def by_click() -> bool:
+            # the free space right of the chips, left of the prompt icon: what a person would click
+            for px, py in ((x + w - 50, y + h - 20), (x + w - 50, y + 20), (x + 12, y + h - 20)):
+                try:
+                    await self.ex.click_xy(px, py)
+                except Exception:
+                    continue
+                await asyncio.sleep(0.4)
+                if (await self._skills_state()).get("active"):
+                    return True
+            return False
+
+        async def by_js() -> bool:
+            ok = await self.ex.eval(self.JS_FOCUS_SKILLS)
+            await asyncio.sleep(0.3)
+            return bool(ok and (await self._skills_state()).get("active"))
+
+        for step in ((by_click, by_js) if prefer_click else (by_js, by_click)):
+            if await step():
+                return True
+        if st.get("icon"):
+            try:
+                await self.ex.click_xy(*st["icon"])
+                await asyncio.sleep(0.6)
+                await self.ex.page.keyboard.press("Escape")
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
+            if await by_js():
+                return True
+        return bool((await self._skills_state()).get("active"))
+
+    async def _search_skill(self, skill: str) -> list[str]:
+        """Type the skill into the focused box, press Enter, wait for the result list to (re)appear."""
+        st = await self._skills_state()
+        if st.get("value"):
+            # never Ctrl+A here (it selects the whole result list when focus slips to the listbox): End + Backspaces
+            await self.ex.page.keyboard.press("End")
+            for _ in range(len(st["value"]) + 2):
+                await self.ex.page.keyboard.press("Backspace")
+            await asyncio.sleep(0.3)
+            st = await self._skills_state()
+            if st.get("value"):
+                self.report.failed.append(f"skill {skill}: could not clear the old text {st['value']!r}")
+                return []
+        chips = set(st.get("chips") or [])
+        before = set(o for o in (st.get("opts") or []) if o not in chips)
+        typed = False
+        for attempt in range(2):
+            await self.ex.type_text(skill, real_keys=True, delay_ms=25)
+            await asyncio.sleep(0.25)
+            st = await self._skills_state()
+            if st.get("active") and answers.norm(st.get("value", "")) == answers.norm(skill):
+                typed = True
+                break
+            # the keystrokes went elsewhere (a re-rendered box, an open result list): close, refocus the other way, retry
+            await self.ex.page.keyboard.press("Escape")
+            await asyncio.sleep(0.3)
+            if not await self._focus_skills_box(prefer_click=attempt == 1):
+                break
+        if not typed:
+            self.report.failed.append(f"skill {skill}: the box reads {st.get('value')!r} (active={st.get('active')}) after typing")
+            return []
+        await self.ex.page.keyboard.press("Enter")
+        for _ in range(15):
+            await asyncio.sleep(0.4)
+            st = await self._skills_state()
+            opts = [o for o in (st.get("opts") or []) if o not in chips]
+            fresh = [o for o in opts if o not in before]
+            if st.get("results", -1) >= 0 and (fresh or st.get("results") == 0):
+                await asyncio.sleep(0.3)
+                st = await self._skills_state()
+                return [o for o in (st.get("opts") or []) if o not in chips and o not in before]
+        return []
+
+    async def fill_skills(self) -> None:
+        a = answers.get("experience.skills_list", self.company, "workday")
+        if not a or not a.has_value:
+            return
+        skills = [s.strip() for s in str(a.answer).split(";") if s.strip()]
+        st = await self._skills_state()
+        if not st.get("found"):
+            return
+        failures = 0
+        for skill in skills:
+            chips = (await self._skills_state()).get("chips") or []
+            if any(fill._chip_matches(c, [skill]) for c in chips):
+                self.report.present.append(f"skill {skill}")
+                continue
+            if failures >= 2:
+                self.report.skipped.append(f"skill {skill}: stopped after two picker failures")
+                continue
+            if not await self._focus_skills_box():
+                failures += 1
+                self.report.failed.append(f"skill {skill}: could not focus the search box")
+                continue
+            opts = await self._search_skill(skill)
+            pick = pick_skill(skill, opts)
+            if not pick:
+                # a lone exact result is selected by Enter itself (FastAPI on ICF): the chip is already there
+                now = (await self._skills_state()).get("chips") or []
+                gained = [c for c in now if c not in chips]
+                if len(gained) == 1 and fill._chip_matches(gained[0], [skill]):
+                    self._record(f"skill {skill}", gained[0], "experience.skills_list", "skills--skills")
+                    self.report.added.append(f"skill {gained[0]}")
+                    await self.ex.page.keyboard.press("Escape")
+                    continue
+                for c in gained:
+                    await self.remove_chip(c)
+                if opts:
+                    self.report.skipped.append(f"skill {skill}: not offered (closest: {opts[:4]})")
+                else:
+                    failures += 1
+                    self.report.failed.append(f"skill {skill}: the search returned nothing")
+                await self.ex.page.keyboard.press("Escape")
+                continue
+            await self.ex.eval(self.JS_CLICK_OPTION, pick)
+            await asyncio.sleep(0.8)
+            after = (await self._skills_state()).get("chips") or []
+            new = [c for c in after if c not in chips]
+            await self.ex.page.keyboard.press("Escape")
+            await asyncio.sleep(0.3)
+            if len(new) == 1 and fill._chip_matches(new[0], [pick, skill]):
+                self._record(f"skill {skill}", new[0], "experience.skills_list", "skills--skills")
+                self.report.added.append(f"skill {new[0]}")
+            else:
+                failures += 1
+                # anything that is not the one wanted chip comes off again
+                for c in new:
+                    if not fill._chip_matches(c, [pick, skill]):
+                        await self.remove_chip(c)
+                self.report.failed.append(f"skill {skill}: clicking {pick!r} produced {new}")
+
+    async def remove_chip(self, text: str) -> bool:
+        try:
+            return bool(await self.ex.eval(
+                """(t) => { const c = Array.from(document.querySelectorAll('[data-automation-id="selectedItem"]')).find(e => e.textContent.trim() === t);
+                   const x = c && c.querySelector('[data-automation-id="DELETE_charm"]'); if (!x) return false; x.click(); return true; }""", text))
+        except Exception:
+            return False
+
     async def run(self) -> SectionReport:
         await self.fill_work()
         await self.fill_websites()
+        await self.fill_skills()
         return self.report
+
+
+def pick_skill(skill: str, options: list[str]) -> str | None:
+    """Exact wording first, then 'Skill (qualifier)', then '... (SKILL)' acronyms, then an unambiguous prefix.
+    'SQL' must take 'Structured Query Language (SQL)', never 'SQLCLR'."""
+    w = answers.norm(skill)
+    if not w:
+        return None
+    for o in options:
+        if answers.norm(o) == w:
+            return o
+    for o in options:
+        if re.fullmatch(re.escape(skill.strip().lower()) + r"\s*(\(.*\)|programming language|language|software|framework|library|platform)", o.strip().lower()):
+            return o
+    for o in options:
+        if re.search(r"\(\s*" + re.escape(skill.strip()) + r"\s*\)", o, re.I):
+            return o
+    starts = [o for o in options if answers.norm(o).startswith(w + " ")]
+    if len(starts) == 1:
+        return starts[0]
+    return None
 
 
 def _field_value(entries: list[dict], company: str) -> dict | None:

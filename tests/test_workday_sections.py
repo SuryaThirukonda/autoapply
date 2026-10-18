@@ -45,3 +45,14 @@ def test_fit_bullets_keeps_whole_bullets_under_the_cap():
     assert ws.fit_bullets(text, len(text)) == text
     assert ws.fit_bullets(text, 35) == "\u2022 one two three.\n\u2022 four five six."
     assert ws.fit_bullets("\u2022 first sentence. second sentence here.", 25) == "\u2022 first sentence."
+
+
+def test_pick_skill_prefers_exact_then_qualified_then_acronym():
+    opts = ["Python", "Python (Programming Language)", "Python IDLE", "Maya Python"]
+    assert ws.pick_skill("Python", opts) == "Python"
+    assert ws.pick_skill("Python", opts[1:]) == "Python (Programming Language)"
+    sql = ["SQLCLR", "U-SQL", "Structured Query Language (SQL)", "Structured Query Language (SQL) Development"]
+    assert ws.pick_skill("SQL", sql) == "Structured Query Language (SQL)"
+    assert ws.pick_skill("Docker", ["Docker (Software)", "Docker Swarm"]) == "Docker (Software)"
+    assert ws.pick_skill("Git", ["GitHub", "GitLab"]) is None
+    assert ws.pick_skill("Machine Learning", ["Machine Learning Algorithms"]) == "Machine Learning Algorithms"

@@ -460,7 +460,7 @@ class Workday(Adapter):
              "dropdowns: use choose (State -> Texas; Phone Device Type -> Mobile; Country -> United States of America; Field of Study -> "
              "Computer Science; How Did You Hear -> Job Board then LinkedIn). The school is 'Texas A & M University'. Date widgets: use choose "
              "or the calendar; a typed year may not commit. 'Enter website' marked for robots only is a honeypot: leave it empty. "
-             "My Experience: the harness fills Work Experience (every experience.work.N entry with its full description) and Websites itself when the page "
+             "My Experience: the harness fills Work Experience (every experience.work.N entry with its full description), Websites and Skills itself when the page "
              "opens, and again whenever you call fill_sections; read its report, then do only what it lists as failed plus Education (school prompt, "
              "degree, field of study, dates) and the résumé. Never add a work entry by hand while fill_sections has not been called on this page. "
              "A resumed application opens at its last step: go_to_step('My Experience'), call fill_sections, then Save and Continue forward to Review. "

@@ -34,13 +34,13 @@ category and types each preference into the prompt's search box. The second leve
 `preferences.job_board_second_level` (company website, then Handshake, LinkedIn, Indeed). Ask Surya only when
 none of those exist anywhere in the tree.
 
-My Experience: Work Experience shows only an "Add" button until clicked. Click Add, `snapshot`, fill Job Title / Company /
-Location from `experience.work.N.*`, `set_date` From (and To unless `.current` is Yes, then tick "I currently work
-here"), the Role Description from `.description`; then "Add Another" for the next entry, in `experience.work.order`.
-Education: school via `education.school`; on tenants whose note says "press Enter to confirm your entry" (Nissan)
+My Experience: the harness fills Work Experience and Websites itself ("adapter:sections" when the page opens; `fill_sections`
+whenever you call it): every `experience.work.N` entry in order (Add / Add Another, title, company, location, dates, the
+"I currently work here" tick, the full résumé bullets, trimmed only to a box's character cap) and every `experience.websites`
+URL, skipping what is already there. Read its report, `snapshot`, and finish only the items it lists as failed; never add an
+entry by hand first. Education: school via `education.school`; on tenants whose note says "press Enter to confirm your entry" (Nissan)
 `choose` types the name and presses Enter itself when no list match appears. Degree picker, Field of Study (a search
-prompt: `choose` with education.major), GPA. Skills: leave "Type to Add Skills" EMPTY on Workday for now: its search prompt has taken whole result lists at once (29
-Java entries on Nissan); the résumé carries the skills. Websites: Add, then one URL per entry from `experience.websites`. The résumé upload sits on the same page. A resumed
+prompt: `choose` with education.major), GPA. Skills and Websites: `fill_sections` adds them too (Skills in the portal's wording: 'Structured Query Language (SQL)', 'Java (Programming Language)'; a skill it reports as not offered stays out). Never type into the Skills box yourself: a keystroke in its chip list has selected whole result lists. The résumé upload sits on the same page. A resumed
 application opens at its last step: `go_to_step("My Experience")` jumps there through the rail (the outline does not
 list the rail), fill, then Save and Continue forward through every step to Review. The gate refuses a Review that still
 shows "Work Experience: No Response".
