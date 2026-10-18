@@ -2,6 +2,8 @@
 so a line like "No location found" is text the model cannot miss. Password values never appear."""
 from __future__ import annotations
 
+import asyncio
+
 from dataclasses import dataclass, field
 
 from . import js
@@ -119,7 +121,26 @@ def render(s: Snapshot, max_chars: int = MAX_CHARS) -> str:
     return out
 
 
+async def keep_session_alive(ex: Executor) -> bool:
+    """Press "Continue" on a session-timeout prompt (Oracle's "Are You Still With Us?"). True when one was dismissed."""
+    try:
+        r = await ex.eval(js.JS_KEEPALIVE_DIALOG)
+    except Exception:
+        return False
+    if isinstance(r, dict) and r.get("dismissed"):
+        ex._log("keepalive", {"text": r.get("text", "")[:120], "button": r.get("button", "")})
+        try:
+            from .. import db
+            db.event(ex.job_id, "page:keepalive", {"text": r.get("text", "")[:160], "button": r.get("button", "")})
+        except Exception:
+            pass
+        await asyncio.sleep(0.6)
+        return True
+    return False
+
+
 async def take(ex: Executor, max_items: int = MAX_ITEMS, with_text: bool = False) -> Snapshot:
+    await keep_session_alive(ex)
     raw = await ex.eval(js.JS_SNAPSHOT, max_items)
     if not isinstance(raw, dict):
         raw = {"url": ex.url, "title": "", "headings": [], "items": [], "groups": [], "total": 0}

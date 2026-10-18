@@ -695,6 +695,30 @@ JS_DATE_SECTIONS = r"""
 }
 """
 
+# Session-timeout prompts ("Are You Still With Us?" on Oracle, "Your session is about to expire"): press the
+# stay / continue button. Never a sign-out, cancel or anything submit-like.
+JS_KEEPALIVE_DIALOG = r"""
+() => {
+""" + _COMMON + r"""
+  const ASK = /(are you still (with us|there|here)|still (with us|there)\?|session (is )?(about to |going to )?(expire|time ?out)|session time ?out|you('| ha)ve been inactive|due to inactivity|extend (your )?session)/i;
+  const STAY = /^(yes|ok|okay|continue|continue (session|working|application)|stay( signed in| logged in)?|keep (me )?(signed|logged) in|i'?m (still )?here|extend( session)?|resume|yes,? (i'?m here|continue))$/i;
+  const NEVER = /(sign ?out|log ?out|logout|end session|cancel|no\b|submit|apply|finish|send|delete|discard|leave)/i;
+  for (const root of allRoots(document)) {
+    const boxes = Array.from(root.querySelectorAll('[role="dialog"], [role="alertdialog"], dialog[open], [aria-modal="true"], [class*="modal" i], [class*="dialog" i]')).filter(vis);
+    for (const d of boxes) {
+      const t = txt(d);
+      if (!t || t.length > 1200 || !ASK.test(t)) continue;
+      const btn = Array.from(d.querySelectorAll('button, [role="button"], a, input[type="button"]')).filter(vis)
+        .find(b => { const l = (txt(b) || b.value || b.getAttribute('aria-label') || '').trim(); return STAY.test(l) && !NEVER.test(l); });
+      if (!btn) return JSON.stringify({ dismissed: false, text: t.slice(0, 160), reason: 'no stay button' });
+      btn.click();
+      return JSON.stringify({ dismissed: true, text: t.slice(0, 160), button: (txt(btn) || btn.value || '').slice(0, 40) });
+    }
+  }
+  return JSON.stringify({ dismissed: false });
+}
+"""
+
 JS_PAGE_TEXT = r"""
 (maxChars) => (document.body ? document.body.innerText : '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').slice(0, maxChars)
 """
