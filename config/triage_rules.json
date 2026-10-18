@@ -85,5 +85,24 @@
   "consecutive_fetch_failures_before_alert": 4,
   "max_listings_in_notice": 15,
   "relevant_title_pattern": "\\b(software|swe|sde|developer|engineer|engineering|data|machine learning|ml|ai|analytics|analyst|scientist|backend|back-end|full[- ]?stack|cloud|devops|platform|infrastructure|security|research|programmer|computing|automation)\\b",
-  "_tier_a_note": "Surya 2026-10-13: Simplify handles Workday, iCIMS and Oracle well enough; the agent autofills with Simplify and fills the rest by hand."
+  "_tier_a_note": "Surya 2026-10-13: Simplify handles Workday, iCIMS and Oracle well enough; the agent autofills with Simplify and fills the rest by hand.",
+  "application_caps": [
+    {
+      "company": "Waymo",
+      "max": 5,
+      "days": 60,
+      "_source": "Waymo careers: at most 5 applications per 60 days"
+    },
+    {
+      "company": "Harvey",
+      "max": 4,
+      "days": 30,
+      "_source": "Harvey (Ashby): at most 4 applications per 30 days"
+    },
+    {
+      "company": "Scale AI",
+      "same_role_days": 90,
+      "_source": "Scale AI: 90 days before reapplying to the same role"
+    }
+  ]
 }

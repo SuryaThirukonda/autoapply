@@ -214,6 +214,13 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
     history = attempt_history(job_id, job["listing_id"])
     budget = Budget(job_id, portal, job.get("steps_used") or 0, job.get("wall_ms_used") or 0, job.get("failed_submits") or 0)
 
+    # Boards that cap applications (Waymo 5 per 60 days, ...): hold until the window opens again.
+    from . import caps
+    cap_reason = caps.hold_if_capped(job)
+    if cap_reason:
+        set_status(job_id, states.HOLD, reason=cap_reason)
+        return RunOutcome(states.HOLD, cap_reason)
+
     # Posting still live? (keyless read APIs; None = unknown)
     try:
         from . import scraper

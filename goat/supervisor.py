@@ -46,6 +46,10 @@ async def watchdog(stop: asyncio.Event) -> None:
             n = requeue_portal_errors()
             if n:
                 log.info("watchdog: requeued %d job(s) parked on a portal error", n)
+            from .caps import requeue_reopened
+            n = requeue_reopened()
+            if n:
+                log.info("watchdog: requeued %d job(s) whose application-cap window opened", n)
             ok = await chrome.is_healthy()
             if not ok and SETTINGS.browser.launch_if_missing:
                 log.warning("watchdog: Chrome CDP not answering; relaunching")

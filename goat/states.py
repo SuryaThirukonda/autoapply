@@ -67,5 +67,6 @@ HOLD_REASONS = (
     "host_mismatch",             # verification link pointed somewhere else
     "eligibility",               # graduation window, degree, clearance, radius...
     "browser_unavailable",
+    "application_cap",           # the board's own limit (Waymo 5 per 60 days...); requeued when it opens
     "manual_review",
 )
