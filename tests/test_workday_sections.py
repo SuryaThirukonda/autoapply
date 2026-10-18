@@ -67,3 +67,17 @@ def test_blank_work_block_detection_and_js_variants():
     assert not ws._is_blank_work({"kind": "language", "idx": 3, "fields": {"language": {"ref": "e5", "value": "", "type": "text", "vis": True}}})
     assert ws.pick_skill("React", ["React.js", "React VR", "React Redux"]) == "React.js"
     assert ws.pick_skill("Node.js", ["Node", "Node.js Frameworks"]) == "Node"
+
+
+def test_rail_mention_of_review_is_not_the_review_page(tmp_path):
+    """Every Workday page lists 'Review' in its progress rail; the completeness check runs only on Review itself."""
+    from goat import db
+    from goat.browser.snapshot import Snapshot
+    from goat.gate import run_gate
+    db.reset_for_tests(tmp_path / "t.db")
+    snap = Snapshot(url="https://x.wd5.myworkdayjobs.com/apply", title="Apply", headings=["Application Questions"], items=[], groups=[],
+                    errors={}, challenge={})
+    text = "My Information\nMy Experience\ncurrent step 3 of 5\nApplication Questions\nVoluntary Disclosures\nReview\nQuestions here\n"
+    job = {"id": 1, "company": "X", "title": "Intern", "url": "https://x.wd5.myworkdayjobs.com/job", "listing_id": 1}
+    g = run_gate(job=job, snapshot=snap, page_text=text, expected_resume=None, free_text_answers=[], portal="workday")
+    assert not any("Review page" in r for r in g.reasons)
