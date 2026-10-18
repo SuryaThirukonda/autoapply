@@ -114,6 +114,12 @@ class Executor:
         self.vh = SETTINGS.browser.viewport_h
         self.allow_submit_once = False
         self.action_log: list[dict] = []
+        # Tabs this job opened (its own page plus popups / target=_blank tabs), newest last. Other jobs'
+        # held tabs share the browser context and are never listed or touched here.
+        self.job_pages: list[Page] = []
+        self._new_tabs: list[Page] = []
+        self._tab_notes: list[str] = []
+        self.pending_chooser = None   # a native file picker the page opened (intercepted, never shown)
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -146,8 +152,111 @@ class Executor:
     async def new_page(self) -> Page:
         assert self._context
         self.page = await self._context.new_page()
+        self._track(self.page)
         await self._fix_viewport()
         return self.page
+
+    # ------------------------------------------------------------------ tabs
+    def _track(self, page: Page) -> None:
+        if page in self.job_pages:
+            return
+        self.job_pages.append(page)
+        page.on("popup", self._on_popup)
+        # With a listener attached Chrome never shows the OS file dialog (the agent could not see or
+        # close it); upload_resume fulfils the pending chooser instead.
+        page.on("filechooser", self._on_filechooser)
+        page.on("close", lambda p=page: self.job_pages.remove(p) if p in self.job_pages else None)
+
+    def _on_popup(self, popup: Page) -> None:
+        self._track(popup)
+        self._new_tabs.append(popup)
+
+    def _on_filechooser(self, chooser) -> None:
+        self.pending_chooser = chooser
+        self._tab_notes.append("The page opened a file picker. Call upload_resume to attach the file "
+                               "(the picker is intercepted; no system dialog is shown).")
+
+    async def follow_new_tab(self) -> str:
+        """After an action: if it opened a tab, move to the newest one when its host is allowed, else close
+        it. Returns a note for the model ("" when nothing happened)."""
+        notes: list[str] = []
+        while self._new_tabs:
+            tab = self._new_tabs.pop(0)
+            try:
+                await tab.wait_for_load_state("domcontentloaded", timeout=10000)
+            except Exception:
+                pass
+            url = tab.url or ""
+            if url in ("", "about:blank"):
+                try:  # window.open() then navigate: give it a moment
+                    await tab.wait_for_url(lambda u: u not in ("", "about:blank"), timeout=5000)
+                    url = tab.url
+                except Exception:
+                    pass
+            if self.policy.allowed(url):
+                self.page = tab
+                await self._fix_viewport()
+                await self.bring_to_front()
+                await self.settle(quiet_ms=300, timeout_ms=5000)
+                self._log("tab_follow", {"url": url[:200]})
+                notes.append(f"That action opened a new tab ({url[:160]}); you are now in it. "
+                             "Use the tabs tool to list tabs or switch back.")
+            else:
+                self._log("tab_closed_offsite", {"url": url[:200]})
+                try:
+                    await tab.close()
+                except Exception:
+                    pass
+                notes.append(f"That action opened a tab outside this application ({url_host(url) or url[:80]}); "
+                             "it was closed and you are still on the form.")
+        notes += self._tab_notes
+        self._tab_notes = []
+        return " ".join(notes)
+
+    async def list_tabs(self) -> list[dict]:
+        out = []
+        for i, p in enumerate(self.job_pages):
+            try:
+                title = await p.title()
+            except Exception:
+                title = ""
+            out.append({"index": i, "url": p.url[:200], "title": title[:120], "current": p is self.page})
+        return out
+
+    async def switch_tab(self, index: int) -> dict:
+        if not 0 <= index < len(self.job_pages):
+            raise NavigationRefused(f"no tab {index}; call tabs with action 'list'")
+        tab = self.job_pages[index]
+        if not self.policy.allowed(tab.url):
+            raise NavigationRefused(f"tab {index} is outside this application ({url_host(tab.url)})")
+        self.page = tab
+        await self._fix_viewport()
+        await self.bring_to_front()
+        self._log("tab_switch", {"index": index})
+        return {"index": index, "url": tab.url[:200]}
+
+    async def close_tab(self, index: int) -> dict:
+        if not 0 <= index < len(self.job_pages):
+            raise NavigationRefused(f"no tab {index}; call tabs with action 'list'")
+        if len(self.job_pages) == 1:
+            raise NavigationRefused("that is the only tab of this application")
+        tab = self.job_pages[index]
+        await tab.close()
+        if tab is self.page:
+            self.page = self.job_pages[-1]
+            await self._fix_viewport()
+            await self.bring_to_front()
+        self._log("tab_close", {"index": index})
+        return {"closed": index, "now": self.page.url[:200] if self.page else ""}
+
+    async def close_other_tabs(self) -> None:
+        """End of a run: keep only the tab the job is on."""
+        for p in list(self.job_pages):
+            if p is not self.page:
+                try:
+                    await p.close()
+                except Exception:
+                    pass
 
     async def attach(self, target_id: str | None = None, url_hint: str = "") -> Page | None:
         """Re-use a surviving tab by CDP target id or URL prefix."""
@@ -160,10 +269,12 @@ class Executor:
                     await cdp.detach()
                     if info.get("targetInfo", {}).get("targetId") == target_id:
                         self.page = p
+                        self._track(p)
                         await self._fix_viewport()
                         return p
                 elif url_hint and p.url.startswith(url_hint):
                     self.page = p
+                    self._track(p)
                     await self._fix_viewport()
                     return p
             except Exception:

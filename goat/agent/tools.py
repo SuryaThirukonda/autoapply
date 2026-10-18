@@ -93,6 +93,11 @@ FUNCTION_TOOLS: list[dict] = [
      "description": "The only path to submission. Runs the code gate, refuses while the page shows errors or empty required fields, clicks once, and reports submitted / blocked / failed with reasons. Call it when every page is complete.",
      "parameters": {"type": "object", "properties": {"button_label": {"type": ["string", "null"], "description": "exact submit button text if several submit-like buttons exist"}},
                     "required": ["button_label"], "additionalProperties": False}},
+    {"type": "function", "name": "tabs", "strict": True,
+     "description": "This application's browser tabs. A click that opens a new tab on the portal moves you into it automatically; use this to see them or move between them. Actions: 'list'; 'switch' (index); 'close' (index, never the last tab); 'back' (browser Back in this tab); 'reload'; 'goto' (url, only hosts of this application or its portal).",
+     "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["list", "switch", "close", "back", "reload", "goto"]},
+                                                     "index": {"type": ["integer", "null"]}, "url": {"type": ["string", "null"]}},
+                    "required": ["action", "index", "url"], "additionalProperties": False}},
     {"type": "function", "name": "park", "strict": True,
      "description": "End the run with a named reason. Use 'ready_for_you: <what is left>' when only a human-verification challenge and Submit remain; otherwise a hold reason such as 'no_standing_answer: <label>', 'bot_check_question: <text>', 'automation_prohibited: <text>', 'eligibility: <why>'.",
      "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"], "additionalProperties": False}},
@@ -468,11 +473,46 @@ class ToolDispatcher:
             return {"error": "that is a choice control; set it with fill_batch (radio/checkbox/toggle, value from an answer_key) or choose (dropdown) so the decision has a source"}, None
         info = await self.ctx.ex.click_ref(ref)
         await self.ctx.ex.settle(quiet_ms=400)
+        note = await self.ctx.ex.follow_new_tab()
         self.ctx.budget.step()
         new_url = self.ctx.ex.url
         if info.get("tag") in ("button", "a") and label.lower().strip() in ("next", "continue", "save and continue", "save & continue", "save", "proceed"):
             self.ctx.page_no += 1
-        return {"clicked": info.get("label") or label, "url": new_url}, None
+        out = {"clicked": info.get("label") or label, "url": new_url}
+        if note:
+            out["note"] = note
+        return out, None
+
+    async def t_tabs(self, action: str, index: int | None = None, url: str | None = None):
+        ex = self.ctx.ex
+        if action == "list":
+            return {"tabs": await ex.list_tabs()}, None
+        if action == "switch":
+            if index is None:
+                return {"error": "give the tab index (from action 'list')"}, None
+            out = await ex.switch_tab(int(index))
+        elif action == "close":
+            if index is None:
+                return {"error": "give the tab index (from action 'list')"}, None
+            out = await ex.close_tab(int(index))
+        elif action == "back":
+            await ex.page.go_back(wait_until="domcontentloaded", timeout=20000)
+            await ex.settle(quiet_ms=400)
+            out = {"url": ex.url}
+        elif action == "reload":
+            await ex.page.reload(wait_until="domcontentloaded", timeout=30000)
+            await ex.settle(quiet_ms=400)
+            out = {"url": ex.url}
+        elif action == "goto":
+            if not url:
+                return {"error": "give the url"}, None
+            out = {"url": await ex.goto(url)}
+        else:
+            return {"error": f"unknown action {action}"}, None
+        self.ctx.budget.step()
+        self.ctx.last_snapshot = None   # a different page: snapshot again before using refs
+        out["note"] = "call snapshot before using any ref on this page"
+        return out, None
 
     async def t_upload_resume(self, ref: str, document: str):
         p = _resume_path(self.ctx, document)
@@ -481,7 +521,16 @@ class ToolDispatcher:
         if self.ctx.resume_file == p.name and document == "resume":
             return {"ref": ref, "status": "set", "readback": p.name,
                     "note": "already attached in this run; do not upload it again"}, None
-        r = await fill.upload_file(self.ctx.ex, ref, p)
+        chooser = self.ctx.ex.pending_chooser
+        if chooser is not None and (not self.ctx.last_snapshot or not self.ctx.last_snapshot.find(ref)):
+            # The page opened a file picker (a custom upload button): answer the picker directly.
+            await chooser.set_files(str(p))
+            self.ctx.ex.pending_chooser = None
+            await self.ctx.ex.settle(quiet_ms=600)
+            r = fill.FieldResult(ref, await fill._shows_file(self.ctx.ex, p), p.name)
+        else:
+            r = await fill.upload_file(self.ctx.ex, ref, p)
+            self.ctx.ex.pending_chooser = None
         self.ctx.budget.step()
         if r.ok:
             if document == "resume":

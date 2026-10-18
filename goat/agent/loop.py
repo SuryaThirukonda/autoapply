@@ -217,6 +217,12 @@ class AgentLoop:
                         self.items.append({"role": "user", "content": [{"type": "input_text", "text": f"Harness refused that action: {e}"}]})
                         continue
                     self.items.append(await self._screenshot_output(item.call_id, decision.acknowledged))
+                    note = await ctx.ex.follow_new_tab()
+                    if note:
+                        # The screenshot above was the old tab: show the one it is on now.
+                        self.items.append({"role": "user", "content": [
+                            {"type": "input_text", "text": note},
+                            {"type": "input_image", "image_url": await ctx.ex.screenshot_data_url(), "detail": self.detail or "auto"}]})
                 elif typ == "function_call":
                     produced_tool = True
                     page_before = ctx.page_no

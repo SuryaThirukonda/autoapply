@@ -299,6 +299,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             break
     except Parked as p:
         reason = p.reason
+        tab_id = await ex.target_id() or tab_id   # the tab it ended on (it may have followed a new tab)
         if p.state == "ready_for_you":
             set_status(job_id, states.READY_FOR_YOU, reason=reason, tab_target_id=tab_id)
             outcome = RunOutcome(states.READY_FOR_YOU, reason)
@@ -347,6 +348,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             pass
         # Keep the tab for ready_for_you and recent holds; cap the number of held tabs.
         try:
+            await ex.close_other_tabs()
             if outcome.status not in (states.READY_FOR_YOU, states.HOLD) and ex.page:
                 await ex.page.close()
             await _prune_held_tabs(ex)
