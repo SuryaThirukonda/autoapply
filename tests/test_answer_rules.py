@@ -841,3 +841,27 @@ async def test_a_single_choice_picker_is_taken_not_asked(store):
     out, _ = await ToolDispatcher(ctx).t_ask_user([{"question": "Please enter your relevant employment above using the + Add link", "options": ["Thank you"],
                                                     "field_type": "select", "ref": "e9"}])
     assert out["asked"] == [] and out["auto_answered"][0]["answer"] == "Thank you"
+
+
+def test_decline_never_maps_to_no():
+    from goat.browser.fill import best_option
+    opts = [{"text": "Yes"}, {"text": "No"}, {"text": "I decline to self-identify"}]
+    assert best_option(opts, ["decline", "Decline to self-identify", "I decline to self-identify"])["text"] == "I decline to self-identify"
+    assert best_option([{"text": "Yes"}, {"text": "No"}], ["decline", "Decline to self-identify"]) is None
+
+
+async def test_self_id_pickers_ignore_model_supplied_options(store, monkeypatch):
+    from goat.browser import fill as fillmod
+    job = _job()
+    from goat import answers as answers_mod
+    answers_mod.save_answer("self_id.race_ethnicity", "decline; Decline to self-identify; I do not wish to answer", answer_type="choice_chain", source="seed")
+    ctx = RunContext(job={**job, "resume_file": None}, ex=StubEx(), budget=Budget(job["id"], "greenhouse"), classifier=None)
+    seen = {}
+
+    async def fake_choose(ex, ref, wants, **kw):
+        seen["wants"] = list(wants)
+        from goat.browser.fill import FieldResult
+        return FieldResult(ref, True, wants[0])
+    monkeypatch.setattr(fillmod, "choose", fake_choose)
+    await ToolDispatcher(ctx).t_choose("e5", "self_id.race_ethnicity", ["Asian (United States of America)"], "Race/Ethnicity", None)
+    assert "Asian (United States of America)" not in seen["wants"] and seen["wants"][0].lower().startswith("decline")

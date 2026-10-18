@@ -491,7 +491,14 @@ class ToolDispatcher:
         set_n = sum(1 for r in results if r.get("status") == "set")
         return {"summary": f"{set_n} set, {len(results) - set_n} failed", "results": results}, None
 
+    SENSITIVE_KEYS = re.compile(r"^(self_id\.|compliance\.(date_of_birth|criminal|disciplined|debarment)|bank\.(gender|race|ethnic|veteran|disab|transgender|sexual))", re.I)
+
     async def t_choose(self, ref: str, answer_key: str | None, options: list[str], label: str, source: str | None):
+        if answer_key and self.SENSITIVE_KEYS.match(answer_key) and options:
+            # Surya's self-identification answers are his stored chain and nothing else; a model-supplied
+            # fallback ("Asian (...)" next to "Decline to self-identify") is never tried.
+            db.event(self.ctx.job_id, "answer:self_id_guard", {"key": answer_key, "dropped": [str(o)[:60] for o in options][:6], "label": label[:80]})
+            options = []
         wants = list(options or [])
         src = "adapter"
         if answer_key:

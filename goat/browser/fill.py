@@ -90,7 +90,7 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
             aff = [o for o in options if AFFIRM_OPT.match((o["text"] or "").strip()) and not NEG_OPT.match((o["text"] or "").strip())]
             if len(aff) == 1:
                 return aff[0]
-        if w in ("no", "false", "decline"):
+        if w in ("no", "false"):
             neg = [o for o in options if NEG_OPT.match((o["text"] or "").strip())]
             if len(neg) == 1:
                 return neg[0]
