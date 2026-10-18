@@ -1072,6 +1072,14 @@ class ToolDispatcher:
                 db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200]})
                 return {"error": "not parked: the posting lists pay, so a local / commuting-distance requirement is fine (he relocates "
                                  "for a paid summer at his own expense). Continue filling; relocation questions take their answer_keys."}, None
+        if re.search(r"race|ethnicit|hispanic|latino|gender|veteran|disabilit|self[- ]identif", low) and self.ctx.park_attempts < 3:
+            # Self-identification never parks: every wording has a stored chain, including his own answers for forms
+            # with no decline option (Surya, 2026-10-18).
+            self.ctx.park_attempts += 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "self_id": True})
+            return {"error": "not parked: self-identification fields are settled by their self_id.* keys (choose with the key; the chain ends with "
+                             "his own answers for forms without a decline option). Whatever the picker shows after that is correct. Move on: "
+                             "finish the other sections (Work Experience via go_to_step('My Experience') if the Review shows No Response) and submit."}, None
         if low.startswith("credentials") and self.ctx.park_attempts < 2:
             # The helper works (one application password): a credentials park needs a real sign-in failure on
             # the page. Wrong-password pages get the reset procedure; anything else gets told to use the helper.
