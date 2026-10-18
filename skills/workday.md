@@ -40,7 +40,9 @@ here"), the Role Description from `.description`; then "Add Another" for the nex
 Education: school via `education.school` (type the name and press Enter on tenants that say so), Degree picker,
 Field of Study, GPA. Skills: "Type to Add Skills" is a multi-select; `choose` each skill from `experience.skills_list`.
 Websites: Add, then one URL per entry from `experience.websites`. The résumé upload sits on the same page. A resumed
-application opens at its last step: use the rail to go back to My Experience and finish it before Review.
+application opens at its last step: `go_to_step("My Experience")` jumps there through the rail (the outline does not
+list the rail), fill, then Save and Continue forward through every step to Review. The gate refuses a Review that still
+shows "Work Experience: No Response".
 
 Pages: after "My Information", "My Experience", "Application Questions", "Voluntary Disclosures",
 "Self Identify" comes "Review": read it back, fix only what is wrong, then `submit`. A Submit button that appears

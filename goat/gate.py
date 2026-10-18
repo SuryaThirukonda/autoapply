@@ -95,6 +95,13 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         return GateResult("captcha_present", [f"human-verification challenge: {', '.join(snapshot.challenge.get('kinds') or [])}"])
 
     # 3. page errors and required fields
+    # Workday's Review page lists every section; "No Response" under Work Experience (he has four roles) or
+    # under Education's Field of Study means a section was skipped: go back and fill it (2026-10-18).
+    if (portal or "").lower() == "workday" and re.search(r"\bReview\b", page_text[:3000]):
+        gaps = [sec for sec in ("Work Experience", "Field of Study") if re.search(sec + r"\s*\n\s*No Response", page_text)]
+        if gaps:
+            return GateResult("blocked", [f"the Review page shows '{g}: No Response': call go_to_step('My Experience'), fill it from the experience.* keys, "
+                                          "then Save and Continue forward to Review" for g in gaps])
     why = why_blocked(snapshot.errors)
     reasons += why
 

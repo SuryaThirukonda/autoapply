@@ -865,3 +865,31 @@ async def test_self_id_pickers_ignore_model_supplied_options(store, monkeypatch)
     monkeypatch.setattr(fillmod, "choose", fake_choose)
     await ToolDispatcher(ctx).t_choose("e5", "self_id.race_ethnicity", ["Asian (United States of America)"], "Race/Ethnicity", None)
     assert "Asian (United States of America)" not in seen["wants"] and seen["wants"][0].lower().startswith("decline")
+
+
+REVIEW_PAGE = """<html><body><h1>Review</h1>
+<p>completed step 2 of 6 My Experience</p>
+<h2>My Information</h2><div>Legal Name</div><div>Surya Thirukonda</div>
+<h2>My Experience</h2><div>Work Experience</div><div>No Response</div>
+<div>Education 1</div><div>Field of Study</div><div>Computer Science</div>
+<button>Back</button><button>Submit</button></body></html>"""
+
+
+async def test_workday_review_with_no_work_experience_is_blocked(tmp_path):
+    from goat.browser import snapshot
+    from goat.browser.executor import Executor, HostPolicy
+    from goat.gate import run_gate
+    db.reset_for_tests(tmp_path / "t.db")
+    page = tmp_path / "review.html"
+    page.write_text(REVIEW_PAGE, encoding="utf-8")
+    url = page.resolve().as_uri()
+    job = _job()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        snap = await snapshot.take(ex)
+        g = run_gate(job=job, snapshot=snap, page_text=await ex.page_text(5000), expected_resume=None, free_text_answers=[], portal="workday")
+        assert g.result == "blocked" and "Work Experience: No Response" in g.reasons[0] and "go_to_step" in g.reasons[0]
+    finally:
+        await ex.close(close_browser=True)

@@ -98,6 +98,9 @@ FUNCTION_TOOLS: list[dict] = [
      "description": "The only path to submission. Runs the code gate, refuses while the page shows errors or empty required fields, clicks once, and reports submitted / blocked / failed with reasons. Call it when every page is complete.",
      "parameters": {"type": "object", "properties": {"button_label": {"type": ["string", "null"], "description": "exact submit button text if several submit-like buttons exist"}},
                     "required": ["button_label"], "additionalProperties": False}},
+    {"type": "function", "name": "go_to_step", "strict": True,
+     "description": "Workday only: jump to a completed step of the application by its name in the progress rail at the top ('My Information', 'My Experience', 'Application Questions 1 of 2', 'Voluntary Disclosures', 'Review'). Use it from the Review page when a section shows 'No Response' that you must fill, then Save and Continue forward again.",
+     "parameters": {"type": "object", "properties": {"step": {"type": "string"}}, "required": ["step"], "additionalProperties": False}},
     {"type": "function", "name": "tabs", "strict": True,
      "description": "This application's browser tabs. A click that opens a new tab on the portal moves you into it automatically; use this to see them or move between them. Actions: 'list'; 'switch' (index); 'close' (index, never the last tab); 'back' (browser Back in this tab); 'reload'; 'goto' (url, only hosts of this application or its portal).",
      "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["list", "switch", "close", "back", "reload", "goto"]},
@@ -552,6 +555,38 @@ class ToolDispatcher:
         if note:
             out["note"] = note
         return out, None
+
+    JS_RAIL_STEP = r"""(name) => {
+      const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const want = norm(name);
+      const cands = Array.from(document.querySelectorAll('[data-automation-id*="progressBar"] *, [data-automation-id*="progress"] *, nav *, [role="list"] *, [role="listitem"] *, li, div, span, button, a'))
+        .filter(el => { const r = el.getBoundingClientRect(); return r.width > 20 && r.height > 8 && r.y < 320 && norm(el.textContent) === want; });
+      if (!cands.length) return JSON.stringify({ ok: false });
+      // the innermost match (deepest in the tree) is the label itself; climb to a clickable ancestor
+      let el = cands[cands.length - 1];
+      let click = el;
+      for (let p = el, i = 0; p && i < 6; p = p.parentElement, i++) {
+        const role = p.getAttribute && (p.getAttribute('role') || '');
+        if (p.tagName === 'BUTTON' || p.tagName === 'A' || role === 'button' || role === 'link' || (p.getAttribute && p.getAttribute('tabindex') !== null) || (p.onclick)) { click = p; break; }
+      }
+      const r = click.getBoundingClientRect();
+      return JSON.stringify({ ok: true, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), tag: click.tagName });
+    }"""
+
+    async def t_go_to_step(self, step: str):
+        import asyncio
+        pos = await self.ctx.ex.eval(self.JS_RAIL_STEP, step)
+        if not (isinstance(pos, dict) and pos.get("ok")):
+            return {"error": f"no rail step named {step!r} is visible; use `click` on the Back button repeatedly, or the computer tool on the rail"}, None
+        before = self.ctx.ex.url
+        await self.ctx.ex.click_xy(int(pos["x"]), int(pos["y"]))
+        await asyncio.sleep(1.5)
+        self.ctx.budget.step()
+        snap = await snapmod.take(self.ctx.ex)
+        self.ctx.last_snapshot = snap
+        on_it = any(step.lower() in (h or "").lower() for h in snap.headings[:4]) or step.lower() in (await self.ctx.ex.page_text(3000)).lower()[:1500]
+        db.event(self.ctx.job_id, "nav:step", {"step": step, "ok": on_it})
+        return {"status": "moved" if on_it else "clicked", "headings": snap.headings[:5], "note": "snapshot taken; fill the section, then Save and Continue forward through each step to Review"}, None
 
     async def t_tabs(self, action: str, index: int | None = None, url: str | None = None):
         ex = self.ctx.ex
