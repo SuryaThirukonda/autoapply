@@ -28,8 +28,11 @@ re-reads; "Invalid Date" means it retries with arrow keys. Work-experience "From
 needed this.
 
 School: pickers spell it "Texas A & M University" (the `education.school_variants` chain has every spelling).
-How did you hear: an ordered chain (LinkedIn, Job Board, Agency / Search Firm, Other); the second level under
-Job Board uses `preferences.job_board_second_level` (company website first).
+How did you hear: an ordered chain (LinkedIn, Job Board, Agency / Search Firm, Other). Some tenants nest it
+(Nissan): LinkedIn sits under "Digital/Social Media", Handshake / Indeed under "Job Board"; `choose` drills into a
+category and types each preference into the prompt's search box. The second level under Job Board uses
+`preferences.job_board_second_level` (company website, then Handshake, LinkedIn, Indeed). Ask Surya only when
+none of those exist anywhere in the tree.
 
 Pages: after "My Information", "My Experience", "Application Questions", "Voluntary Disclosures",
 "Self Identify" comes "Review": read it back, fix only what is wrong, then `submit`. A Submit button that appears

@@ -107,6 +107,10 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
     if not info.get("found"):
         return FieldResult(ref, False, "", "ref not found")
     before = (info.get("value") or info.get("shown") or "")
+    # Workday multi-select trees (How Did You Hear About Us?) count their picks ("0 items selected") and nest
+    # options under categories: the prompt's search box filters the whole tree, so each want is typed and
+    # matched exactly instead of drilling into a category by hand.
+    multi_tree = bool(re.search(r"\bitems? selected\b", before or "", re.I))
     # 0. already showing the wanted option: nothing to click.
     for w in wants:
         if _norm(w) and not PLACEHOLDER.match(before or "") and _norm(before) == _norm(w):
@@ -155,7 +159,7 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
                 shown_now = [o for o in (shown_now if isinstance(shown_now, list) else []) if _key(o) not in baseline_keys]
                 if shown_now:
                     break
-            if type_to_filter and want and not (shown_now and best_option(shown_now, wants)):
+            if type_to_filter and want and not (shown_now and best_option(shown_now, [want] if multi_tree else wants)):
                 try:
                     await ex.page.keyboard.press("Control+a")     # replace, never append to, text left in the search box
                 except Exception:
@@ -210,8 +214,11 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
             try:
                 pos = await ex.eval(js.JS_SCROLL_OPTION, pick["text"])
                 if isinstance(pos, dict) and pos.get("ok"):
+                    await asyncio.sleep(0.4)                       # a virtualized list re-renders after the scroll
+                    pos2 = await ex.eval(js.JS_SCROLL_OPTION, pick["text"])
+                    pos = pos2 if isinstance(pos2, dict) and pos2.get("ok") else pos
                     pick = {**pick, "x": pos["x"], "y": pos["y"]}
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(0.15)
             except Exception:
                 pass
             try:
@@ -221,9 +228,23 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
             await asyncio.sleep(0.6)
             after = await ex.read_ref(ref)
             shown = (after.get("value") or after.get("shown") or "")
-            # Workday multi-select trees ("How Did You Hear About Us?") count their picks instead of showing them.
+            # Workday multi-select trees ("How Did You Hear About Us?") count their picks and list them after the count.
             if re.search(r"\b[1-9]\d* items? selected\b", shown, re.I):
-                return FieldResult(ref, True, pick["text"])
+                if _norm(pick["text"]) in _norm(shown):
+                    return FieldResult(ref, True, pick["text"])
+                # a different row took the click (the list shifted): toggle it off and try the next want
+                stray = re.sub(r".*?items? selected,?\s*", "", shown, flags=re.I).strip()
+                stray_text = (stray.split("  ")[0] or stray).strip()
+                try:
+                    sp = await ex.eval(js.JS_SCROLL_OPTION, stray_text[: len(stray_text) // 2 + 1] if stray_text and stray_text == stray_text[: len(stray_text) // 2 + 1] * 2 else stray_text)
+                    if isinstance(sp, dict) and sp.get("ok"):
+                        await ex.click_xy(int(sp["x"]), int(sp["y"]))
+                        await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+                last_err = f"the click landed on {stray_text[:40]!r} instead of {pick['text']!r} (the list shifted); it was toggled off"
+                open_now = False
+                continue
             if shown and not PLACEHOLDER.match(shown) and not LEVELISH.search(shown) and (_norm(pick["text"])[:6] in _norm(shown) or _norm(want)[:6] in _norm(shown)):
                 # The text is in the box, but a Workday prompt also shows the typed search there: only a
                 # selected-item chip means it committed.
