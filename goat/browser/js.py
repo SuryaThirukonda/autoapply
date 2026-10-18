@@ -560,6 +560,8 @@ JS_READ_REF = r"""
   else if (type === 'password') value = el.value ? '(set)' : '';
   else if (type === 'file') value = el.files && el.files.length ? el.files[0].name : '';
   else if (type === 'checkbox' || type === 'radio') value = el.checked ? 'checked' : 'unchecked';
+  // A dropdown button shows its pick as text; its value attribute is an internal id on Workday (Booz Allen, 2026-10-18).
+  else if (tag === 'button' || el.getAttribute('aria-haspopup') || el.getAttribute('role') === 'combobox' && tag !== 'input') value = txt(el).slice(0, 300);
   else if ('value' in el) value = (el.value || '').slice(0, 300);
   else value = txt(el).slice(0, 300);
   let shown = '';

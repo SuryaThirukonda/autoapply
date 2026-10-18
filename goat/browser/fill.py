@@ -42,7 +42,8 @@ def _norm(s: str) -> str:
 
 
 AFFIRM_OPT = re.compile(r"^(yes\b|i (agree|consent|accept|authori[sz]e|acknowledge|understand|certify|confirm)\b|agree\b|accept\b)", re.I)
-NEG_OPT = re.compile(r"^(no\b|i do not\b|i don'?t\b|please do not\b|do not\b|don'?t\b|i decline\b|decline\b|not\b|never\b)", re.I)
+NEG_OPT = re.compile(r"^(no\b|i do not\b|i don'?t\b|please do not\b|do not\b|don'?t\b|i decline\b|decline\b|not\b|never\b|"
+                     r"i have never\b|i have not\b|i am not\b|i'?m not\b|none\b)", re.I)
 
 
 def _squash(s: str) -> str:
@@ -363,6 +364,10 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
     def _key(o: dict) -> tuple:
         return (o.get("text"), o.get("x"), o.get("y"))
 
+    # A list left open by an earlier call (Workday's 'Select One' menus ignore Escape) would be counted as
+    # baseline, so this control's own options would look like "another control's" and a click on the control
+    # could land on the overlay instead (Booz Allen, 2026-10-18): close it before measuring the baseline.
+    await _close_open_lists(ex)
     baseline = await ex.eval(js.JS_LIST_OPTIONS)
     baseline_keys = {_key(o) for o in (baseline if isinstance(baseline, list) else [])}
     open_now = False
@@ -496,6 +501,7 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
                 options_seen_at_level = [o["text"] for o in nxt[:12]]
                 last_err = f"inside {pick['text']!r} the list shows: {options_seen_at_level}; none matched the preference list"
                 continue
+            last_err = f"clicked {pick['text'][:60]!r} but the control then showed {shown[:60]!r}"
         if pick is None:
             sample = [o["text"] for o in options[:12]]
             last_err = f"no option matched {want!r}; saw: {sample}" if options else f"no options appeared after opening (typed {want!r})"
@@ -513,11 +519,29 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
                 return FieldResult(ref, True, shown)
             whys.append(f"{w[:30]!r}: {shown[:120]}")
         last_err += "; search-and-select: " + " | ".join(whys)
+    await _close_open_lists(ex)
+    return FieldResult(ref, False, before, last_err)
+
+
+async def _close_open_lists(ex: Executor) -> None:
+    """Escape, and when option rows are still showing, a click on the page's top-left corner (outside any
+    menu), which is what closes a Workday 'Select One' list."""
     try:
         await ex.page.keyboard.press("Escape")
     except Exception:
+        return
+    await asyncio.sleep(0.2)
+    try:
+        still = await ex.eval(js.JS_LIST_OPTIONS)
+    except Exception:
+        return
+    if not (isinstance(still, list) and still):
+        return
+    try:
+        await ex.click_xy(2, 2)
+        await asyncio.sleep(0.3)
+    except Exception:
         pass
-    return FieldResult(ref, False, before, last_err)
 
 
 async def _committed(ex: Executor, ref: str, text: str) -> tuple[bool, str]:
