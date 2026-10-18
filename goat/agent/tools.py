@@ -1039,7 +1039,7 @@ class ToolDispatcher:
                              "for the email and password, then `click` Sign In / Create Account, and fill the application that follows."}, None
         page_text = await ctx.ex.page_text(30000)
         gate = run_gate(job=ctx.job, snapshot=snap, page_text=page_text, expected_resume=ctx.resume_file,
-                        free_text_answers=[f["answer"] for f in ctx.free_text], portal=ctx.portal)
+                        free_text_answers=[f["answer"] for f in ctx.free_text], portal=ctx.portal, page_no=ctx.page_no)
         ctx.gate_result = gate.as_dict()
         db.event(ctx.job_id, f"gate:{gate.result}", gate.as_dict())
         with db.tx() as con:
@@ -1248,7 +1248,7 @@ class ToolDispatcher:
             self.ctx.last_snapshot = snap
             page_text = await self.ctx.ex.page_text(30000)
             gate = run_gate(job=self.ctx.job, snapshot=snap, page_text=page_text, expected_resume=self.ctx.resume_file,
-                            free_text_answers=[f["answer"] for f in self.ctx.free_text], portal=self.ctx.portal)
+                            free_text_answers=[f["answer"] for f in self.ctx.free_text], portal=self.ctx.portal, page_no=self.ctx.page_no)
             db.event(self.ctx.job_id, "park:checked", {"reason": reason[:200], "gate": gate.as_dict()})
             if gate.passed:
                 return {"error": "not parked: the code gate PASSES on this page. Call submit now (the gate decides; in shadow mode it stops before the click)."}, None

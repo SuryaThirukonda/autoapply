@@ -74,7 +74,7 @@ def guardrail_check(text: str) -> tuple[list[str], list[str]]:
 
 
 def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: str | None,
-             free_text_answers: list[str], portal: str) -> GateResult:
+             free_text_answers: list[str], portal: str, page_no: int = 0) -> GateResult:
     reasons: list[str] = []
 
     # 0. ledger
@@ -164,6 +164,10 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         for o in g.get("options", []):
             if o.get("checked") and not _sourced(o.get("ref", ""), f"{g.get('label', '')} {o.get('label', '')}"):
                 reasons.append(f"checked option with no sourced decision this attempt: [{o.get('ref')}] {(g.get('label') or '')[:50]} / {(o.get('label') or '')[:30]} (re-set it with fill_batch using the group's answer_key from lookup_answer, or clear it with value false source 'clear')")
+
+    # 5c. read-back: every decision made on a control still on this page must be what the control shows now.
+    from . import readback
+    reasons += readback.diff(decs, snapshot, page_no)
 
     # 6. generated text against guardrails
     for t in free_text_answers:

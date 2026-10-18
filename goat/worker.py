@@ -76,6 +76,21 @@ def attempt_history(job_id: int, listing_id: str) -> list[str]:
     return list(reversed(out))
 
 
+async def readback_after_page(ctx, snap, job_id: int, page: int) -> list[str]:
+    """Advisory read-back after a page change: the decisions whose controls are still on screen are compared
+    with the live DOM (no scrolling) and the mismatches logged as gate:readback for the model and the audit."""
+    from . import readback
+    try:
+        decs = records.decisions(job_id)
+        await readback.refresh_values(ctx.ex, snap)
+        mism = readback.diff(decs, snap, page)
+    except Exception as e:  # noqa: BLE001 - never let the audit break a run
+        db.event(job_id, "gate:readback", {"page": page, "error": str(e)[:200]})
+        return []
+    db.event(job_id, "gate:readback", {"page": page, "mismatches": mism})
+    return mism
+
+
 def set_status(job_id: int, status: str, *, reason: str | None = None, blocked_on: list[str] | None = None,
                tab_target_id: str | None = None, finished: bool = False) -> None:
     with db.tx() as con:
@@ -332,6 +347,10 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
                             break
                         await asyncio.sleep(0.5)
                     ctx.last_snapshot = snap
+                    mism = await readback_after_page(ctx, snap, job_id, ctx.page_no - 1)
+                    if mism:
+                        note += (" Read-back on the page you just left found values that differ from the decisions: "
+                                 + "; ".join(mism[:6]) + ". Go back and re-set them before submit, or the gate will refuse.")
                     pre = await adapter.prefill(ex, snap, client_job, ctx.page_no)
                     if client_job.get("resume_file"):
                         ctx.resume_file = client_job["resume_file"]

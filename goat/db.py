@@ -162,8 +162,21 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
         con.execute("PRAGMA foreign_keys=ON")
         con.execute("PRAGMA busy_timeout=30000")
         con.executescript(SCHEMA)
+        _migrate(con)
         _con = con
         return con
+
+
+# Columns added after a table's CREATE: (table, column, type-and-default). executescript(SCHEMA) only creates
+# missing tables, so an existing database gets each column here, once, additively.
+COLUMN_MIGRATIONS: list[tuple[str, str, str]] = []
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    for table, column, ddl in COLUMN_MIGRATIONS:
+        cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
 def reset_for_tests(path: Path) -> sqlite3.Connection:

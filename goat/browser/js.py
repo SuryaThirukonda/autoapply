@@ -580,6 +580,32 @@ JS_READ_REF = r"""
 }
 """
 
+# Current values of several refs at once, for the read-back diff. Unlike JS_READ_REF it never scrolls:
+# it only reports {ref: {value|shown|checked|pressed}} for the refs it finds.
+JS_READ_REFS = r"""
+(refs) => {
+""" + _COMMON + r"""
+  const out = {};
+  for (const ref of refs || []) {
+    const el = findRef(ref);
+    if (!el) continue;
+    const tag = el.tagName.toLowerCase(); const type = (el.getAttribute('type') || '').toLowerCase();
+    if (tag === 'select') out[ref] = { value: el.selectedOptions.length ? txt(el.selectedOptions[0]) : '' };
+    else if (type === 'password' || type === 'file') out[ref] = { value: el.value ? '(set)' : '' };
+    else if (type === 'checkbox' || type === 'radio') out[ref] = { checked: !!el.checked };
+    else if (tag === 'button' && (el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked')))
+      out[ref] = { pressed: (el.getAttribute('aria-pressed') ?? el.getAttribute('aria-checked')) === 'true' };
+    else if (tag === 'button' || el.getAttribute('aria-haspopup') || (el.getAttribute('role') === 'combobox' && tag !== 'input'))
+      out[ref] = { value: txt(el).slice(0, 300) };
+    else if ('value' in el) out[ref] = { value: (el.value || '').slice(0, 300) };
+    else out[ref] = { value: txt(el).slice(0, 300) };
+    const c = el.closest('[class*="__control"], [class*="control"], [class*="Control"]');
+    if (c && tag === 'input' && out[ref].value === '') { const s = txt(c).slice(0, 300); if (s && !PLACEHOLDER.test(s)) out[ref].shown = s; }
+  }
+  return JSON.stringify(out);
+}
+"""
+
 # The choices of a native control by ref: a <select>'s options, or the labels of a radio/checkbox group.
 JS_FIELD_CHOICES = r"""
 (ref) => {
