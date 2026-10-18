@@ -136,6 +136,44 @@ class Adapter:
     def field_map(self) -> list[tuple[re.Pattern, str, str]]:
         return GENERIC_FIELD_MAP
 
+    async def _run_chooses(self, ex, chooses, job: dict, page_no: int, res) -> None:
+        for ref, label, key, value in chooses:
+            wants = [w.strip() for w in value.split(";") if w.strip()]
+            variants = answers.get(key + "_variants")
+            if variants and variants.answer:
+                wants += [w.strip() for w in str(variants.answer).split(";")]
+            fallbacks = answers.get(key.rsplit(".", 1)[0] + ".major_fallbacks") if key.endswith(".major") else None
+            if fallbacks and fallbacks.answer:
+                wants += [w.strip() for w in str(fallbacks.answer).split(";")]
+            r = await fill.choose(ex, ref, wants)
+            if r.ok:
+                res.set += 1
+                records.record_decision(job["id"], page_no, label, r.readback, f"standing:{key}", ref)
+            else:
+                res.failed += 1
+            res.details.append({"label": label, "ok": r.ok, "error": r.error})
+
+    async def _recheck_typed(self, ex, plan: list[dict], job: dict, page_no: int, res) -> None:
+        lost = []
+        for p in plan:
+            try:
+                info = await ex.read_ref(p["ref"])
+            except Exception:
+                continue
+            if info.get("found") and answers.norm(info.get("value") or "") != answers.norm(p["value"]):
+                lost.append(p)
+        if not lost:
+            return
+        out = await fill.fill_batch(ex, [{"ref": p["ref"], "value": p["value"]} for p in lost])
+        by = {r.ref: r for r in out}
+        for p in lost:
+            r = by.get(p["ref"])
+            ok = bool(r and r.ok)
+            if ok:
+                records.record_decision(job["id"], page_no, p["_label"], r.readback, f"standing:{p['_key']}", p["ref"])
+            res.details.append({"label": p["_label"], "ok": ok, "retyped": True,
+                                "error": "" if ok else "a later field cleared it and re-typing failed"})
+
     async def prefill(self, ex, snap: Snapshot, job: dict, page_no: int) -> PrefillResult:
         """Fill empty plain fields whose label matches the map. Never touches self-identification,
         attestations, password fields or anything already holding a value."""
@@ -222,17 +260,6 @@ class Adapter:
                     else:
                         plan.append({"ref": item["ref"], "value": str(a.answer), "_label": label, "_key": key})
                     break
-        if plan:
-            out = await fill.fill_batch(ex, [{"ref": p["ref"], "value": p["value"]} for p in plan])
-            by = {r.ref: r for r in out}
-            for p in plan:
-                r = by.get(p["ref"])
-                if r and r.ok:
-                    res.set += 1
-                    records.record_decision(job["id"], page_no, p["_label"], r.readback, f"standing:{p['_key']}", p["ref"])
-                else:
-                    res.failed += 1
-                res.details.append({"label": p["_label"], "ok": bool(r and r.ok), "error": r.error if r else "no result"})
         # Résumé: attach deterministically when an empty Resume/CV file input exists (never the cover letter slot);
         # a slot that already shows the expected file is verified and sourced without re-uploading.
         for item in snap.items:
@@ -262,21 +289,25 @@ class Adapter:
                 res.failed += 1
             res.details.append({"label": item.get("label"), "ok": r.ok, "error": r.error})
             break
-        for ref, label, key, value in chooses:
-            wants = [w.strip() for w in value.split(";") if w.strip()]
-            variants = answers.get(key + "_variants")
-            if variants and variants.answer:
-                wants += [w.strip() for w in str(variants.answer).split(";")]
-            fallbacks = answers.get(key.rsplit(".", 1)[0] + ".major_fallbacks") if key.endswith(".major") else None
-            if fallbacks and fallbacks.answer:
-                wants += [w.strip() for w in str(fallbacks.answer).split(";")]
-            r = await fill.choose(ex, ref, wants)
-            if r.ok:
-                res.set += 1
-                records.record_decision(job["id"], page_no, label, r.readback, f"standing:{key}", ref)
-            else:
-                res.failed += 1
-            res.details.append({"label": label, "ok": r.ok, "error": r.error})
+        # Country before anything typed: Greenhouse clears a typed phone number when the country changes.
+        first = [c for c in chooses if "country" in c[2]]
+        chooses = first + [c for c in chooses if c not in first]
+        n_first = len(first)
+        await self._run_chooses(ex, chooses[:n_first], job, page_no, res)
+        if plan:
+            out = await fill.fill_batch(ex, [{"ref": p["ref"], "value": p["value"]} for p in plan])
+            by = {r.ref: r for r in out}
+            for p in plan:
+                r = by.get(p["ref"])
+                if r and r.ok:
+                    res.set += 1
+                    records.record_decision(job["id"], page_no, p["_label"], r.readback, f"standing:{p['_key']}", p["ref"])
+                else:
+                    res.failed += 1
+                res.details.append({"label": p["_label"], "ok": bool(r and r.ok), "error": r.error if r else "no result"})
+        await self._run_chooses(ex, chooses[n_first:], job, page_no, res)
+        # A later step (a picker, a résumé re-parse) can clear what was typed: check and re-type once.
+        await self._recheck_typed(ex, plan, job, page_no, res)
         return res
 
 
