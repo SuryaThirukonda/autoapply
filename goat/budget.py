@@ -48,7 +48,7 @@ class Budget:
     def step(self) -> None:
         self.steps += 1
         self._persist()
-        if self.steps > self.max_steps:
+        if self.max_steps and self.steps > self.max_steps:
             raise BudgetExceeded(f"budget_spent: steps>{self.max_steps}")
         if self.remaining_s() <= 0:
             raise BudgetExceeded(f"budget_spent: wall>{self.wall_s}s")

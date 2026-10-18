@@ -34,6 +34,14 @@ category and types each preference into the prompt's search box. The second leve
 `preferences.job_board_second_level` (company website, then Handshake, LinkedIn, Indeed). Ask Surya only when
 none of those exist anywhere in the tree.
 
+My Experience: Work Experience shows only an "Add" button until clicked. Click Add, `snapshot`, fill Job Title / Company /
+Location from `experience.work.N.*`, `set_date` From (and To unless `.current` is Yes, then tick "I currently work
+here"), the Role Description from `.description`; then "Add Another" for the next entry, in `experience.work.order`.
+Education: school via `education.school` (type the name and press Enter on tenants that say so), Degree picker,
+Field of Study, GPA. Skills: "Type to Add Skills" is a multi-select; `choose` each skill from `experience.skills_list`.
+Websites: Add, then one URL per entry from `experience.websites`. The résumé upload sits on the same page. A resumed
+application opens at its last step: use the rail to go back to My Experience and finish it before Review.
+
 Pages: after "My Information", "My Experience", "Application Questions", "Voluntary Disclosures",
 "Self Identify" comes "Review": read it back, fix only what is wrong, then `submit`. A Submit button that appears
 on a page with a visible password box is the account page's button: never press it.

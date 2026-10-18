@@ -78,15 +78,15 @@ def assert_allowed(model: str) -> str:
 class Budgets:
     """Per-job budgets. A spent budget ends the run with a named reason; a retry moves up a tier."""
     max_failed_submits: int = _env_int("BUDGET_FAILED_SUBMITS", 2)
-    max_steps: int = _env_int("BUDGET_STEPS", 120)
-    wall_s_default: int = _env_int("BUDGET_WALL_S", 25 * 60)
+    max_steps: int = _env_int("BUDGET_STEPS", 0)          # 0 = no cap (Surya, 2026-10-18: never cut a run short on turns)
+    wall_s_default: int = _env_int("BUDGET_WALL_S", 45 * 60)
     wall_s_by_portal: dict = field(default_factory=lambda: {
         "greenhouse": _env_int("BUDGET_WALL_S_GREENHOUSE", 15 * 60),
         "ashby": _env_int("BUDGET_WALL_S_ASHBY", 15 * 60),
         "lever": _env_int("BUDGET_WALL_S_LEVER", 15 * 60),
-        "workday": _env_int("BUDGET_WALL_S_WORKDAY", 45 * 60),
-        "oracle": _env_int("BUDGET_WALL_S_ORACLE", 45 * 60),
-        "icims": _env_int("BUDGET_WALL_S_ICIMS", 40 * 60),
+        "workday": _env_int("BUDGET_WALL_S_WORKDAY", 90 * 60),
+        "oracle": _env_int("BUDGET_WALL_S_ORACLE", 90 * 60),
+        "icims": _env_int("BUDGET_WALL_S_ICIMS", 60 * 60),
     })
     answer_wait_s: int = _env_int("ANSWER_WAIT_S", 15 * 60)
     code_wait_s: int = _env_int("CODE_WAIT_S", 180)

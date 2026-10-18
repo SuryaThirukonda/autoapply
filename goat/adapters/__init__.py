@@ -460,7 +460,10 @@ class Workday(Adapter):
              "dropdowns: use choose (State -> Texas; Phone Device Type -> Mobile; Country -> United States of America; Field of Study -> "
              "Computer Science; How Did You Hear -> Job Board then LinkedIn). The school is 'Texas A & M University'. Date widgets: use choose "
              "or the calendar; a typed year may not commit. 'Enter website' marked for robots only is a honeypot: leave it empty. "
-             "Skills on My Experience come only from the résumé. "
+             "My Experience: Work Experience is empty until you click its Add button (Job Title, Company, Location, 'I currently work here', From, To, Role Description), "
+             "one entry per experience.work.N key set in order, Add Another between entries; Skills is a 'Type to Add Skills' multi-select "
+             "(experience.skills_list, one choose per skill); Websites has its own Add (experience.websites). A resumed application opens at "
+             "its last step: use the rail at the top to go back to My Experience and finish it before Review. "
              "Date fields (graduation, employment dates) are three spinbuttons that ignore ordinary typing: always use "
              "`set_date` (graduation = education.graduation_mmddyyyy, i.e. 05/15/2028). Revio IS a current role: tick "
              "'I currently work here' and leave its end date blank.")
