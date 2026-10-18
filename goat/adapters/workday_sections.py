@@ -41,6 +41,17 @@ JS_SECTIONS = r"""
     const type = (el.getAttribute('type') || el.tagName).toLowerCase();
     e.fields[m[3]] = { ref: mkref(el), type, value: type === 'checkbox' ? (el.checked ? 'checked' : '') : (el.value || ''), vis: vis(el), max: el.maxLength > 0 ? el.maxLength : 0 };
   }
+  // each block's own Delete button: the nearest ancestor of its first field that holds one and no other block's fields
+  for (const e of Object.values(entries)) {
+    const first = document.querySelector('[data-goat-ref="' + Object.values(e.fields)[0].ref + '"]');
+    let node = first ? first.parentElement : null;
+    for (let i = 0; i < 8 && node; i++, node = node.parentElement) {
+      const others = Array.from(node.querySelectorAll('input, textarea')).some(x => { const m = /^([A-Za-z]+)-(\d+)--/.exec(x.id || ''); return m && (m[1] !== e.kind || parseInt(m[2], 10) !== e.idx); });
+      if (others) break;
+      const del = Array.from(node.querySelectorAll('button')).find(b => /^delete$/i.test(norm(b.textContent)) || /^delete$/i.test(norm(b.getAttribute('aria-label') || '')));
+      if (del) { e.delete = mkref(del); break; }
+    }
+  }
   const text = norm(document.body.innerText || '').slice(0, 20000);
   return { sections, entries: Object.values(entries), has_skills: /\bSkills\b/.test(text), text_head: text.slice(0, 400) };
 }
@@ -160,8 +171,9 @@ class WorkdaySections:
             self._record(label, out[0].readback if isinstance(value, str) else str(value), key, ref)
         return ok
 
-    async def _click_add(self, section_heading: re.Pattern, seen: set[str]) -> dict | None:
-        """Click the section's Add / Add Another button and return the entry that appeared."""
+    async def _click_add(self, section_heading: re.Pattern, seen: set[str], kinds: tuple[str, ...]) -> dict | None:
+        """Click the section's Add / Add Another button and return the entry OF THAT KIND that appeared
+        (Lowe's renders the Education and Languages blocks lazily: they must not be taken for a work entry)."""
         info = await self.scan()
         btn = next((s for s in info["sections"] if section_heading.search(s["heading"])), None)
         if not btn:
@@ -170,10 +182,21 @@ class WorkdaySections:
         for _ in range(8):
             await asyncio.sleep(0.5)
             info = await self.scan()
-            new = [e for e in info["entries"] if f'{e["kind"]}-{e["idx"]}' not in seen and e["fields"]]
+            new = [e for e in info["entries"] if f'{e["kind"]}-{e["idx"]}' not in seen and e["fields"] and e["kind"] in kinds]
             if new:
                 return new[-1]
         return None
+
+    async def _delete_entry(self, entry: dict) -> bool:
+        """Press the Delete button of a blank block (some tenants pre-render one per section)."""
+        if not entry.get("delete"):
+            return False
+        try:
+            await self.ex.click_ref(entry["delete"])
+        except Exception:
+            return False
+        await asyncio.sleep(0.6)
+        return True
 
     async def fill_work_entry(self, entry: dict, ent: dict) -> bool:
         n = ent["n"]
@@ -261,7 +284,10 @@ class WorkdaySections:
                 else:
                     self.report.present.append(ent["company"])
                 continue
-            new = await self._click_add(work_heading, seen)
+            # a blank block (pre-rendered by the tenant, or left by an earlier Add) is filled before another Add
+            new = next((e for e in existing if f'{e["kind"]}-{e["idx"]}' not in matched and _is_blank_work(e)), None)
+            if new is None:
+                new = await self._click_add(work_heading, seen, WORK_KINDS)
             if not new:
                 self.report.failed.append(f'{ent["company"]}: Add button not found or no new entry appeared')
                 continue
@@ -269,12 +295,25 @@ class WorkdaySections:
             matched.add(f'{new["kind"]}-{new["idx"]}')
             ok = await self.fill_work_entry(new, ent)
             self.report.added.append(f'{ent["company"]}{"" if ok else " (partial)"}')
-        # Entries holding a company that is not on his résumé are reported, never deleted (a human decision).
-        for e in existing:
+        # Leftover blank blocks go; entries holding a company that is not on his résumé are reported, never deleted.
+        info = await self.scan()
+        for e in [x for x in info["entries"] if x["kind"] in WORK_KINDS]:
             tag = f'{e["kind"]}-{e["idx"]}'
-            if tag not in matched:
-                c = _field(e, "companyName", "company")
-                self.report.skipped.append(f'extra entry {tag}: {c["value"][:40] if c else "?"}')
+            if tag in matched:
+                continue
+            if _is_blank_work(e):
+                if await self._delete_entry(e):
+                    self.report.updated.append(f"removed blank entry {tag}")
+                else:
+                    self.report.skipped.append(f"blank entry {tag} has no Delete button")
+                continue
+            c = _field(e, "companyName", "company")
+            if c and any(_same_company(c["value"], s["company"]) for s in stored):
+                # a second copy of one of his own entries (an earlier pass added it twice): ours to remove
+                if await self._delete_entry(e):
+                    self.report.updated.append(f'removed duplicate entry {tag} ({c["value"][:30]})')
+                    continue
+            self.report.skipped.append(f'extra entry {tag}: {c["value"][:40] if c else "?"}')
 
     async def fill_websites(self) -> None:
         sites = stored_websites(self.company)
@@ -299,7 +338,7 @@ class WorkdaySections:
                     existing = [x for x in existing if x is not e]
                     break
             if target is None:
-                target = await self._click_add(site_heading, seen)
+                target = await self._click_add(site_heading, seen, SITE_KINDS)
                 if not target:
                     self.report.failed.append(f"website {url}: Add button not found")
                     continue
@@ -518,15 +557,28 @@ def pick_skill(skill: str, options: list[str]) -> str | None:
         if answers.norm(o) == w:
             return o
     for o in options:
-        if re.fullmatch(re.escape(skill.strip().lower()) + r"\s*(\(.*\)|programming language|language|software|framework|library|platform)", o.strip().lower()):
+        # only qualifiers that cannot change the meaning: 'ReAct Framework' is not React, so 'framework' is not one
+        if re.fullmatch(re.escape(skill.strip().lower()) + r"\s*(\(.*\)|programming language|software)", o.strip().lower()):
             return o
     for o in options:
         if re.search(r"\(\s*" + re.escape(skill.strip()) + r"\s*\)", o, re.I):
+            return o
+    # 'React' -> 'React.js', 'Node' -> 'Node.js': the same thing once punctuation and a trailing js are squashed
+    sq = re.sub(r"[^a-z0-9]", "", skill.lower())
+    for o in options:
+        so = re.sub(r"[^a-z0-9]", "", o.lower())
+        if so in (sq, sq + "js") or (sq.endswith("js") and so == sq[:-2]):
             return o
     starts = [o for o in options if answers.norm(o).startswith(w + " ")]
     if len(starts) == 1:
         return starts[0]
     return None
+
+
+def _is_blank_work(entry: dict) -> bool:
+    c = _field(entry, "companyName", "company", "employer")
+    t = _field(entry, "jobTitle", "title")
+    return bool(c or t) and not ((c and c["value"].strip()) or (t and t["value"].strip()))
 
 
 def _field_value(entries: list[dict], company: str) -> dict | None:

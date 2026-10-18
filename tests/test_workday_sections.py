@@ -56,3 +56,14 @@ def test_pick_skill_prefers_exact_then_qualified_then_acronym():
     assert ws.pick_skill("Docker", ["Docker (Software)", "Docker Swarm"]) == "Docker (Software)"
     assert ws.pick_skill("Git", ["GitHub", "GitLab"]) is None
     assert ws.pick_skill("Machine Learning", ["Machine Learning Algorithms"]) == "Machine Learning Algorithms"
+
+
+def test_blank_work_block_detection_and_js_variants():
+    blank = {"kind": "workExperience", "idx": 1, "fields": {"jobTitle": {"ref": "e1", "value": "", "type": "text", "vis": True},
+                                                            "companyName": {"ref": "e2", "value": " ", "type": "text", "vis": True}}}
+    filled = {"kind": "workExperience", "idx": 2, "fields": {"jobTitle": {"ref": "e3", "value": "Intern", "type": "text", "vis": True},
+                                                             "companyName": {"ref": "e4", "value": "", "type": "text", "vis": True}}}
+    assert ws._is_blank_work(blank) and not ws._is_blank_work(filled)
+    assert not ws._is_blank_work({"kind": "language", "idx": 3, "fields": {"language": {"ref": "e5", "value": "", "type": "text", "vis": True}}})
+    assert ws.pick_skill("React", ["React.js", "React VR", "React Redux"]) == "React.js"
+    assert ws.pick_skill("Node.js", ["Node", "Node.js Frameworks"]) == "Node"
