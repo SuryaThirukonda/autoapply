@@ -138,11 +138,17 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
                 await ex.click_ref(ref)
             except ClickRefused as e:
                 return FieldResult(ref, False, before, str(e))
-            await asyncio.sleep(0.6)
             # Read what the click opened first: Workday's button dropdowns ("Select One") list every option
             # and CLOSE when typed into, so type to filter only when no wanted option is already showing.
-            shown_now = await ex.eval(js.JS_LIST_OPTIONS)
-            shown_now = [o for o in (shown_now if isinstance(shown_now, list) else []) if _key(o) not in baseline_keys]
+            # Lists fetched from the network (Greenhouse school / graduation / honor pickers) can take a
+            # couple of seconds to appear: poll instead of a single 0.6 s wait.
+            shown_now = []
+            for _ in range(8):
+                await asyncio.sleep(0.3)
+                shown_now = await ex.eval(js.JS_LIST_OPTIONS)
+                shown_now = [o for o in (shown_now if isinstance(shown_now, list) else []) if _key(o) not in baseline_keys]
+                if shown_now:
+                    break
             if type_to_filter and want and not (shown_now and best_option(shown_now, wants)):
                 try:
                     await ex.page.keyboard.press("Control+a")     # replace, never append to, text left in the search box
@@ -302,10 +308,13 @@ async def upload_file(ex: Executor, ref: str, path: Path) -> FieldResult:
     shown = info.get("value") or ""
     ok = shown.lower() == path.name.lower()
     if not ok:
-        # Some portals render the name elsewhere, upper-cased or without the extension.
-        ok = await _shows_file(ex, path)
-        if ok:
-            shown = path.name
+        # Some portals render the name elsewhere, upper-cased or without the extension, and only after
+        # they have processed the upload (Greenhouse job boards show a spinner first): poll up to ~6 s.
+        for _ in range(12):
+            if await _shows_file(ex, path):
+                ok, shown = True, path.name
+                break
+            await asyncio.sleep(0.5)
     return FieldResult(ref, ok, shown, "" if ok else f"page does not show {path.name}")
 
 

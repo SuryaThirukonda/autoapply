@@ -289,6 +289,27 @@ JS_PAGE_ERRORS = r"""
     }
     return false;
   }
+  // "Please choose the closest conversion" under a GPA picker that already shows "3.7 - 4.0" is a hint, not an
+  // error (Verkada on Greenhouse, 2026-10-18): unmarked please-select text next to a FILLED control is skipped.
+  function hintBesideFilledField(el, text) {
+    if (!/please\s+(select|choose|pick)/i.test(text || '')) return false;
+    let p = el.parentElement;
+    for (let i = 0; i < 2 && p; i++, p = p.parentElement) {
+      let ctls = []; try { ctls = Array.from(p.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]')); } catch (e) { ctls = []; }
+      if (!ctls.length) continue;
+      // decide on the nearest wrapper that holds a control; a wider ancestor would see other fields' values
+      for (const c of ctls) {
+        if (c.tagName === 'SELECT') { if (c.value && c.selectedOptions.length && txt(c.selectedOptions[0])) return true; continue; }
+        if (c.type === 'checkbox' || c.type === 'radio') { if (c.checked) return true; continue; }
+        if (String(c.value || '').trim()) return true;
+        const box = c.closest && c.closest('[class*="__control"], [class*="control"], [class*="Control"], [class*="__value-container"]');
+        const shown = box ? txt(box) : '';
+        if (shown && !/^(select one|select\.\.\.|select|choose one|choose|search)$/i.test(shown)) return true;
+      }
+      return false;
+    }
+    return false;
+  }
   function staleRequiredForSatisfiedChoiceGroup(el, text) {
     if (!/\b(required|choose|select)\b/i.test(text || '')) return false;
     let p = el;
@@ -326,6 +347,7 @@ JS_PAGE_ERRORS = r"""
       if (INSTRUCTIONAL.test(t)) continue;
       if (inDescription(el) || (!reddish(el) && !nearField(el))) continue;
       if (staleRequiredForSatisfiedChoiceGroup(el, t)) continue;
+      if (!reddish(el) && hintBesideFilledField(el, t)) continue;
       push(errorText, { text: t.slice(0, 300), tag: el.tagName.toLowerCase(), near: nearestLabel(el) }, 'e:' + t);
     }
     let ctl = []; try { ctl = root.querySelectorAll('input, textarea, select'); } catch (e) { ctl = []; }

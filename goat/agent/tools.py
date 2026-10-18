@@ -187,7 +187,7 @@ AFFIRMATIVE = {"yes", "true", "checked", "on", "y"}
 # Yes/no questions about where Surya works or worked, industries, affiliations and relationships.
 # Surya, 2026-10-15: "answer is almost always no (that's default if it stalls)".
 AFFILIATION = re.compile(
-    r"(employed (by|with|at)\b|\bwork(ed|ing)? (for|at)\b|\baffiliat|relationship with|\brelated to\b|\brelatives?\b|family member|"
+    r"(employed (by|with|at)\b|\bwork(ed|ing)? (for|at)\b|\baffiliat|relationships? (with|to)\b|\brelated to\b|\brelatives?\b|family member|"
     r"household member|immediate family|\bspouse\b|board member|\bofficers?\b|\bdirectors?\b|government official|public official|"
     r"conflict of interest|financial interest|\bown (stock|shares)|\bvendors?\b|\bsuppliers?\b|\bcustomers?\b|\bclients?\b|"
     r"\bcompetitors?\b|subsidiar|parent company|former employee|current employee|independent contractor|consultant (for|to)|"
@@ -901,6 +901,29 @@ class ToolDispatcher:
     DISQUALIFIERS = re.compile(r"(master'?s|ph\.?d|doctoral|graduate program|active (secret|top secret|ts/sci|clearance)|returning intern|co-?op|fall 2027|spring 2028|quant|"
                                r"unpaid|hardware (engineer|design|role)|(fpga|asic|rtl|verilog|vhdl|pcb)|circuit design|analog design)", re.I)
 
+    _SEASON_MONTH = {"spring": 5, "summer": 8, "fall": 12, "autumn": 12, "winter": 12, "jan": 1, "january": 1, "feb": 2, "february": 2,
+                     "mar": 3, "march": 3, "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7, "aug": 8, "august": 8,
+                     "sep": 9, "sept": 9, "september": 9, "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12}
+
+    @classmethod
+    def grad_window_excludes(cls, reason: str) -> bool:
+        """True when the park reason names a graduation window that does not contain May 2028 (his graduation):
+        "Dec 2028 - Spring 2029" excludes him, "December 2027 - June 2028" and "2028 graduates" do not."""
+        if not re.search(r"graduat|class of|degree (by|in|before)|completion date", reason, re.I):
+            return False
+        # the model often appends his own date ("...; Surya graduates May 2028"): only the posting's dates count
+        posting = " ".join(part for part in re.split(r"[;.]", reason) if not re.search(r"\bsurya\b|\bhe\b|\bhis\b", part, re.I))
+        dates = []
+        for m in re.finditer(r"(?:\b([A-Za-z]{3,9})\.?,?\s+)?\b(20[2-3]\d)\b", posting):
+            word, year = (m.group(1) or "").lower(), int(m.group(2))
+            month = cls._SEASON_MONTH.get(word)
+            dates.append((year, month))
+        if not dates:
+            return False
+        lo = min((y, mo or 1) for y, mo in dates)
+        hi = max((y, mo or 12) for y, mo in dates)
+        return lo > (2028, 5) or hi < (2028, 5)
+
     async def t_park(self, reason: str):
         # A portal failure page (Workday "Something went wrong ... Error Code") cannot be fixed on the form:
         # park it as a portal error at once; the watchdog retries it in a fresh tab later.
@@ -935,6 +958,14 @@ class ToolDispatcher:
                                  "(credentials mode 'login_universal', then click Sign In) and continue the application."}, None
         pending = [k for k in self.ctx.asked_keys
                    if not ((a := answers.get(k, self.ctx.job.get("company", ""), self.ctx.portal)) and a.has_value)]
+        if pending and self.ctx.park_attempts < 2 and not low.startswith(
+                ("answer_", "ready_for_you", "bot_check", "automation_prohibited", "credentials", "code_not",
+                 "host_mismatch", "eligibility", "shadow_mode", "portal_error", "needs_you")):
+            # The model asked Surya and then gave up at once (GCM Grosvenor, 2026-10-18): the clock is 15 minutes.
+            self.ctx.park_attempts += 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "pending": pending[:6]})
+            return {"error": f"not parked: {len(pending)} question(s) are with Surya ({', '.join(pending[:4])}). Finish everything else on "
+                             "the page, then call await_answers with those keys; the run parks by itself if he does not answer in time."}, None
         stalled = bool(self.NOT_LOADING.search(reason)) and not low.startswith(
             ("answer_", "ready_for_you", "eligibility", "bot_check", "credentials", "host_mismatch", "code_not", "shadow_mode"))
         if stalled and self.ctx.park_attempts >= 1:
@@ -963,7 +994,7 @@ class ToolDispatcher:
                                  "submit controls). Then continue filling."}, None
             reason = "automation_prohibited: " + "; ".join(hits)[:300]
         if low.startswith("eligibility") and self.SATISFIED.search(reason) and not self.DISQUALIFIERS.search(reason) \
-                and self.ctx.park_attempts < 2:
+                and not self.grad_window_excludes(reason) and self.ctx.park_attempts < 2:
             self.ctx.park_attempts += 1
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200]})
             return {"error": "not parked: that requirement is SATISFIED by the standing facts (U.S. citizen, authorized, no sponsorship, "
