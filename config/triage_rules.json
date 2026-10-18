@@ -15,7 +15,8 @@
     "not_internship": "\\b(new grad|full[- ]time|apprentice)\\b"
   },
   "unsure_title_patterns": {
-    "off_season_or_coop": "\\b(co-?op|fall|spring|winter|part[- ]time|2026)\\b"
+    "off_season_or_coop": "\\b(co-?op|fall|spring|winter|part[- ]time|2026)\\b",
+    "hardware_role": "\b(hardware|electrical|fpga|asic|rtl|verilog|vhdl|pcb|analog|circuit|chip design|silicon)\b"
   },
   "foreign_location_patterns": [
     "canada",
@@ -104,5 +105,6 @@
       "same_role_days": 90,
       "_source": "Scale AI: 90 days before reapplying to the same role"
     }
-  ]
+  ],
+  "_hardware_note": "Surya 2026-10-18: apply to EE/CE 'or related' postings whose work is software; not to straight hardware roles. Titles that look like hardware wait for his call; the agent judges the rest from the posting."
 }

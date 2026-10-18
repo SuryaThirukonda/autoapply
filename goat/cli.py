@@ -102,24 +102,38 @@ def seed_questionnaire(path=None) -> dict:
                 ans = "; ".join(str(x) for x in ans)
             note = str(item.get("question", ""))[:200]
             aliases = [str(x) for x in (item.get("aliases") or [])]
-            cur = db.connect().execute(
-                "SELECT answer, answer_type FROM answers WHERE key=? AND scope='global' AND superseded_by IS NULL ORDER BY id DESC LIMIT 1",
-                (key,)).fetchone()
-            if cur is not None and cur["answer"] == str(ans) and (cur["answer_type"] or "text") == atype:
-                for al in aliases:
-                    answers.add_alias(al, key, source="questionnaire")
-                unchanged += 1
+            # `key:` lets one YAML item store under another item's key; `company:` scopes it to one employer
+            # (that company's row beats the global answer), so the same key can carry a per-company exception.
+            key = str(item.get("key") or key)
+            company = str(item.get("company") or "")
+            if company:
+                cur_c = answers.get(key, company)
+                if cur_c is not None and cur_c.scope == "company" and cur_c.answer == str(ans) and (cur_c.answer_type or "text") == atype:
+                    unchanged += 1
+                else:
+                    released += answers.save_answer(key, str(ans), answer_type=atype, source="questionnaire", note=note,
+                                                    scope="company", scope_value=company, aliases=aliases)
+                    saved.append(f"{key} @ {company}")
             else:
-                released += answers.save_answer(key, str(ans), answer_type=atype, source="questionnaire", note=note, aliases=aliases)
-                saved.append(key)
+                cur = db.connect().execute(
+                    "SELECT answer, answer_type FROM answers WHERE key=? AND scope='global' AND superseded_by IS NULL ORDER BY id DESC LIMIT 1",
+                    (key,)).fetchone()
+                if cur is not None and cur["answer"] == str(ans) and (cur["answer_type"] or "text") == atype:
+                    for al in aliases:
+                        answers.add_alias(al, key, source="questionnaire")
+                    unchanged += 1
+                else:
+                    released += answers.save_answer(key, str(ans), answer_type=atype, source="questionnaire", note=note, aliases=aliases)
+                    saved.append(key)
             # Phrase sets: each entry is a phrase or a list of phrases that must all appear in the question.
             sets = []
             for m in item.get("match") or []:
                 needles = [str(x) for x in (m if isinstance(m, list) else [m]) if str(x).strip()]
                 if needles:
                     sets.append(needles)
-            with db.tx() as con:   # an edited match list replaces the old one
-                con.execute("DELETE FROM question_aliases WHERE key=? AND kind='substrings' AND source='questionnaire'", (key,))
+            if sets or not company:
+                with db.tx() as con:   # an edited match list replaces the old one
+                    con.execute("DELETE FROM question_aliases WHERE key=? AND kind='substrings' AND source='questionnaire'", (key,))
             if sets:
                 answers.add_alias(_json.dumps(sets), key, kind="substrings", confidence=1.0, source="questionnaire")
             for company in item.get("ask_for_companies") or []:

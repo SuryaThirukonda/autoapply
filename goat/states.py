@@ -65,7 +65,8 @@ HOLD_REASONS = (
     "submit_failed",
     "safety_check",              # malicious_instructions / sensitive_domain / off-allowlist
     "host_mismatch",             # verification link pointed somewhere else
-    "eligibility",               # graduation window, degree, clearance, radius...
+    "eligibility",               # graduation window, degree, clearance, unpaid local role, hardware role...
+    "needs_you",                 # a required video / portfolio / essay file upload only Surya can supply
     "browser_unavailable",
     "application_cap",           # the board's own limit (Waymo 5 per 60 days...); requeued when it opens
     "manual_review",

@@ -40,8 +40,9 @@ def _answer_type(field_type: str | None, options: list[str] | None) -> str:
     return "text"
 
 
-def _normalize_choice(text: str, options: list[str] | None) -> str:
-    """Map a reply onto an option: 1-based index or case-insensitive match; else keep the text."""
+def _normalize_choice(text: str, options: list[str] | None, question: str = "") -> str:
+    """Map a reply onto an option: 1-based index, case-insensitive match, then gpt-6-luna reading the
+    reply in Surya's own words ("the first one", "yes as long as it's paid"); else keep the text."""
     t = (text or "").strip()
     if not options:
         return t
@@ -53,7 +54,50 @@ def _normalize_choice(text: str, options: list[str] | None) -> str:
     for o in options:
         if answers.norm(str(o)) == low:
             return str(o)
-    return t
+    hit = interpret_reply(question, [str(o) for o in options], t)
+    return hit if hit is not None else t
+
+
+_INTERPRET_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "choice": {"type": ["string", "null"], "description": "one option copied verbatim, or null when the reply does not pick one"},
+        "reason": {"type": "string"},
+    },
+    "required": ["choice", "reason"],
+    "additionalProperties": False,
+}
+_INTERPRET_INSTRUCTIONS = (
+    "Surya Thirukonda answered a job-application question in his own words, over chat. Map his reply onto exactly one of the "
+    "field's options when the reply clearly picks or implies one (a number, a paraphrase, 'the first one', 'yes', 'none of those'). "
+    "Return the option text verbatim. Return null when the reply does not settle on one option, asks for something else, or says to "
+    "hold or skip. Never pick an option he did not mean. Return only the JSON asked for."
+)
+
+
+def interpret_reply(question: str, options: list[str], reply: str) -> str | None:
+    """Sync (the reply arrives in a thread): gpt-6-luna maps a free-text reply onto one option, or None."""
+    if not options or not reply:
+        return None
+    try:
+        from openai import OpenAI
+        from ..config import SETTINGS, assert_allowed
+        client = OpenAI(api_key=SETTINGS.openai_api_key, timeout=20)
+        prompt = f"Question on the form: {question!r}\nOptions: {json.dumps(options)}\nSurya's reply: {reply!r}"
+        resp = client.responses.create(model=assert_allowed(SETTINGS.models.classifier), instructions=_INTERPRET_INSTRUCTIONS, input=prompt,
+                                       store=False, safety_identifier=SETTINGS.safety_identifier(),
+                                       text={"format": {"type": "json_schema", "name": "interpret_reply", "schema": _INTERPRET_SCHEMA, "strict": True}})
+        out = json.loads(resp.output_text)
+        choice = out.get("choice")
+        if choice is None:
+            return None
+        for o in options:
+            if answers.norm(str(o)) == answers.norm(str(choice)):
+                log.info("reply %r read as option %r (%s)", reply[:60], o, str(out.get("reason", ""))[:80])
+                return str(o)
+    except Exception as e:  # never fatal: the raw reply is stored and the agent copes with it
+        log.warning("interpret_reply failed: %s", e)
+    return None
 
 
 def split_reply(text: str, n: int) -> list[str | None]:
@@ -262,7 +306,7 @@ class QuestionBroker:
                   scope: str = "global", scope_value: str = "") -> tuple[str, str, int]:
         d = _row_dict(row)
         options = d.get("options")
-        value = _normalize_choice(text, options)
+        value = _normalize_choice(text, options, d.get("question") or "")
         atype = _answer_type(d.get("field_type"), options)
         released = answers.save_answer(d["key"], value, answer_type=atype, source=source,
                                        source_ref=source_ref, aliases=[d["question"]],

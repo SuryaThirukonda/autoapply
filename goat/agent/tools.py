@@ -896,7 +896,10 @@ class ToolDispatcher:
     SATISFIED = re.compile(r"(work authorization|authorized to work|sponsorship|citizen|bachelor|gpa|18 years|relocat|onsite|on-site|hybrid|remote|2028|rising senior|eligible to obtain|clearance eligib|"
                            r"\bsatisf|40 hours|full[- ]time|hours (per|a) week|\d+ weeks|start date|begin|beginning|available from|"
                            r"(may|june) \d{1,2},? 2027|summer 2027|weekend|in[- ]person|commut|related (field|discipline|major|area|degree)|computer science|local to|during the internship)", re.I)
-    DISQUALIFIERS = re.compile(r"(master'?s|ph\.?d|doctoral|graduate program|active (secret|top secret|ts/sci|clearance)|returning intern|co-?op|fall 2027|spring 2028|within \d+ miles|quant|own (transportation|vehicle|car)|reliable vehicle)", re.I)
+    # Surya 2026-10-18: a car requirement is fine (he arranges one); "local / within N miles" is fine when the posting is
+    # paid; a straight hardware role is not.
+    DISQUALIFIERS = re.compile(r"(master'?s|ph\.?d|doctoral|graduate program|active (secret|top secret|ts/sci|clearance)|returning intern|co-?op|fall 2027|spring 2028|quant|"
+                               r"unpaid|hardware (engineer|design|role)|(fpga|asic|rtl|verilog|vhdl|pcb)|circuit design|analog design)", re.I)
 
     async def t_park(self, reason: str):
         # A portal failure page (Workday "Something went wrong ... Error Code") cannot be fixed on the form:
@@ -911,6 +914,14 @@ class ToolDispatcher:
             raise Parked(f"portal_error: {perr}", "hold")
         state = "ready_for_you" if reason.lower().startswith("ready_for_you") else "hold"
         low = reason.lower()
+        if low.startswith("eligibility") and re.search(r"within \d+ miles|commut|local (candidates|to)|relocation (assistance|help)", low)                 and not re.search(r"unpaid|no pay|volunteer", low) and self.ctx.park_attempts < 2:
+            # A local-candidates requirement only matters when the role is unpaid (Surya, 2026-10-18).
+            from ..answers import posting_pay
+            if posting_pay(self.ctx.posting_text) or posting_pay(await self.ctx.ex.page_text(30000)):
+                self.ctx.park_attempts += 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200]})
+                return {"error": "not parked: the posting lists pay, so a local / commuting-distance requirement is fine (he relocates "
+                                 "for a paid summer at his own expense). Continue filling; relocation questions take their answer_keys."}, None
         if (low.startswith("credentials") or "verify your" in low or "verification" in low) and not self.ctx.verify_link_tried \
                 and self.ctx.mail is not None:
             # An account that exists but cannot sign in is usually waiting on its verification email.
@@ -958,7 +969,7 @@ class ToolDispatcher:
             return {"error": "not parked: that requirement is SATISFIED by the standing facts (U.S. citizen, authorized, no sponsorship, "
                              "Bachelor's in progress, GPA 4.0, relocates anywhere, graduates May 2028). A posting stating it is not a restriction. "
                              "Continue: open the application (click Apply / Apply Manually) and fill it."}, None
-        hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch"))
+        hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch", "needs_you"))
         if not hard and self.ctx.park_attempts < 2:
             # An eager park: run the gate first. If it passes, the right move is submit; if it blocks,
             # the model gets the concrete blockers instead of giving up.
