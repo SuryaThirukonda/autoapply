@@ -68,37 +68,90 @@ JS_IS_WORKDAY_PROMPT = """(ref) => { const el = document.querySelector('[data-go
   return /search|prompt/i.test(a) || !!el.closest('[data-automation-id*="prompt" i], [data-automation-id*="multiSelect" i], [data-automation-id*="selectWidget" i], [data-automation-id*="searchBox" i]'); }"""
 
 
-async def _type_and_enter(ex: Executor, ref: str, text: str) -> tuple[bool, str]:
-    """Workday prompts that say "type your school's name, then press Enter to confirm" (Nissan): the typed text
-    becomes the selection. Only a selected-item chip holding the text counts."""
+JS_REMOVE_CHIPS = """(args) => {
+  const [ref, keep] = args;
+  const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return 0;
+  const box = el.closest('[data-automation-id^="formField"], [data-automation-id="multiSelectContainer"], .field, .form-group') || el.parentElement;
+  const norm = (t) => (t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  let n = 0;
+  for (const item of Array.from(box.querySelectorAll('[data-automation-id="selectedItem"]'))) {
+    const t = norm(item.textContent);
+    if (keep && t.includes(norm(keep))) continue;
+    const x = item.querySelector('[data-automation-id="DELETE_charm"], [data-automation-id*="delete" i], button, [role="button"]');
+    if (x) { x.click(); n++; }
+  }
+  return n;
+}"""
+
+
+async def _remove_wrong_chips(ex: Executor, ref: str, keep: str = "") -> int:
+    try:
+        n = await ex.eval(JS_REMOVE_CHIPS, [ref, keep])
+        if n:
+            await asyncio.sleep(0.5)
+        return int(n or 0)
+    except Exception:
+        return 0
+
+
+async def _type_and_enter(ex: Executor, ref: str, text: str, baseline_keys: set) -> tuple[bool, str]:
+    """Workday search prompts: type the text; if the prompt filters to a list, click only an EXACT match
+    (never Enter, which takes the first neighbour: "Texas A & M International University"); if nothing is
+    listed, the tenant takes free text on Enter ("press Enter to confirm your entry"). Verified by a chip
+    carrying the text; a chip that does not match is removed again."""
     try:
         await ex.focus_ref(ref)
         await ex.page.keyboard.press("Control+a")
         await ex.page.keyboard.press("Backspace")
         await ex.type_text(text[:80], real_keys=True, delay_ms=15)
-        await asyncio.sleep(1.0)
-        await ex.page.keyboard.press("Enter")
-        await asyncio.sleep(1.3)
+        await asyncio.sleep(1.5)
     except Exception as e:
         return False, f"{type(e).__name__}"
+    listed = await ex.eval(js.JS_LIST_OPTIONS)
+    listed = [o for o in (listed if isinstance(listed, list) else []) if (o.get("text"), o.get("x"), o.get("y")) not in baseline_keys]
+    exact = [o for o in listed if _norm(o.get("text")) == _norm(text) or _squash(o.get("text")) == _squash(text)]
+    if listed and not exact:
+        try:
+            await ex.page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return False, f"the prompt lists {[o['text'] for o in listed[:6]]} for {text!r}, none exactly"
+    if exact:
+        pick = exact[0]
+        try:
+            pos = await ex.eval(js.JS_SCROLL_OPTION, pick["text"])
+            if isinstance(pos, dict) and pos.get("ok"):
+                await asyncio.sleep(0.3)
+                pos2 = await ex.eval(js.JS_SCROLL_OPTION, pick["text"])
+                pos = pos2 if isinstance(pos2, dict) and pos2.get("ok") else pos
+                await ex.click_xy(int(pos["x"]), int(pos["y"]))
+            else:
+                await ex.click_xy(int(pick["x"]), int(pick["y"]))
+        except Exception as e:
+            return False, f"click on {pick['text']!r} failed: {type(e).__name__}"
+    else:
+        try:
+            await ex.page.keyboard.press("Enter")
+        except Exception:
+            pass
+    await asyncio.sleep(1.3)
     ok, why = await _committed(ex, ref, text)
     if ok:
-        after = await ex.read_ref(ref)
         return True, text
     try:
         st = await ex.eval(js.JS_FIELD_COMMIT, ref)
         chips = [c for c in (st.get("chips") or []) if c] if isinstance(st, dict) else []
-        head = _norm(text)[:10]
-        for c in chips:
-            if head and head in _norm(c):
-                return True, c
     except Exception:
-        pass
+        chips = []
+    for c in chips:
+        if _norm(c) == _norm(text) or _squash(c) == _squash(text):
+            return True, c
+    removed = await _remove_wrong_chips(ex, ref, keep="")
     try:
         await ex.page.keyboard.press("Escape")
     except Exception:
         pass
-    return False, why
+    return False, f"{why}; the prompt took {chips[:2]!r} instead, removed ({removed})" if chips else why
 
 
 def best_option(options: list[dict], wants: list[str]) -> dict | None:
@@ -331,8 +384,9 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
     except Exception:
         workday_prompt = False
     if workday_prompt:
+        await _remove_wrong_chips(ex, ref, keep="")      # a wrong chip from an earlier try never stays
         for w in [x for x in wants if x and x.strip()][:3]:
-            ok, shown = await _type_and_enter(ex, ref, w)
+            ok, shown = await _type_and_enter(ex, ref, w, baseline_keys)
             if ok:
                 return FieldResult(ref, True, shown)
         last_err += "; typing the text and pressing Enter left no selected chip either"
