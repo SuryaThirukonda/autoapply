@@ -763,6 +763,20 @@ class ToolDispatcher:
                 continue
             if info.get("choices") and not opts:
                 opts = info["choices"]       # Surya gets the real choices with the question
+            # A picker with exactly one real choice is an acknowledgement ("Thank you" under Lyft's "enter your
+            # employment above"): take it; it is not a question for Surya (2026-10-18).
+            real = [o for o in opts if o and not re.match(r"^(select|select\.\.\.|select one|choose|choose one|please select|-+)$", str(o).strip(), re.I)]
+            if len(real) == 1 and (opts or ftype.lower() in ("select", "dropdown", "combobox", "radio")):
+                key = answers.key_from_question(text)
+                answers.save_answer(key, str(real[0]), answer_type="choice", source="only_option",
+                                    note="the field offered one choice; taken as an acknowledgement", aliases=[text])
+                a1 = answers.get(key, self.ctx.job.get("company", ""), self.ctx.portal)
+                if a1 is not None:
+                    pres1 = self._present(a1, via="only_option")
+                    pres1["note"] = "the only choice the field offers; fill it with this key"
+                    auto.append(pres1)
+                    db.event(self.ctx.job_id, "answer:only_option", {"key": key, "question": text[:160], "answer": str(real[0])[:80]})
+                    continue
             key = answers.key_from_question(text)
             qs.append({"key": key, "question": text, "options": opts, "field_type": ftype, "ref": q.get("ref")})
         if not qs:

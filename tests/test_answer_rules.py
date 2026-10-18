@@ -833,3 +833,11 @@ async def test_snapshot_waits_for_late_workday_form_and_ticks_its_consent(tmp_pa
         assert "standing:consent.privacy_notice" in srcs
     finally:
         await ex.close(close_browser=True)
+
+
+async def test_a_single_choice_picker_is_taken_not_asked(store):
+    job = _job()
+    ctx = RunContext(job={**job, "resume_file": None}, ex=StubEx(), budget=Budget(job["id"], "greenhouse"), classifier=None)
+    out, _ = await ToolDispatcher(ctx).t_ask_user([{"question": "Please enter your relevant employment above using the + Add link", "options": ["Thank you"],
+                                                    "field_type": "select", "ref": "e9"}])
+    assert out["asked"] == [] and out["auto_answered"][0]["answer"] == "Thank you"
