@@ -49,6 +49,10 @@ def _squash(s: str) -> str:
     return _norm(s).replace(" ", "")
 
 
+# What a Workday multi-level prompt's control reads while a category is open or nothing is picked yet.
+LEVELISH = re.compile(r"(expanded|\b0 items selected\b|^select one$|^search$)", re.I)
+
+
 def best_option(options: list[dict], wants: list[str]) -> dict | None:
     """Exact match first. A prefix/contains match is accepted only when it is UNambiguous: if several
     options share the prefix (Texas A&M University - College Station / - Commerce / - Kingsville) the
@@ -199,7 +203,10 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
             await asyncio.sleep(0.6)
             after = await ex.read_ref(ref)
             shown = (after.get("value") or after.get("shown") or "")
-            if shown and not PLACEHOLDER.match(shown) and (_norm(pick["text"])[:6] in _norm(shown) or _norm(want)[:6] in _norm(shown)):
+            # Workday multi-select trees ("How Did You Hear About Us?") count their picks instead of showing them.
+            if re.search(r"\b[1-9]\d* items? selected\b", shown, re.I):
+                return FieldResult(ref, True, pick["text"])
+            if shown and not PLACEHOLDER.match(shown) and not LEVELISH.search(shown) and (_norm(pick["text"])[:6] in _norm(shown) or _norm(want)[:6] in _norm(shown)):
                 # The text is in the box, but a Workday prompt also shows the typed search there: only a
                 # selected-item chip means it committed.
                 committed, why = await _committed(ex, ref, pick["text"])
@@ -220,11 +227,15 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
             # still a placeholder: a multi-level prompt opened its next level. Keep it open and continue.
             nxt = await ex.eval(js.JS_LIST_OPTIONS)
             nxt = [o for o in (nxt if isinstance(nxt, list) else []) if _key(o) not in baseline_keys]
-            if nxt and (not shown or PLACEHOLDER.match(shown)):
+            if nxt and (not shown or PLACEHOLDER.match(shown) or LEVELISH.search(shown)):
+                # a category opened its next level (Job Board -> Indeed / LinkedIn / ...): stay in it
                 open_now = True
+                options_seen_at_level = [o["text"] for o in nxt[:12]]
+                last_err = f"inside {pick['text']!r} the list shows: {options_seen_at_level}; none matched the preference list"
                 continue
-        sample = [o["text"] for o in options[:12]]
-        last_err = f"no option matched {want!r}; saw: {sample}" if options else f"no options appeared after opening (typed {want!r})"
+        if pick is None:
+            sample = [o["text"] for o in options[:12]]
+            last_err = f"no option matched {want!r}; saw: {sample}" if options else f"no options appeared after opening (typed {want!r})"
     try:
         await ex.page.keyboard.press("Escape")
     except Exception:
