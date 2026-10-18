@@ -374,14 +374,73 @@ async def set_date(ex: Executor, ref: str, value: str) -> FieldResult:
         await ex.page.keyboard.press("Control+a")
         await ex.type_text(digits, real_keys=True, delay_ms=40)
         await asyncio.sleep(0.25)
+    await _blur(ex)
+    ok, shown, got = await _date_state(ex, ref, parts)
+    if not ok:
+        # Workday shows typed digits but can leave the date "Invalid Date" (GE Vernova and Cigna work-experience
+        # From dates): its spinbuttons commit what the arrow keys set. Step each section to its value, then leave.
+        after = await ex.eval(js.JS_DATE_SECTIONS, ref)
+        for sec in (after or {}).get("sections", []) if isinstance(after, dict) else []:
+            target = parts.get(sec["part"])
+            if target:
+                await _step_to(ex, ref, sec["part"], sec["ref"], int(target))
+        await _blur(ex)
+        ok, shown, got = await _date_state(ex, ref, parts)
+    return FieldResult(ref, ok, shown or " ".join(f"{k}={v}" for k, v in got.items()),
+                       "" if ok else f"date did not commit (widget reads {shown!r})")
+
+
+async def _blur(ex: Executor) -> None:
+    """Leave the date widget (Tab), which is when many of them commit."""
+    try:
+        await ex.page.keyboard.press("Tab")
+    except Exception:
+        pass
     await asyncio.sleep(0.4)
+
+
+async def _date_state(ex: Executor, ref: str, parts: dict) -> tuple[bool, str, dict]:
     after = await ex.eval(js.JS_DATE_SECTIONS, ref)
     shown = (after or {}).get("text", "") if isinstance(after, dict) else ""
     got = {s["part"]: s.get("value", "") for s in (after or {}).get("sections", [])} if isinstance(after, dict) else {}
-    ok = all(str(int(got.get(p, "0") or 0)) == str(int(v)) for p, v in parts.items() if p in got) and not (
+
+    def same(a, b) -> bool:
+        try:
+            return int(str(a or "0")) == int(str(b))
+        except ValueError:
+            return False
+
+    ok = bool(got) and all(same(got.get(p), v) for p, v in parts.items() if p in got) and not (
         isinstance(after, dict) and after.get("invalid"))
-    return FieldResult(ref, ok, shown or " ".join(f"{k}={v}" for k, v in got.items()),
-                       "" if ok else f"date did not commit (widget reads {shown!r})")
+    return ok, shown, got
+
+
+async def _step_to(ex: Executor, ref: str, part: str, sec_ref: str, target: int) -> None:
+    """ArrowUp / ArrowDown on one spinbutton until it reads the target (bounded: 12 months, 31 days, 60 years)."""
+    limit = {"month": 13, "day": 32}.get(part, 61)
+    try:
+        await ex.page.focus(f'[data-goat-ref="{sec_ref}"]', timeout=2000)
+    except Exception:
+        return
+    moved = False
+    for _ in range(limit):
+        st = await ex.eval(js.JS_DATE_SECTIONS, ref)
+        cur = next((s.get("value", "") for s in (st or {}).get("sections", []) if s.get("part") == part), "") if isinstance(st, dict) else ""
+        try:
+            n = int(str(cur).strip() or "-1")
+        except ValueError:
+            n = -1
+        if n == target:
+            if not moved:
+                # Shows the right digits but never committed them: a net-zero arrow round trip commits.
+                await ex.page.keyboard.press("ArrowUp")
+                await asyncio.sleep(0.05)
+                await ex.page.keyboard.press("ArrowDown")
+                await asyncio.sleep(0.05)
+            return
+        await ex.page.keyboard.press("ArrowUp" if n < target else "ArrowDown")
+        moved = True
+        await asyncio.sleep(0.05)
 
 
 async def type_code_into(ex: Executor, refs: list[str], code: str) -> bool:

@@ -668,8 +668,12 @@ JS_DATE_SECTIONS = r"""
     if (out.length >= 2) break;
   }
   const boxText = (box.innerText || '').replace(/\s+/g, ' ').trim();
+  // Workday writes "Invalid Date" in the field container, outside the small date wrapper.
+  const field = start.closest('[data-automation-id^="formField"], fieldset, .field, .form-group') || box;
+  const fieldText = (field.innerText || '').replace(/\s+/g, ' ').trim();
+  const ariaBad = out.some(o => { const el = findRef(o.ref); return el && el.getAttribute('aria-invalid') === 'true'; });
   return JSON.stringify({ found: out.length > 0, sections: out, text: boxText.slice(0, 160),
-                          invalid: /invalid date/i.test(boxText) });
+                          invalid: /invalid date/i.test(boxText) || /invalid date/i.test(fieldText) || ariaBad });
 }
 """
 
