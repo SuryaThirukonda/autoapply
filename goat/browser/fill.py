@@ -72,7 +72,7 @@ JS_REMOVE_CHIPS = """(args) => {
   const [ref, keep] = args;
   const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return 0;
   const box = el.closest('[data-automation-id^="formField"], [data-automation-id="multiSelectContainer"], .field, .form-group') || el.parentElement;
-  const norm = (t) => (t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim().toLowerCase();
   let n = 0;
   for (const item of Array.from(box.querySelectorAll('[data-automation-id="selectedItem"]'))) {
     const t = norm(item.textContent);
@@ -94,30 +94,57 @@ async def _remove_wrong_chips(ex: Executor, ref: str, keep: str = "") -> int:
         return 0
 
 
-async def _type_and_enter(ex: Executor, ref: str, text: str, baseline_keys: set) -> tuple[bool, str]:
-    """Workday search prompts: type the text; if the prompt filters to a list, click only an EXACT match
-    (never Enter, which takes the first neighbour: "Texas A & M International University"); if nothing is
-    listed, the tenant takes free text on Enter ("press Enter to confirm your entry"). Verified by a chip
-    carrying the text; a chip that does not match is removed again."""
+def _chip_matches(chip: str, wants: list[str]) -> bool:
+    """A selected chip equals one of the wanted wordings, or is one of them plus a parenthetical qualifier
+    ("Python (Programming Language)" for "Python")."""
+    c = _norm(chip)
+    for w in wants:
+        if not w:
+            continue
+        if c == _norm(w) or _squash(chip) == _squash(w):
+            return True
+        if re.fullmatch(re.escape(w.strip().lower()) + r"\s*(\(.*\))?", (chip or "").strip().lower()):
+            return True
+    return False
+
+
+async def _type_and_enter(ex: Executor, ref: str, wants: list[str], baseline_keys: set) -> tuple[bool, str]:
+    """Workday search prompts run their search on Enter: type the first wording, press Enter, then either a
+    chip appeared (a single result or a free-entry tenant) or a result list did. A chip or result counts only
+    when it matches one of the wanted wordings (exact, or with a parenthetical qualifier); anything else is
+    removed again, never left on the form."""
+    text = next((w for w in wants if w and w.strip()), "")
+    if not text:
+        return False, "nothing to type"
     try:
         await ex.focus_ref(ref)
         await ex.page.keyboard.press("Control+a")
         await ex.page.keyboard.press("Backspace")
         await ex.type_text(text[:80], real_keys=True, delay_ms=15)
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(0.8)
+        await ex.page.keyboard.press("Enter")
+        await asyncio.sleep(1.8)
     except Exception as e:
         return False, f"{type(e).__name__}"
-    listed = await ex.eval(js.JS_LIST_OPTIONS)
-    listed = [o for o in (listed if isinstance(listed, list) else []) if (o.get("text"), o.get("x"), o.get("y")) not in baseline_keys]
-    exact = [o for o in listed if _norm(o.get("text")) == _norm(text) or _squash(o.get("text")) == _squash(text)]
-    if listed and not exact:
+
+    async def chips_now() -> list[str]:
         try:
-            await ex.page.keyboard.press("Escape")
+            st = await ex.eval(js.JS_FIELD_COMMIT, ref)
+            return [c for c in (st.get("chips") or []) if c] if isinstance(st, dict) else []
         except Exception:
-            pass
-        return False, f"the prompt lists {[o['text'] for o in listed[:6]]} for {text!r}, none exactly"
-    if exact:
-        pick = exact[0]
+            return []
+
+    chips = await chips_now()
+    for c in chips:
+        if _chip_matches(c, wants):
+            return True, c
+    if chips:
+        await _remove_wrong_chips(ex, ref, keep="")
+    listed = await ex.eval(js.JS_LIST_OPTIONS)
+    listed = [o for o in (listed if isinstance(listed, list) else []) if (o.get("text"), o.get("x"), o.get("y")) not in baseline_keys
+              and o.get("text") and o.get("text") not in chips]
+    pick = best_option(listed, [w for w in wants if w])
+    if pick is not None and _chip_matches(pick["text"], wants):
         try:
             pos = await ex.eval(js.JS_SCROLL_OPTION, pick["text"])
             if isinstance(pos, dict) and pos.get("ok"):
@@ -127,31 +154,20 @@ async def _type_and_enter(ex: Executor, ref: str, text: str, baseline_keys: set)
                 await ex.click_xy(int(pos["x"]), int(pos["y"]))
             else:
                 await ex.click_xy(int(pick["x"]), int(pick["y"]))
+            await asyncio.sleep(1.2)
         except Exception as e:
             return False, f"click on {pick['text']!r} failed: {type(e).__name__}"
-    else:
-        try:
-            await ex.page.keyboard.press("Enter")
-        except Exception:
-            pass
-    await asyncio.sleep(1.3)
-    ok, why = await _committed(ex, ref, text)
-    if ok:
-        return True, text
-    try:
-        st = await ex.eval(js.JS_FIELD_COMMIT, ref)
-        chips = [c for c in (st.get("chips") or []) if c] if isinstance(st, dict) else []
-    except Exception:
-        chips = []
-    for c in chips:
-        if _norm(c) == _norm(text) or _squash(c) == _squash(text):
-            return True, c
-    removed = await _remove_wrong_chips(ex, ref, keep="")
+        for c in await chips_now():
+            if _chip_matches(c, [pick["text"], *wants]):
+                return True, c
+        await _remove_wrong_chips(ex, ref, keep="")
     try:
         await ex.page.keyboard.press("Escape")
     except Exception:
         pass
-    return False, f"{why}; the prompt took {chips[:2]!r} instead, removed ({removed})" if chips else why
+    seen = [o["text"] for o in listed[:8]]
+    return False, (f"the prompt's search for {text!r} returned {seen}; none matches the wanted wordings" if seen
+                   else f"the prompt's search for {text!r} returned nothing usable" + (f" (it took {chips[:2]!r}, removed)" if chips else ""))
 
 
 def best_option(options: list[dict], wants: list[str]) -> dict | None:
@@ -386,7 +402,7 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
     if workday_prompt:
         await _remove_wrong_chips(ex, ref, keep="")      # a wrong chip from an earlier try never stays
         for w in [x for x in wants if x and x.strip()][:3]:
-            ok, shown = await _type_and_enter(ex, ref, w, baseline_keys)
+            ok, shown = await _type_and_enter(ex, ref, [w, *[x for x in wants if x and x != w]], baseline_keys)
             if ok:
                 return FieldResult(ref, True, shown)
         last_err += "; typing the text and pressing Enter left no selected chip either"
