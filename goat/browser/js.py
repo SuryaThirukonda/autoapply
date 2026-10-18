@@ -258,6 +258,23 @@ JS_PAGE_ERRORS = r"""
     const al = el.getAttribute && (el.getAttribute('aria-label') || ''); return (al || '').slice(0, 120);
   }
   function push(arr, obj, key) { if (seenText.has(key)) return; seenText.add(key); arr.push(obj); }
+  // The posting's own text (Greenhouse's new boards put the description and the form on one page): an
+  // eligibility statement there ("you must be a U.S. citizen") is not a form error.
+  const DESC = '.job__description, [class*="job-description" i], [class*="jobdescription" i], [class*="job_description" i], ' +
+               '[data-automation-id="jobPostingDescription"], [class*="posting-description" i], [class*="description__text" i]';
+  function inDescription(el) { try { return !!(el.closest && el.closest(DESC)); } catch (e) { return false; } }
+  // Text with no error markup counts only when it sits in a field's own wrapper or is styled red.
+  function reddish(el) {
+    try { const m = (el.ownerDocument.defaultView.getComputedStyle(el).color || '').match(/\d+(\.\d+)?/g); if (!m) return false;
+          const r = +m[0], g = +m[1], b = +m[2]; return r >= 150 && r > g * 1.6 && r > b * 1.6; } catch (e) { return false; }
+  }
+  function nearField(el) {
+    let p = el.parentElement;
+    for (let i = 0; i < 2 && p; i++, p = p.parentElement) {
+      try { if (p.querySelector('input:not([type="hidden"]), select, textarea, [role="combobox"], [role="listbox"], [role="radiogroup"]')) return true; } catch (e) {}
+    }
+    return false;
+  }
   function staleRequiredForSatisfiedChoiceGroup(el, text) {
     if (!/\b(required|choose|select)\b/i.test(text || '')) return false;
     let p = el;
@@ -272,7 +289,7 @@ JS_PAGE_ERRORS = r"""
     const SEL = '[role="alert"], [aria-invalid="true"], [aria-errormessage], [class*="error" i], [class*="invalid" i], [data-automation-id*="error" i], [id*="error" i], .field-error, .form-error, .help-block';
     let marked = []; try { marked = root.querySelectorAll(SEL); } catch (e) { marked = []; }
     for (const el of marked) {
-      if (!vis(el)) continue;
+      if (!vis(el) || inDescription(el)) continue;
       const t = txt(el);
       if (!t || t.length > 400 || SKIP.test(t)) continue;
       const how = el.getAttribute('role') === 'alert' ? 'role=alert' : el.getAttribute('aria-invalid') === 'true' ? 'aria-invalid' : 'error-class';
@@ -293,6 +310,7 @@ JS_PAGE_ERRORS = r"""
       if (isFieldPrompt) continue;
       if (!ERR.test(t)) continue;
       if (INSTRUCTIONAL.test(t)) continue;
+      if (inDescription(el) || (!reddish(el) && !nearField(el))) continue;
       if (staleRequiredForSatisfiedChoiceGroup(el, t)) continue;
       push(errorText, { text: t.slice(0, 300), tag: el.tagName.toLowerCase(), near: nearestLabel(el) }, 'e:' + t);
     }
