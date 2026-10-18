@@ -180,8 +180,8 @@ async def _type_and_enter(ex: Executor, ref: str, wants: list[str], baseline_key
     except Exception:
         chips_before = []
     for c in chips_before:
-        if _chip_matches(c, [text]):
-            return True, c          # already selected: clicking it again would only remove it
+        if _chip_matches(c, wants):
+            return True, c          # already selected (in any wanted wording): a second pick would only remove it
     try:
         await ex.page.keyboard.press("Escape")          # a results list from the previous term would be read as new
         await asyncio.sleep(0.3)
