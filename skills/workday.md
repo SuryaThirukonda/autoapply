@@ -37,8 +37,9 @@ none of those exist anywhere in the tree.
 My Experience: Work Experience shows only an "Add" button until clicked. Click Add, `snapshot`, fill Job Title / Company /
 Location from `experience.work.N.*`, `set_date` From (and To unless `.current` is Yes, then tick "I currently work
 here"), the Role Description from `.description`; then "Add Another" for the next entry, in `experience.work.order`.
-Education: school via `education.school` (type the name and press Enter on tenants that say so), Degree picker,
-Field of Study, GPA. Skills: "Type to Add Skills" is a multi-select; `choose` each skill from `experience.skills_list`.
+Education: school via `education.school`; on tenants whose note says "press Enter to confirm your entry" (Nissan)
+`choose` types the name and presses Enter itself when no list match appears. Degree picker, Field of Study (a search
+prompt: `choose` with education.major), GPA. Skills: "Type to Add Skills" is a multi-select; `choose` each skill from `experience.skills_list`.
 Websites: Add, then one URL per entry from `experience.websites`. The résumé upload sits on the same page. A resumed
 application opens at its last step: `go_to_step("My Experience")` jumps there through the rail (the outline does not
 list the rail), fill, then Save and Continue forward through every step to Review. The gate refuses a Review that still

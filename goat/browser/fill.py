@@ -63,6 +63,44 @@ async def _text_box_focused(ex: Executor) -> bool:
         return False
 
 
+JS_IS_WORKDAY_PROMPT = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el || el.tagName !== 'INPUT') return false;
+  const a = el.getAttribute('data-automation-id') || '';
+  return /search|prompt/i.test(a) || !!el.closest('[data-automation-id*="prompt" i], [data-automation-id*="multiSelect" i], [data-automation-id*="selectWidget" i], [data-automation-id*="searchBox" i]'); }"""
+
+
+async def _type_and_enter(ex: Executor, ref: str, text: str) -> tuple[bool, str]:
+    """Workday prompts that say "type your school's name, then press Enter to confirm" (Nissan): the typed text
+    becomes the selection. Only a selected-item chip holding the text counts."""
+    try:
+        await ex.focus_ref(ref)
+        await ex.page.keyboard.press("Control+a")
+        await ex.page.keyboard.press("Backspace")
+        await ex.type_text(text[:80], real_keys=True, delay_ms=15)
+        await asyncio.sleep(1.0)
+        await ex.page.keyboard.press("Enter")
+        await asyncio.sleep(1.3)
+    except Exception as e:
+        return False, f"{type(e).__name__}"
+    ok, why = await _committed(ex, ref, text)
+    if ok:
+        after = await ex.read_ref(ref)
+        return True, text
+    try:
+        st = await ex.eval(js.JS_FIELD_COMMIT, ref)
+        chips = [c for c in (st.get("chips") or []) if c] if isinstance(st, dict) else []
+        head = _norm(text)[:10]
+        for c in chips:
+            if head and head in _norm(c):
+                return True, c
+    except Exception:
+        pass
+    try:
+        await ex.page.keyboard.press("Escape")
+    except Exception:
+        pass
+    return False, why
+
+
 def best_option(options: list[dict], wants: list[str]) -> dict | None:
     """Exact match first. A prefix/contains match is accepted only when it is UNambiguous: if several
     options share the prefix (Texas A&M University - College Station / - Commerce / - Kingsville) the
@@ -286,6 +324,18 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
         if pick is None:
             sample = [o["text"] for o in options[:12]]
             last_err = f"no option matched {want!r}; saw: {sample}" if options else f"no options appeared after opening (typed {want!r})"
+    # Last resort on a Workday prompt input: type the text and press Enter (free-entry prompts take the typed
+    # text; filtered prompts take the highlighted match). Verified by a selected-item chip.
+    try:
+        workday_prompt = bool(await ex.eval(JS_IS_WORKDAY_PROMPT, ref))
+    except Exception:
+        workday_prompt = False
+    if workday_prompt:
+        for w in [x for x in wants if x and x.strip()][:3]:
+            ok, shown = await _type_and_enter(ex, ref, w)
+            if ok:
+                return FieldResult(ref, True, shown)
+        last_err += "; typing the text and pressing Enter left no selected chip either"
     try:
         await ex.page.keyboard.press("Escape")
     except Exception:
