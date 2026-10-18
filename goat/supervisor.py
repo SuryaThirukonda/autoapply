@@ -37,9 +37,15 @@ def setup_logging() -> None:
     logging.getLogger("aiogram").setLevel(logging.INFO)
 
 
+def due_daily(hour: int, last_day: int | None, lt: time.struct_time) -> bool:
+    """True once per day, during the given local hour (the watchdog ticks every minute)."""
+    return lt.tm_hour == hour and last_day != lt.tm_yday
+
+
 async def watchdog(stop: asyncio.Event) -> None:
     from .browser import chrome
     last_digest_day = None
+    last_nightly_day = None
     while not stop.is_set():
         try:
             from .worker import requeue_portal_errors
@@ -54,11 +60,16 @@ async def watchdog(stop: asyncio.Event) -> None:
             if not ok and SETTINGS.browser.launch_if_missing:
                 log.warning("watchdog: Chrome CDP not answering; relaunching")
                 await chrome.ensure_running()
-            # Daily digest at 18:00 local
+            # Daily digest at 18:00 local; the nightly proposals pass at 02:00
             lt = time.localtime()
-            if lt.tm_hour == 18 and last_digest_day != lt.tm_yday:
+            if due_daily(18, last_digest_day, lt):
                 last_digest_day = lt.tm_yday
                 await send_digest()
+            if due_daily(2, last_nightly_day, lt):
+                last_nightly_day = lt.tm_yday
+                from . import nightly
+                counts = await asyncio.to_thread(nightly.run_nightly)
+                log.info("nightly: %s", counts)
         except Exception as e:
             log.warning("watchdog error: %s", e)
         try:

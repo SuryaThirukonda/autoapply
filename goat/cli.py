@@ -49,6 +49,21 @@ def cmd_show(a) -> None:
         print(f"{e['ts']} {e['kind']:<24} {(e['detail'] or '')[:160]} {e['model'] or ''} {e['tokens_in'] or ''}/{e['tokens_out'] or ''} ${e['cost_usd'] or 0:.4f}")
 
 
+def cmd_proposals(a) -> None:
+    from . import nightly
+    if a.run_nightly:
+        _print(nightly.run_nightly())
+    if a.approve:
+        _print(nightly.apply_proposal(a.approve))
+    if a.reject:
+        _print(nightly.reject_proposal(a.reject))
+    rows = nightly.list_proposals(a.status or None)
+    if not rows:
+        print("no proposals")
+    for r in rows:
+        print(f"{r['id']:>4} {r['kind']:<6} {r['status']:<9} {r['title'][:110]}")
+
+
 def cmd_requeue(a) -> None:
     with db.tx() as con:
         con.execute("UPDATE jobs SET status=?, hold_reason=NULL, blocked_on_question_key=NULL, attempts=0, failed_submits=0, steps_used=0, wall_ms_used=0, priority=priority+5, updated_at=? WHERE id=?",
@@ -273,6 +288,8 @@ def main(argv=None) -> None:
     sub.add_parser("cloud-sync").set_defaults(fn=cmd_cloud_sync)
     s = sub.add_parser("dashboard"); s.add_argument("--port", type=int, default=8787); s.set_defaults(fn=cmd_dashboard)
     s = sub.add_parser("demo"); s.add_argument("--live", action="store_true"); s.add_argument("--real", action="store_true"); s.set_defaults(fn=cmd_demo)
+    s = sub.add_parser("proposals"); s.add_argument("--approve", type=int, default=0); s.add_argument("--reject", type=int, default=0)
+    s.add_argument("--run-nightly", action="store_true"); s.add_argument("--status", default=""); s.set_defaults(fn=cmd_proposals)
     a = p.parse_args(argv)
     a.fn(a)
 
