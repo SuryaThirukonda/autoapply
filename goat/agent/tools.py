@@ -581,6 +581,12 @@ class ToolDispatcher:
     async def t_go_to_step(self, step: str):
         import asyncio
         want = step.strip().lower()
+        visits = self.ctx.control_failures.get(f"step:{want}", 0) + 1
+        self.ctx.control_failures[f"step:{want}"] = visits
+        if visits > 2:
+            return {"error": f"you have already gone back to {step!r} twice this run and set its fields with sourced values; a wording that "
+                             "differs from the stored one is the portal's own, which is correct. Do not go back again: continue forward to "
+                             "Review and call submit."}, None
 
         async def current_step() -> str:
             text = await self.ctx.ex.page_text(4000)
