@@ -32,3 +32,13 @@ def test_env_login_defers_to_an_unlocked_vault(monkeypatch):
     monkeypatch.setattr(SETTINGS.creds, "universal_password", "pw-for-test")
     monkeypatch.setattr(bitwarden, "status", lambda: "unlocked")
     assert bitwarden.env_login_active() is False
+
+
+def test_set_password_types_the_env_password_only(monkeypatch):
+    monkeypatch.setattr(SETTINGS.creds, "universal_password", "pw-for-test")
+    typed = {}
+    out = bitwarden.fill_credentials("acme.wd5.myworkdayjobs.com", "", lambda v: typed.__setitem__("email", v),
+                                     lambda v: typed.__setitem__("pw", v), "set_password")
+    assert out == "filled_universal" and typed == {"pw": "pw-for-test"}
+    monkeypatch.setattr(SETTINGS.creds, "universal_password", "")
+    assert bitwarden.fill_credentials("acme.wd5.myworkdayjobs.com", "", lambda v: None, lambda v: None, "set_password") == "exists_unknown"

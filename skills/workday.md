@@ -10,6 +10,14 @@ Account first: every Workday tenant takes the same login. On a Sign In / Create 
 (never `submit`). If sign-in fails or the page says to verify the email, call `open_verification_link`, then
 sign in again. Verification emails come from `<tenant>@otp.workday.com`; the harness checks the tenant.
 
+Older tenants hold Surya's account under a previous password: Sign In says "You may have entered the wrong
+email address or password or your account might be locked" and Create Account bounces straight back to Sign
+In. Do not loop. Click "Forgot your password?", fill the email (`identity.email`), click the send button, call
+`open_password_reset_link` (it waits for the tenant's reset email and opens it), `snapshot`, then `credentials`
+mode `set_password` on the New Password and Verify New Password boxes (email_ref ''), `click` the save button,
+and sign in with `credentials` login_universal. The new password is his one application password, so the next
+tenant in this family signs in at once.
+
 Dropdowns: "Select One" buttons list every option and CLOSE when typed into; `choose` handles them (it reads the
 list before typing). A prompt widget shows your typed search text whether or not it committed: only the selected
 value chip counts, and `choose` reports "did not commit" honestly; then try `choose` once more with the exact

@@ -23,7 +23,7 @@ from ..mail.gmail import registrable_domain
 log = logging.getLogger("goat.creds")
 
 TIMEOUT_S = 60
-Mode = Literal["create", "login", "login_universal"]
+Mode = Literal["create", "login", "login_universal", "set_password"]
 
 
 class CredentialsUnavailable(RuntimeError):
@@ -363,9 +363,14 @@ def fill_credentials(
     Returns "filled" (exact item, or a freshly created one in create mode),
     "filled_fallback" (login mode: an item from the same registrable domain), or
     "exists_unknown" (login mode: no credentials known for this domain)."""
-    if mode not in ("create", "login", "login_universal"):
-        raise ValueError(f"mode must be 'create', 'login' or 'login_universal', not {mode!r}")
+    if mode not in ("create", "login", "login_universal", "set_password"):
+        raise ValueError(f"mode must be 'create', 'login', 'login_universal' or 'set_password', not {mode!r}")
     host = host.lower()
+    if mode == "set_password":
+        # A password-reset form: the new password is Surya's one application password (PASSWORD_BIT).
+        if not SETTINGS.creds.universal_password:
+            return "exists_unknown"
+        return _fill_from_env(host, None, None, type_password)
     if env_login_active():
         return _fill_from_env(host, email, type_email, type_password)
     if mode == "login_universal":

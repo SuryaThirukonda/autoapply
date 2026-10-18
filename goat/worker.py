@@ -64,7 +64,15 @@ def attempt_history(job_id: int, listing_id: str) -> list[str]:
             d = dd.get("reason") or dd.get("why") or dd.get("detail") or dd.get("reasons") or d
         except Exception:
             pass
-        out.append(f"{time.strftime('%m-%d %H:%M', time.localtime(r['ts']))} {r['kind']}: {str(d)[:220]}")
+        line = f"{time.strftime('%m-%d %H:%M', time.localtime(r['ts']))} {r['kind']}: {str(d)[:220]}"
+        if "credential" in line.lower() or "bitwarden" in line.lower():
+            try:
+                from .creds.bitwarden import env_login_active
+                if env_login_active():
+                    line += " [RESOLVED: the password helper works now (one application password); call `credentials` as normal]"
+            except Exception:
+                pass
+        out.append(line)
     return list(reversed(out))
 
 

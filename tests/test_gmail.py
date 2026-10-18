@@ -254,3 +254,15 @@ def test_oracle_confirm_your_identity_subject_and_pod_check():
     sender = "hctz.fa.sender@workflow.email.us-phoenix-1.ocs.oraclecloud.com"
     assert gmail.sender_allowed(sender, "oracle", "hctz.fa.us2.oraclecloud.com")
     assert not gmail.sender_allowed("ebxs.fa.sender@workflow.email.us-phoenix-1.ocs.oraclecloud.com", "oracle", "hctz.fa.us2.oraclecloud.com")
+
+
+def test_fetch_password_reset_link_prefers_the_reset_url():
+    me = "alliance.wd3.myworkdayjobs.com"
+    body = ('<a href="https://alliance.wd3.myworkdayjobs.com/en-US/nissanjobs/login">Sign in</a> '
+            '<a href="https://alliance.wd3.myworkdayjobs.com/en-US/nissanjobs/resetPassword?token=xyz">Reset your password</a>')
+    good = _msg("r1", 1_700_000_100, "alliance@myworkday.com", "Reset your password", body, html=True)
+    res = gmail.fetch_password_reset_link("workday", me, 1_700_000_000, timeout_s=0, poll_s=0, client=FakeMailClient([[good]]))
+    assert res.status == "reset_link"
+    assert res.url == "https://alliance.wd3.myworkdayjobs.com/en-US/nissanjobs/resetPassword?token=xyz"
+    none = gmail.fetch_password_reset_link("workday", me, 1_700_000_000, timeout_s=0, poll_s=0, client=FakeMailClient([[]]))
+    assert none == gmail.LinkResult("not_received", None, None)

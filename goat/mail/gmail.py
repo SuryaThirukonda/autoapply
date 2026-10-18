@@ -142,9 +142,17 @@ def _from_domain(from_header: str) -> tuple[str, str]:
     return addr, domain
 
 
-def is_forbidden(subject: str | None, snippet: str | None) -> bool:
-    """Mail we never read, whatever a page asks: resets, recovery, money, 2FA, login alerts."""
+RESET_SUBJECT_RE = re.compile(r"(?i)(password reset|reset your password|reset password|forgot(ten)? password|new password)")
+MONEY_RE = re.compile(r"(?i)(bank|chase|wells fargo|capital one|paypal|venmo|zelle|payment|invoice)")
+
+
+def is_forbidden(subject: str | None, snippet: str | None, *, allow_reset: bool = False) -> bool:
+    """Mail we never read, whatever a page asks: resets, recovery, money, 2FA, login alerts. The one
+    exception: the portal's own password-reset email, read only inside fetch_password_reset_link after the
+    agent itself asked that portal for a reset (allow_reset), and only for links on the portal's host."""
     text = f"{subject or ''}\n{snippet or ''}"
+    if allow_reset and RESET_SUBJECT_RE.search(text) and not MONEY_RE.search(text):
+        return False
     return bool(FORBIDDEN_RE.search(text))
 
 
@@ -495,6 +503,7 @@ def _poll_newest(
     poll_s: float,
     sleep: Callable[[float], None],
     accept: Callable[[Message], bool] | None = None,
+    allow_reset: bool = False,
 ) -> Message | None:
     """List/get every poll_s until a message passes the filters or timeout_s elapses.
     Returns the NEWEST acceptable message. Always makes at least one pass. `accept` is an extra
@@ -511,7 +520,7 @@ def _poll_newest(
                 m = parse_message(client.get_message(mid))
                 ok = (
                     m.ts >= int(after_ts)
-                    and not is_forbidden(m.subject, m.snippet)
+                    and not is_forbidden(m.subject, m.snippet, allow_reset=allow_reset)
                     and sender_allowed(m.from_header, portal, portal_host)
                     and (accept is None or accept(m))
                 )
@@ -624,6 +633,50 @@ def fetch_verification_link(
     url = (preferred or ok)[0]
     log.info("mail: verification link from message id=%s host=%s", msg.id, urlparse(url).hostname)
     return LinkResult("verified_link", url, msg.id)
+
+
+RESET_PATH_HINT_RE = re.compile(r"(?i)(reset|password|forgot|recover|token)")
+
+
+def build_reset_query(portal: str, portal_host: str, after_ts: int) -> str:
+    spec = PORTALS.get((portal or "").lower())
+    senders = spec["senders"] if spec else [registrable_domain(portal_host)]
+    q = f"from:({' OR '.join(senders)}) after:{int(after_ts)} newer_than:1d"
+    return q + " (" + " OR ".join(f"subject:{_quote(h)}" for h in ("password", "reset", "Reset", "Forgot")) + ")"
+
+
+def fetch_password_reset_link(
+    portal: str,
+    portal_host: str,
+    after_ts: int,
+    *,
+    timeout_s: float | None = None,
+    poll_s: float | None = None,
+    client: MailClient | None = None,
+    _sleep: Callable[[float], None] = time.sleep,
+) -> LinkResult:
+    """Wait for the portal's password-reset email and return its reset link (on the portal's host).
+    Used when a tenant already holds an account under an older password: the agent asks for a reset and
+    sets Surya's one application password on it."""
+    client = client or default_client()
+    timeout_s = SETTINGS.budgets.code_wait_s if timeout_s is None else timeout_s
+    poll_s = SETTINGS.mail.poll_interval_s if poll_s is None else poll_s
+    query = build_reset_query(portal, portal_host, after_ts)
+
+    def _has_portal_link(m: Message) -> bool:
+        return any(link_host_ok(u, portal_host, portal) for u in (extract_links(m.raw) or extract_links(m.text)))
+
+    msg = _poll_newest(client, query, portal, portal_host, after_ts, timeout_s, poll_s, _sleep, accept=_has_portal_link, allow_reset=True)
+    if msg is None:
+        return LinkResult("not_received", None, None)
+    links = extract_links(msg.raw) or extract_links(msg.text)
+    ok = [u for u in links if link_host_ok(u, portal_host, portal)]
+    if not ok:
+        return LinkResult("host_mismatch", None, msg.id)
+    preferred = [u for u in ok if RESET_PATH_HINT_RE.search((urlparse(u).path or "") + "?" + (urlparse(u).query or ""))]
+    url = (preferred or ok)[0]
+    log.info("mail: password-reset link from message id=%s host=%s", msg.id, urlparse(url).hostname)
+    return LinkResult("reset_link", url, msg.id)
 
 
 def find_confirmation_email(

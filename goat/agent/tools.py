@@ -80,10 +80,13 @@ FUNCTION_TOOLS: list[dict] = [
      "description": "Check text you wrote against the accuracy guardrails before typing it. BLOCK means rewrite or park.",
      "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"], "additionalProperties": False}},
     {"type": "function", "name": "credentials", "strict": True,
-     "description": "Fill the email and password boxes of a sign-in or account-creation form on this portal through the password helper. Modes: 'login_universal' = Surya's existing password for this ATS family (try FIRST on a Sign In page; most Workday tenants already have his account); 'login' = the password stored for this exact host; 'create' = generate and store a new password for a brand-new account. Returns 'filled', 'filled_universal', 'filled_fallback' or 'exists_unknown'. You never see the password.",
-     "parameters": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["create", "login", "login_universal"]}, "email_ref": {"type": "string"},
+     "description": "Fill the email and password boxes of a sign-in, account-creation or password-reset form on this portal through the password helper. Modes: 'login_universal' = Surya's one application password (try FIRST on a Sign In page); 'login' = the password stored for this exact host; 'create' = a new account with that same password; 'set_password' = on a password-RESET form, type the new password (and its confirm box) only; email_ref may be '' then. Returns 'filled', 'filled_universal', 'filled_fallback' or 'exists_unknown'. You never see the password.",
+     "parameters": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["create", "login", "login_universal", "set_password"]}, "email_ref": {"type": "string"},
                                                      "password_ref": {"type": "string"}, "confirm_password_ref": {"type": ["string", "null"]}},
                     "required": ["mode", "email_ref", "password_ref", "confirm_password_ref"], "additionalProperties": False}},
+    {"type": "function", "name": "open_password_reset_link", "strict": True,
+     "description": "After you asked the portal to reset the password (Forgot your password -> email -> send), wait for its reset email and open the reset link. Then call credentials with mode 'set_password' on the new-password boxes, click the save button, and sign in with login_universal. Returns 'opened', 'not_received' or 'host_mismatch'.",
+     "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
     {"type": "function", "name": "enter_email_code", "strict": True,
      "description": "Fetch the verification code this portal just emailed and type it into the code boxes (refs in order). Returns 'entered' or 'not_received'. The code never comes to you.",
      "parameters": {"type": "object", "properties": {"code_refs": {"type": "array", "items": {"type": "string"}}},
@@ -815,10 +818,13 @@ class ToolDispatcher:
         # The helper is synchronous and calls the callbacks; bridge them onto the loop.
         import asyncio
         def type_email(v: str) -> None:
-            asyncio.run_coroutine_threadsafe(_type_into(email_ref, v, False), loop).result(30)
+            if email_ref:
+                asyncio.run_coroutine_threadsafe(_type_into(email_ref, v, False), loop).result(30)
         def type_pw(v: str) -> None:
             asyncio.run_coroutine_threadsafe(_type_into(password_ref, v, True), loop).result(30)
         status = await asyncio.to_thread(self.ctx.creds.fill_credentials, host, email, type_email, type_pw, mode)
+        if mode == "set_password" and status == "exists_unknown":
+            return {"status": "no_password_configured", "hint": "PASSWORD_BIT is not set; park with credentials_unknown"}, None
         if confirm_password_ref and status.startswith("filled"):
             def type_pw2(v: str) -> None:
                 asyncio.run_coroutine_threadsafe(_type_into(confirm_password_ref, v, True), loop).result(30)
@@ -855,7 +861,27 @@ class ToolDispatcher:
         records.record_decision(self.ctx.job_id, self.ctx.page_no, "emailed verification code", "(set)", "policy:may_enter_emailed_verification_code")
         return {"status": status if ok_box["ok"] else "entered_unverified", "message_id": getattr(handle, "message_id", None)}, None
 
-    async def t_open_verification_link(self):
+    async def t_open_password_reset_link(self):
+        if self.ctx.mail is None:
+            return {"error": "mail helper not configured (Gmail API)"}, None
+        import asyncio
+        after_ts = db.now() - 600
+        fetch = getattr(self.ctx.mail, "fetch_password_reset_link", None)
+        if fetch is None:
+            return {"error": "the mail helper cannot fetch reset links"}, None
+        res = await asyncio.to_thread(fetch, self.ctx.portal, self.ctx.portal_host, after_ts)
+        status = getattr(res, "status", "not_received")
+        if status == "reset_link" and getattr(res, "url", None):
+            await self.ctx.ex.goto(res.url)
+            self.ctx.budget.step()
+            db.event(self.ctx.job_id, "creds:reset_link_opened", {"host": self.ctx.portal_host})
+            return {"status": "opened", "url": self.ctx.ex.url,
+                    "next": "snapshot, then credentials mode 'set_password' with the new-password and confirm refs (email_ref ''), click the save button, then sign in with login_universal"}, None
+        if status == "host_mismatch":
+            raise Parked("host_mismatch: the reset link pointed at another host", "hold")
+        return {"status": status, "hint": "no reset email yet; if the page offers to resend, click it once and call again, else park credentials_unknown"}, None
+
+    async def t_open_verification_link(self, timeout_s: float | None = None):
         if self.ctx.mail is None:
             return {"error": "mail helper not configured (Gmail API)"}, None
         import asyncio
@@ -863,7 +889,8 @@ class ToolDispatcher:
         # links on THIS portal's host (from this tenant) are ever accepted.
         after_ts = db.now() - 86400
         self.ctx.verify_link_tried = True
-        res = await asyncio.to_thread(self.ctx.mail.fetch_verification_link, self.ctx.portal, self.ctx.portal_host, after_ts)
+        res = await asyncio.to_thread(self.ctx.mail.fetch_verification_link, self.ctx.portal, self.ctx.portal_host, after_ts,
+                                      timeout_s=timeout_s)
         status = getattr(res, "status", "not_received")
         if status == "verified_link" and getattr(res, "url", None):
             await self.ctx.ex.goto(res.url)
@@ -974,11 +1001,31 @@ class ToolDispatcher:
                 db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200]})
                 return {"error": "not parked: the posting lists pay, so a local / commuting-distance requirement is fine (he relocates "
                                  "for a paid summer at his own expense). Continue filling; relocation questions take their answer_keys."}, None
+        if low.startswith("credentials") and self.ctx.park_attempts < 2:
+            # The helper works (one application password): a credentials park needs a real sign-in failure on
+            # the page. Wrong-password pages get the reset procedure; anything else gets told to use the helper.
+            try:
+                from ..creds.bitwarden import env_login_active
+                helper_ok = env_login_active()
+            except Exception:
+                helper_ok = False
+            if helper_ok:
+                text = await self.ctx.ex.page_text(30000)
+                self.ctx.park_attempts += 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "helper available"})
+                if re.search(r"wrong email address or password|account might be locked|incorrect (email|password)|invalid (email|password|credentials)", text, re.I):
+                    return {"error": "not parked: this tenant holds his account under an older password. Click 'Forgot your password?', fill the "
+                                     "email (answer_key identity.email), click the send button, call open_password_reset_link, snapshot, then "
+                                     "credentials mode 'set_password' on the new-password boxes, click save, then credentials login_universal and Sign In."}, None
+                return {"error": "not parked: the password helper is configured. On a Create Account page call credentials mode 'create' "
+                                 "(it types the email, password and confirm box), click Create Account, then snapshot and continue; on a Sign In "
+                                 "page call credentials login_universal, click Sign In, then snapshot. Park only after the page itself reports a failure."}, None
         if (low.startswith("credentials") or "verify your" in low or "verification" in low) and not self.ctx.verify_link_tried \
                 and self.ctx.mail is not None:
-            # An account that exists but cannot sign in is usually waiting on its verification email.
+            # An account that exists but cannot sign in is usually waiting on its verification email (a short
+            # lookback: the email, if any, was sent earlier; never the full code wait here).
             try:
-                out, _ = await self.t_open_verification_link()
+                out, _ = await self.t_open_verification_link(timeout_s=20)
             except Parked:
                 out = {}
             if out.get("status") == "verified":
