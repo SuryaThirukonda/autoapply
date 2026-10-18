@@ -102,7 +102,7 @@ FUNCTION_TOOLS: list[dict] = [
      "description": "Workday only: jump to a completed step of the application by its name in the progress rail at the top ('My Information', 'My Experience', 'Application Questions 1 of 2', 'Voluntary Disclosures', 'Review'). Use it from the Review page when a section shows 'No Response' that you must fill, then Save and Continue forward again.",
      "parameters": {"type": "object", "properties": {"step": {"type": "string"}}, "required": ["step"], "additionalProperties": False}},
     {"type": "function", "name": "fill_sections", "strict": True,
-     "description": "Workday My Experience page: deterministically add every stored work-history entry (title, company, location, dates, current flag, full role description) and every website, Add/Add Another included, skipping entries already present. Returns added / updated / failed / skipped. Call it before touching Work Experience or Websites by hand; fix only what it reports failed.",
+     "description": "Workday My Experience page, or a Greenhouse page with an Employment section: deterministically add every stored work-history entry (title, company, location, dates, current flag, full role description) and every website, Add/Add Another included, skipping entries already present. Returns added / updated / failed / skipped. Call it before touching Work Experience or Websites by hand; fix only what it reports failed.",
      "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
     {"type": "function", "name": "tabs", "strict": True,
      "description": "This application's browser tabs. A click that opens a new tab on the portal moves you into it automatically; use this to see them or move between them. Actions: 'list'; 'switch' (index); 'close' (index, never the last tab); 'back' (browser Back in this tab); 'reload'; 'goto' (url, only hosts of this application or its portal).",
@@ -637,7 +637,11 @@ class ToolDispatcher:
 
     async def t_fill_sections(self):
         from ..adapters.workday_sections import WorkdaySections
-        rep = await WorkdaySections(self.ctx.ex, self.ctx.job, self.ctx.page_no).run()
+        if self.ctx.portal == "greenhouse":
+            from ..adapters.greenhouse_sections import GreenhouseSections
+            rep = await GreenhouseSections(self.ctx.ex, self.ctx.job, self.ctx.page_no).run()
+        else:
+            rep = await WorkdaySections(self.ctx.ex, self.ctx.job, self.ctx.page_no).run()
         db.event(self.ctx.job_id, "adapter:sections", {**rep.summary(), "by": "model"})
         out = rep.summary()
         if not rep.added and not rep.updated and not rep.failed:

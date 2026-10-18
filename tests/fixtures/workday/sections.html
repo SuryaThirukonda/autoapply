@@ -1,0 +1,44 @@
+<!doctype html><html><head><meta charset="utf-8"><title>My Experience</title></head><body style="margin:20px">
+<h2>My Experience</h2>
+<h3>Work Experience</h3>
+<div id="work"></div>
+<button type="button" data-automation-id="add-button" id="add-work">Add</button>
+<h3>Websites</h3>
+<div id="sites"></div>
+<button type="button" data-automation-id="add-button" id="add-site">Add</button>
+<script>
+  let n = 1, s = 1;
+  function workBlock(idx, preset) {
+    const d = document.createElement('div'); d.className = 'block';
+    d.innerHTML = `<h4>Work Experience ${idx}</h4><button type="button">Delete</button>
+      <label for="workExperience-${idx}--jobTitle">Job Title*</label><input id="workExperience-${idx}--jobTitle" type="text">
+      <label for="workExperience-${idx}--companyName">Company*</label><input id="workExperience-${idx}--companyName" type="text">
+      <label for="workExperience-${idx}--location">Location</label><input id="workExperience-${idx}--location" type="text">
+      <input type="checkbox" id="workExperience-${idx}--currentlyWorkHere"><label for="workExperience-${idx}--currentlyWorkHere">I currently work here</label>
+      <div data-automation-id="formField-startDate"><label>From*</label>
+        <input id="workExperience-${idx}--startDate-dateSectionMonth-input" data-automation-id="dateSectionMonth-input" aria-label="Month" type="text" style="width:30px">
+        <input id="workExperience-${idx}--startDate-dateSectionYear-input" data-automation-id="dateSectionYear-input" aria-label="Year" type="text" style="width:50px"></div>
+      <div class="end" data-automation-id="formField-endDate"><label>To*</label>
+        <input id="workExperience-${idx}--endDate-dateSectionMonth-input" data-automation-id="dateSectionMonth-input" aria-label="Month" type="text" style="width:30px">
+        <input id="workExperience-${idx}--endDate-dateSectionYear-input" data-automation-id="dateSectionYear-input" aria-label="Year" type="text" style="width:50px"></div>
+      <label for="workExperience-${idx}--roleDescription">Role Description</label><textarea id="workExperience-${idx}--roleDescription" maxlength="500"></textarea>`;
+    const cb = d.querySelector('input[type=checkbox]');
+    const sync = () => { d.querySelector('.end').style.display = cb.checked ? 'none' : 'block'; };
+    cb.addEventListener('change', sync); sync();
+    d.querySelector('button').addEventListener('click', () => d.remove());
+    if (preset) { d.querySelector('#workExperience-' + idx + '--jobTitle').value = preset.title || ''; d.querySelector('#workExperience-' + idx + '--companyName').value = preset.company || ''; }
+    document.getElementById('work').appendChild(d);
+  }
+  function siteBlock(idx) {
+    const d = document.createElement('div'); d.className = 'block';
+    d.innerHTML = `<button type="button">Delete</button><label for="webAddress-${idx}--url">URL*</label><input id="webAddress-${idx}--url" type="text">`;
+    d.querySelector('button').addEventListener('click', () => d.remove());
+    document.getElementById('sites').appendChild(d);
+  }
+  document.getElementById('add-work').addEventListener('click', () => { workBlock(n++); document.getElementById('add-work').textContent = 'Add Another'; });
+  document.getElementById('add-site').addEventListener('click', () => { siteBlock(s++); document.getElementById('add-site').textContent = 'Add Another'; });
+  // a tenant that pre-renders one blank block and already holds a duplicate of a stored entry
+  workBlock(n++, { company: 'Revio', title: 'Founding Software Engineer (Part-time)' });
+  workBlock(n++);
+  document.getElementById('add-work').textContent = 'Add Another';
+</script></body></html>

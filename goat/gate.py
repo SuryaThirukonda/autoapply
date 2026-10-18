@@ -110,6 +110,12 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         if missing:
             return GateResult("blocked", [f"the Review page does not show {m}: call go_to_step('My Experience'), then fill_sections, then Save and Continue forward to Review"
                                           for m in missing[:4]])
+    # Greenhouse's single page: when it has an Employment section, every stored work entry must be in it.
+    if (portal or "").lower() == "greenhouse":
+        from .adapters.greenhouse_sections import review_gaps_from_snapshot
+        missing = review_gaps_from_snapshot(snapshot, job.get("company", ""))
+        if missing:
+            return GateResult("blocked", [f"the Employment section does not show {m}: call fill_sections, then submit again" for m in missing[:4]])
     why = why_blocked(snapshot.errors)
     reasons += why
 

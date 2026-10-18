@@ -57,7 +57,7 @@ JS_SECTIONS = r"""
 }
 """
 
-WORK_KINDS = ("workExperience", "workexperience", "experience")
+WORK_KINDS = ("workExperience", "workexperience", "experience", "employment")
 SITE_KINDS = ("websites", "website", "webAddress", "webAddresses")
 
 

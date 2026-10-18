@@ -400,7 +400,29 @@ class Greenhouse(Adapter):
     hints = ("Greenhouse: dropdowns are react-select (use choose; never press Enter in one). Short answers are often capped at 255 "
              "characters. The 'protected by reCAPTCHA' badge is not a challenge. If the page asks for an emailed security code "
              "after submit, call enter_email_code with the code box refs, then submit again. School on Greenhouse is "
-             "'Texas A&M University - College Station'.")
+             "'Texas A&M University - College Station'. An Employment section (Company name / Title / Start date / End date / Current role, "
+             "'Add another') is filled by the harness when the page opens and whenever you call fill_sections: every experience.work.N entry; "
+             "never add or edit those blocks by hand, only what fill_sections reports failed.")
+
+    ENTRY_LABEL = re.compile(r"^(company name|title|start date( month| year)?|end date( month| year)?|current role|add another|remove employment|toggle flyout)\b", re.I)
+
+    async def prefill(self, ex, snap: Snapshot, job: dict, page_no: int) -> PrefillResult:
+        from .greenhouse_sections import GreenhouseSections, is_employment_page
+        if is_employment_page(snap):
+            rep = await GreenhouseSections(ex, job, page_no).run()
+            from .. import db
+            db.event(job["id"], "adapter:sections", rep.summary())
+            fresh = await _resnap(ex)
+            snap = Snapshot(url=fresh.url, title=fresh.title, headings=fresh.headings,
+                            items=[i for i in fresh.items if not self.ENTRY_LABEL.match((i.get("label") or "").strip())],
+                            groups=[g for g in fresh.groups if "current role" not in (g.get("label") or "").lower()],
+                            errors=fresh.errors, challenge=fresh.challenge)
+            res = await super().prefill(ex, snap, job, page_no)
+            res.set += len(rep.added) + len(rep.updated)
+            res.failed += len(rep.failed)
+            (res.details or []).append({"label": "Employment section", "ok": not rep.failed, "sections": rep.summary()})
+            return res
+        return await super().prefill(ex, snap, job, page_no)
 
     def apply_url(self, listing_url: str) -> str:
         u = urlparse(listing_url)

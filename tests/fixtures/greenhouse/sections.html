@@ -1,0 +1,36 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body style="margin:20px">
+<form id="app">
+<div class="field"><label for="first_name">First Name*</label><input id="first_name" name="first_name"></div>
+<div class="field"><label for="loc">Location (City)*</label><input id="loc" name="location"></div>
+<h3>Employment</h3>
+<div id="employments"></div>
+<button type="button" id="add">Add another</button>
+<div class="field"><label for="linkedin">LinkedIn Profile</label><input id="linkedin"></div>
+</form>
+<script>
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  let next = 0;
+  function block(n, preset) {
+    const d = document.createElement('div'); d.className = 'employment'; d.id = 'employment-' + n;
+    d.innerHTML = `
+      <button type="button" aria-label="Remove employment">×</button>
+      <label for="company-name-${n}">Company name</label><input id="company-name-${n}" type="text" maxlength="255">
+      <label for="title-${n}">Title</label><input id="title-${n}" type="text" maxlength="255">
+      <label for="start-date-month-${n}">Start date month</label><select id="start-date-month-${n}"><option value="">Select...</option>${MONTHS.map(m => `<option>${m}</option>`).join('')}</select>
+      <label for="start-date-year-${n}">Start date year</label><input id="start-date-year-${n}" type="text" maxlength="4">
+      <label for="end-date-month-${n}">End date month</label><select id="end-date-month-${n}"><option value="">Select...</option>${MONTHS.map(m => `<option>${m}</option>`).join('')}</select>
+      <label for="end-date-year-${n}">End date year</label><input id="end-date-year-${n}" type="text" maxlength="4">
+      <input type="checkbox" id="current-role-${n}_1" name="current-role-${n}"><label for="current-role-${n}_1">Current role</label>`;
+    const cb = d.querySelector('input[type=checkbox]');
+    const sync = () => { d.querySelector('#end-date-month-' + n).disabled = cb.checked; d.querySelector('#end-date-year-' + n).disabled = cb.checked; };
+    cb.addEventListener('change', sync); sync();
+    d.querySelector('button').addEventListener('click', () => d.remove());
+    if (preset) { d.querySelector('#company-name-' + n).value = preset.company || ''; d.querySelector('#title-' + n).value = preset.title || ''; }
+    document.getElementById('employments').appendChild(d);
+    return d;
+  }
+  document.getElementById('add').addEventListener('click', () => block(next++));
+  // Like Lyft's form: one block already holds a duplicate of a stored entry, one is blank.
+  block(next++, { company: 'Revio', title: 'Founding Software Engineer (Part-time)' });
+  block(next++);
+</script></body></html>
