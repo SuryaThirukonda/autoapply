@@ -22,6 +22,21 @@ Pattern: six of the seven failures were the harness being too sure too early (a 
 model reasoning failures. That points the roadmap at verification and patience in the harness, not at
 more prompt text.
 
+## Built later the same night (after Surya's "make it interactive like Hermes" request)
+
+- `goat/chat/`: a conversational agent on Telegram with a system prompt (`soul.md`) and 14 tools (queue and
+  worker control, answering and settling questions, screenshots, page outlines, browser actions on parked
+  tabs, remembering facts and notes, reading skills). Free text to the bot is a chat turn; replies thread back.
+- `skills/*.md` with front matter, loaded per portal into the filler and by trigger into the chat agent.
+- `data/memory/`: MEMORY.md plus daily run notes, injected into both prompts (step 10 below, first cut).
+- AS_IS hand-off: "I already filled it out" settles a question without inventing an answer; the run records
+  the page's values. Verified live on DoorDash: shadow draft in 85 s after Surya ticked the boxes himself.
+- Still open from the list below: 1, 2, 4, 5, 6, 7, 8, 9, 11, 12, 13. Step 3 (one batched question card) is
+  half there: questions are collected per page, not yet per application.
+- New small items seen tonight: "Please enter your relevant employment and military service" (Lyft) is a
+  free-response work-history box that should be drafted from the profile, not asked; the Verkada / GCM
+  Grosvenor eligibility-window case needs the triage step to read the posting's graduation window before a run.
+
 ## Ranked next steps
 
 1. **Read-back diff before the gate (S).** After the model says a page is done, read every field's DOM
