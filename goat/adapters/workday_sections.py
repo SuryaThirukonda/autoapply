@@ -39,7 +39,7 @@ JS_SECTIONS = r"""
     const key = m[1] + '-' + m[2];
     const e = entries[key] || (entries[key] = { kind: m[1], idx: parseInt(m[2], 10), fields: {} });
     const type = (el.getAttribute('type') || el.tagName).toLowerCase();
-    e.fields[m[3]] = { ref: mkref(el), type, value: type === 'checkbox' ? (el.checked ? 'checked' : '') : (el.value || ''), vis: vis(el) };
+    e.fields[m[3]] = { ref: mkref(el), type, value: type === 'checkbox' ? (el.checked ? 'checked' : '') : (el.value || ''), vis: vis(el), max: el.maxLength > 0 ? el.maxLength : 0 };
   }
   const text = norm(document.body.innerText || '').slice(0, 20000);
   return { sections, entries: Object.values(entries), has_skills: /\bSkills\b/.test(text), text_head: text.slice(0, 400) };
@@ -56,9 +56,25 @@ class SectionReport:
     updated: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    present: list[str] = field(default_factory=list)   # already complete, nothing touched
 
     def summary(self) -> dict:
-        return {"added": self.added, "updated": self.updated, "failed": self.failed, "skipped": self.skipped}
+        return {"added": self.added, "updated": self.updated, "present": self.present, "failed": self.failed, "skipped": self.skipped}
+
+
+def fit_bullets(text: str, cap: int) -> str:
+    """Keep whole bullets (lines) that fit a character cap; if even the first does not, cut it at a sentence end."""
+    lines, out = text.split("\n"), []
+    for ln in lines:
+        if len("\n".join(out + [ln])) <= cap:
+            out.append(ln)
+        else:
+            break
+    if out:
+        return "\n".join(out)
+    first = lines[0][:cap]
+    cut = max(first.rfind(". "), first.rfind("; "), first.rfind(", "))
+    return (first[:cut + 1] if cut > cap // 2 else first).rstrip()
 
 
 def stored_work_entries(company: str = "", portal: str = "workday") -> list[dict]:
@@ -125,6 +141,7 @@ class WorkdaySections:
         self.ex, self.job, self.page_no = ex, job, page_no
         self.company = job.get("company", "")
         self.report = SectionReport()
+        self.changed = False
 
     async def scan(self) -> dict:
         try:
@@ -168,6 +185,7 @@ class WorkdaySections:
             if f and ent[key] and answers.norm(f["value"]) != answers.norm(ent[key]):
                 plan.append((f["ref"], ent[key], f"{tag} {fname}", f"experience.work.{n}.{key}"))
         ok_all = True
+        self.changed = bool(plan)
         for ref, val, label, key in plan:
             if not await self._set(ref, val, label, key):
                 ok_all = False
@@ -177,6 +195,7 @@ class WorkdaySections:
         if cur:
             want = bool(ent["current"])
             if (cur["value"] == "checked") != want:
+                self.changed = True
                 if not await self._set(cur["ref"], want, f"{tag} currently work here", f"experience.work.{n}.current"):
                     ok_all = False
                     self.report.failed.append(f"{tag} currently work here")
@@ -199,6 +218,7 @@ class WorkdaySections:
             parts = fill.parse_date(val)
             if mon and yr and mon["value"].zfill(2) == parts.get("month", "") and yr["value"] == parts.get("year", ""):
                 continue
+            self.changed = True
             r = await fill.set_date(self.ex, mref, val)
             if r.ok:
                 self._record(f"{tag} {which} date", r.readback, f"experience.work.{n}.{key}", mref)
@@ -208,7 +228,11 @@ class WorkdaySections:
         desc = _field(entry, "roleDescription", "description")
         if desc and ent["description"]:
             want = bullets_to_lines(ent["description"])
+            if desc.get("max") and len(want) > desc["max"]:
+                want = fit_bullets(want, desc["max"])
+                self.report.skipped.append(f"{tag} description trimmed to the box's {desc['max']}-character cap")
             if answers.norm(desc["value"]) != answers.norm(want):
+                self.changed = True
                 if not await self._set(desc["ref"], want, f"{tag} role description", f"experience.work.{n}.description"):
                     ok_all = False
                     self.report.failed.append(f"{tag} role description")
@@ -232,7 +256,10 @@ class WorkdaySections:
                 tag = f'{comp["kind"]}-{comp["idx"]}'
                 matched.add(tag)
                 ok = await self.fill_work_entry(comp, ent)
-                self.report.updated.append(f'{ent["company"]}{"" if ok else " (partial)"}')
+                if self.changed or not ok:
+                    self.report.updated.append(f'{ent["company"]}{"" if ok else " (partial)"}')
+                else:
+                    self.report.present.append(ent["company"])
                 continue
             new = await self._click_add(work_heading, seen)
             if not new:

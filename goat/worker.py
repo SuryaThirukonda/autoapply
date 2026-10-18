@@ -263,6 +263,15 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             await ex.settle()
             if not ex.policy.allowed(ex.url) or "login" in ex.url.lower():
                 await ex.goto(apply_url)   # expired session: re-open and re-fill from the store
+            else:
+                # A stale Workday tab shows "Something went wrong ... refresh the page": do that, then re-open the posting.
+                from .gate import portal_error
+                if portal_error(await ex.page_text(30000)):
+                    await ex.page.reload(wait_until="domcontentloaded")
+                    await ex.settle()
+                    if portal_error(await ex.page_text(30000)):
+                        await ex.goto(apply_url)
+                    db.event(job_id, "tab:reloaded", {"url": ex.url[:200]})
         # A wrapper page that embeds the Greenhouse form in an iframe (careerpuck for Lyft, company career
         # sites): the outline cannot see into a cross-origin frame, so open the embedded form itself.
         if portal == "greenhouse" and "greenhouse.io" not in (ex.url or "").lower():

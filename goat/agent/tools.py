@@ -1108,6 +1108,19 @@ class ToolDispatcher:
             perr = portal_error(await self.ctx.ex.page_text(30000))
         except Exception:
             perr = None
+        if perr and self.ctx.control_failures.get("portal:reload", 0) < 1:
+            # One refresh first: Workday's "Something went wrong" page usually clears on reload (ICF, 2026-10-18).
+            self.ctx.control_failures["portal:reload"] = 1
+            try:
+                await self.ctx.ex.page.reload(wait_until="domcontentloaded")
+                await self.ctx.ex.settle()
+                perr = portal_error(await self.ctx.ex.page_text(30000))
+            except Exception:
+                pass
+            if not perr:
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "reloaded": True})
+                return {"error": "not parked: the page was refreshed and the portal error is gone. Take a snapshot and continue "
+                                 "(on Workday, if a step shows No Response on Review, go_to_step there and call fill_sections)."}, None
         if perr:
             db.event(self.ctx.job_id, "park:portal_error", {"reason": reason[:200], "page": perr})
             raise Parked(f"portal_error: {perr}", "hold")

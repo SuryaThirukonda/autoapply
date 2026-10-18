@@ -38,3 +38,10 @@ def test_field_lookup_by_workday_id_suffix():
     assert ws._field(entry, "jobTitle", "title")["ref"] == "e1"
     assert ws._date_month_ref(entry, "start") == "e2"
     assert ws._date_month_ref(entry, "end") is None       # hidden while "I currently work here" is ticked
+
+
+def test_fit_bullets_keeps_whole_bullets_under_the_cap():
+    text = "\u2022 one two three.\n\u2022 four five six.\n\u2022 seven."
+    assert ws.fit_bullets(text, len(text)) == text
+    assert ws.fit_bullets(text, 35) == "\u2022 one two three.\n\u2022 four five six."
+    assert ws.fit_bullets("\u2022 first sentence. second sentence here.", 25) == "\u2022 first sentence."
