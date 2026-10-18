@@ -71,3 +71,13 @@ async def test_a_list_left_open_by_a_failed_pick_does_not_block_the_next_control
         assert await ex.page.inner_text("#q5") == "Select One"
     finally:
         await ex.close(close_browser=True)
+
+
+def test_chip_matching_accepts_an_issuer_suffix_but_not_an_issuer_acronym():
+    from goat.browser.fill import _chip_matches
+    assert _chip_matches("AWS Certified Cloud Practitioner - Amazon Web Services (AWS)", ["AWS Certified Cloud Practitioner"])
+    assert _chip_matches("Structured Query Language (SQL)", ["SQL"])
+    assert _chip_matches("Python (Programming Language)", ["Python"])
+    assert not _chip_matches("AWS Business Professional - Amazon Web Services (AWS)", ["AWS"])
+    assert not _chip_matches("AWS Business Professional - Amazon Web Services (AWS)", ["AWS Certified Cloud Practitioner"])
+    assert not _chip_matches("Python IDLE", ["Python"])

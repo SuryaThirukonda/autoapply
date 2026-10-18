@@ -162,7 +162,12 @@ def _chip_matches(chip: str, wants: list[str]) -> bool:
             return True
         if re.fullmatch(re.escape(w.strip().lower()) + r"\s*(\(.*\))?", (chip or "").strip().lower()):
             return True
-        if re.search(r"\(\s*" + re.escape(w.strip()) + r"\s*\)", chip or "", re.I):
+        # "AWS Certified Cloud Practitioner - Amazon Web Services (AWS)": the wanted name plus an issuer after a dash
+        if re.fullmatch(re.escape(w.strip().lower()) + r"\s*[-–—:]\s+.+", (chip or "").strip().lower()):
+            return True
+        # "Structured Query Language (SQL)" for SQL: the acronym rule, but not when the parenthetical belongs to an
+        # issuer after a dash ("AWS Business Professional - Amazon Web Services (AWS)" is not AWS)
+        if re.search(r"\(\s*" + re.escape(w.strip()) + r"\s*\)", chip or "", re.I) and not re.search(r"\s[-–—]\s", chip or ""):
             return True
     return False
 
