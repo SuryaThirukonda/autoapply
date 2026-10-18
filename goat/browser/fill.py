@@ -194,6 +194,18 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
             after = await ex.read_ref(ref)
             shown = (after.get("value") or after.get("shown") or "")
             if shown and not PLACEHOLDER.match(shown) and (_norm(pick["text"])[:6] in _norm(shown) or _norm(want)[:6] in _norm(shown)):
+                # The text is in the box, but a Workday prompt also shows the typed search there: only a
+                # selected-item chip means it committed.
+                committed, why = await _committed(ex, ref, pick["text"])
+                if not committed:
+                    committed, why = await _force_commit(ex, ref, pick["text"], want)
+                if not committed:
+                    try:
+                        await ex.page.keyboard.press("Escape")
+                    except Exception:
+                        pass
+                    return FieldResult(ref, False, shown, f"the picker shows {shown[:60]!r} but did not commit it ({why}); "
+                                                          "try the next option text, or the computer tool on the option itself")
                 # Prefer the picked option's own text when the control echoes its label too.
                 return FieldResult(ref, True, pick["text"] if _norm(pick["text"]) in _norm(shown) else shown)
             # the control may have been replaced; accept if the picked option text is now on the page near the field
@@ -212,6 +224,64 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
     except Exception:
         pass
     return FieldResult(ref, False, before, last_err)
+
+
+async def _committed(ex: Executor, ref: str, text: str) -> tuple[bool, str]:
+    """(committed, why). Strict only for prompt widgets (Workday): a chip with the option text must exist.
+    Other controls count as committed when the field shows no error."""
+    st = await ex.eval(js.JS_FIELD_COMMIT, ref)
+    if not isinstance(st, dict) or not st.get("found"):
+        return True, ""            # the control was replaced by its committed rendering
+    t = _norm(text)
+    if st.get("prompt"):
+        if any(t and (t in _norm(c) or _norm(c) in t) for c in st.get("chips") or []):
+            return True, ""
+        return False, "no selected-item chip" + (f"; the field says {st['error']!r}" if st.get("error") else "")
+    if st.get("invalid") and st.get("error") and not any(t in _norm(c) for c in st.get("chips") or []):
+        return False, f"the field still says {st['error']!r}"
+    return True, ""
+
+
+async def _force_commit(ex: Executor, ref: str, text: str, want: str) -> tuple[bool, str]:
+    """Two more ways to take an option a plain click did not commit: tick the control inside the option
+    (Workday menu items carry a radio), then the keyboard, with Enter pressed only while this field's list
+    is open so it can never submit the form."""
+    why = ""
+    for step in ("inner-control", "keyboard"):
+        try:
+            await ex.page.keyboard.press("Escape")
+            await ex.click_ref(ref)
+            await asyncio.sleep(0.6)
+            opened = await ex.eval(js.JS_LIST_OPTIONS)
+            if not (isinstance(opened, list) and any(o.get("text") == text for o in opened)) and want:
+                await ex.page.keyboard.press("Control+a")
+                await ex.type_text(want[:40], real_keys=True, delay_ms=20)
+                await asyncio.sleep(1.2)
+                opened = await ex.eval(js.JS_LIST_OPTIONS)
+            listed = [o for o in (opened if isinstance(opened, list) else []) if o.get("text")]
+            if not any(o["text"] == text for o in listed):
+                why = "the option was not in the list when reopened"
+                continue
+            if step == "inner-control":
+                await ex.eval(js.JS_COMMIT_OPTION, text)
+            else:
+                # Highlight the wanted option with the arrow keys, then Enter inside the open listbox.
+                idx = next(i for i, o in enumerate(listed) if o["text"] == text)
+                for _ in range(idx + 1):
+                    await ex.page.keyboard.press("ArrowDown")
+                    await asyncio.sleep(0.05)
+                still_open = await ex.eval(js.JS_LIST_OPTIONS)
+                if not (isinstance(still_open, list) and still_open):
+                    why = "the list closed before Enter"
+                    continue
+                await ex.page.keyboard.press("Enter")
+            await asyncio.sleep(0.7)
+            ok, why = await _committed(ex, ref, text)
+            if ok:
+                return True, ""
+        except Exception as e:
+            why = f"{type(e).__name__}: {str(e)[:120]}"
+    return False, why or "it did not commit"
 
 
 async def _shows_file(ex: Executor, path: Path) -> bool:

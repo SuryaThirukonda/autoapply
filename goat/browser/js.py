@@ -573,6 +573,41 @@ JS_SCROLL_OPTION = r"""
 }
 """
 
+# Did a picker really commit? Workday prompts show the typed search text in the input either way; only a
+# selected-item chip (and the field's error going away) means the value was taken.
+JS_FIELD_COMMIT = r"""
+(ref) => {
+""" + _COMMON + r"""
+  const el = findRef(ref);
+  if (!el) return JSON.stringify({ found: false });
+  const box = el.closest('[data-automation-id^="formField"], [data-automation-id="multiSelectContainer"], .field, .form-group, [class*="field" i]') || el.parentElement;
+  const scope = box || document;
+  const chips = Array.from(scope.querySelectorAll('[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"] li, [class*="multi-value__label" i], [class*="selected-item" i], [class*="chip" i]'))
+    .filter(vis).map(c => txt(c)).filter(Boolean);
+  const prompt = !!(box && box.querySelector('[data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"], [data-automation-id="promptIcon"], [data-automation-id="promptSearchButton"]'));
+  const errEl = box ? Array.from(box.querySelectorAll('[data-automation-id="errorMessage"], [role="alert"], [class*="error" i]')).find(e => vis(e) && txt(e)) : null;
+  return JSON.stringify({ found: true, prompt, chips: chips.slice(0, 12), value: (el.value || '').slice(0, 160),
+                          invalid: el.getAttribute('aria-invalid') === 'true' || !!errEl, error: errEl ? txt(errEl).slice(0, 160) : '' });
+}
+"""
+
+# Select an open option the way a person would when its text is not the clickable part: tick the radio or
+# checkbox inside it, else give the option element itself a full pointer/mouse/click sequence.
+JS_COMMIT_OPTION = r"""
+(text) => {
+  const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], .select__option, [class*="__option"], ul[role="listbox"] li'))
+    .filter(o => txt(o).slice(0, 160) === text && o.getBoundingClientRect().width > 1 && !o.closest('[data-automation-id="selectedItemList"]'));
+  if (!opts.length) return JSON.stringify({ ok: false });
+  const o = opts[opts.length - 1];
+  const box = o.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
+  const target = box || o;
+  for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) target.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+  target.click();
+  return JSON.stringify({ ok: true, via: box ? 'inner-control' : 'option' });
+}
+"""
+
 JS_REACT_SELECT = r"""
 ([ref, wantRegexSrc]) => {
 """ + _COMMON + r"""
