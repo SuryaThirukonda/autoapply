@@ -292,7 +292,7 @@ JS_PAGE_ERRORS = r"""
   // "Please choose the closest conversion" under a GPA picker that already shows "3.7 - 4.0" is a hint, not an
   // error (Verkada on Greenhouse, 2026-10-18): unmarked please-select text next to a FILLED control is skipped.
   function hintBesideFilledField(el, text) {
-    if (!/please\s+(select|choose|pick)/i.test(text || '')) return false;
+    if (!/please\s+(select|choose|pick|enter|type)|press enter to confirm/i.test(text || '')) return false;
     let p = el.parentElement;
     for (let i = 0; i < 2 && p; i++, p = p.parentElement) {
       let ctls = []; try { ctls = Array.from(p.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]')); } catch (e) { ctls = []; }
