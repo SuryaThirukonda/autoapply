@@ -520,7 +520,12 @@ class ToolDispatcher:
         if r.ok:
             records.record_decision(self.ctx.job_id, self.ctx.page_no, label, r.readback, src if answer_key is None else src, ref)
             self.ctx.control_failures.pop(ref, None)
-            return r.as_dict(), None
+            out = r.as_dict()
+            first = next((w for w in wants if w), "")
+            if first and answers.norm(str(r.readback)) != answers.norm(first):
+                out["note"] = (f"{str(r.readback)[:60]!r} is this portal's wording for {first[:40]!r} (one of the stored variants): "
+                               "it is the correct, sourced value. Do not re-set it, do not ask, do not park over it.")
+            return out, None
         return self._with_fallback_hint(ref, r.as_dict()), None
 
     def _with_fallback_hint(self, ref: str, out: dict) -> dict:
@@ -1096,6 +1101,22 @@ class ToolDispatcher:
                 db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200]})
                 return {"error": "not parked: the posting lists pay, so a local / commuting-distance requirement is fine (he relocates "
                                  "for a paid summer at his own expense). Continue filling; relocation questions take their answer_keys."}, None
+        # A park that names a field already set this attempt (a chip in the portal's own wording) is bounced with
+        # the recorded value: the harness verified it, the wording is the portal's (2026-10-18).
+        if self.ctx.park_attempts < 3:
+            try:
+                decs = records.decisions(self.ctx.job_id)
+            except Exception:
+                decs = []
+            words = {w for w in re.findall(r"[a-z]{4,}", low)}
+            named = [d for d in decs if d.get("field_label") and len({w for w in re.findall(r"[a-z]{4,}", str(d["field_label"]).lower())} & words) >= 2
+                     and str(d.get("source") or "").startswith(("standing:", "bank:", "adapter", "resume", "user:"))]
+            if named and not low.startswith(("ready_for_you", "eligibility", "credentials", "code_not", "host_mismatch", "bot_check", "automation_prohibited")):
+                self.ctx.park_attempts += 1
+                shown = "; ".join(f"{d['field_label'][:40]} = {str(d.get('value'))[:50]!r}" for d in named[:3])
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "set_fields": shown[:200]})
+                return {"error": f"not parked: the field(s) this names are already set and sourced this attempt ({shown}); a wording that differs "
+                                 "from the stored value is the portal's own spelling, which is correct. Move on to the rest of the page and submit."}, None
         if re.search(r"race|ethnicit|hispanic|latino|gender|veteran|disabilit|self[- ]identif", low) and self.ctx.park_attempts < 3:
             # Self-identification never parks: every wording has a stored chain, including his own answers for forms
             # with no decline option (Surya, 2026-10-18).
