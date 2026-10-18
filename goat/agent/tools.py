@@ -131,6 +131,7 @@ class RunContext:
     verify_link_tried: bool = False
     consent_page_key: str = ""
     resolved: dict = field(default_factory=dict)   # norm(question) -> resolver outcome this run
+    control_failures: dict = field(default_factory=dict)   # ref -> failed choose / set_date calls this run
 
     @property
     def job_id(self) -> int:
@@ -508,7 +509,20 @@ class ToolDispatcher:
         self.ctx.budget.step()
         if r.ok:
             records.record_decision(self.ctx.job_id, self.ctx.page_no, label, r.readback, src if answer_key is None else src, ref)
-        return r.as_dict(), None
+            self.ctx.control_failures.pop(ref, None)
+            return r.as_dict(), None
+        return self._with_fallback_hint(ref, r.as_dict()), None
+
+    def _with_fallback_hint(self, ref: str, out: dict) -> dict:
+        """Surya (2026-10-18): when the ref tools cannot work a control, go to screenshot mode and click it by
+        hand. After the second failure on the same ref the model is told to switch to the computer tool."""
+        n = self.ctx.control_failures.get(ref, 0) + 1
+        self.ctx.control_failures[ref] = n
+        if n >= 2:
+            out["fallback"] = ("the ref tools failed on this control twice: switch to the `computer` tool now. Take a screenshot, "
+                              "click the control, type or scroll inside its list, click the wanted option, then `snapshot` to confirm the "
+                              "value and record it with fill_batch source 'as_is' if the outline shows it set.")
+        return out
 
     async def t_click(self, ref: str, label: str):
         snap = self.ctx.last_snapshot
@@ -603,7 +617,8 @@ class ToolDispatcher:
         if r.ok:
             records.record_decision(self.ctx.job_id, self.ctx.page_no, label, r.readback or str(val),
                                     f"standing:{answer_key}" if answer_key else src, ref)
-        return r.as_dict(), None
+        out = r.as_dict()
+        return (out if out.get('status') in ('set', 'ok') or out.get('ok') else self._with_fallback_hint(ref, out)), None
 
     async def t_zoom(self, x: int, y: int, width: int, height: int):
         png = await self.ctx.ex.zoom_png(x, y, width, height)

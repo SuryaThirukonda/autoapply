@@ -57,6 +57,8 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
     """Exact match first. A prefix/contains match is accepted only when it is UNambiguous: if several
     options share the prefix (Texas A&M University - College Station / - Commerce / - Kingsville) the
     caller must name the exact one. Picking the shortest would silently choose the wrong campus."""
+    seen: set[str] = set()
+    options = [o for o in options if not (_norm(o.get("text")) in seen or seen.add(_norm(o.get("text"))))]
     for want in wants:
         w = _norm(want)
         if not w:
@@ -179,6 +181,22 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
         if pick is None and not open_now:
             # the list shows every option (no type-to-filter effect): take the most preferred one present
             pick = best_option(options, wants)
+        if pick is None and open_now and type_to_filter:
+            # A category's inner list is virtualized (Workday "Job Board" -> Career Builder ... with LinkedIn
+            # below the fold): type each preference into the prompt's search box and read what it filters to.
+            for w in [x for x in wants if _norm(x)][:4]:
+                try:
+                    await ex.page.keyboard.press("Control+a")
+                except Exception:
+                    pass
+                await ex.type_text(w[:40], real_keys=True, delay_ms=20)
+                await asyncio.sleep(1.2)
+                filtered = await ex.eval(js.JS_LIST_OPTIONS)
+                filtered = [o for o in (filtered if isinstance(filtered, list) else []) if _key(o) not in baseline_keys]
+                pick = best_option(filtered, [w])
+                if pick is not None:
+                    options = filtered
+                    break
         open_now = False
         if pick is None and options and any(_norm(o["text"]).startswith(_norm(want)) for o in options):
             # Ambiguous prefix: report the candidates so the model names the exact one.
