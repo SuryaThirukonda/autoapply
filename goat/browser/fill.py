@@ -50,7 +50,17 @@ def _squash(s: str) -> str:
 
 
 # What a Workday multi-level prompt's control reads while a category is open or nothing is picked yet.
-LEVELISH = re.compile(r"(expanded|\b0 items selected\b|^select one$|^search$)", re.I)
+LEVELISH = re.compile(r"(expanded|\b0 items selected\b|^search$)", re.I)
+
+
+JS_TEXT_FOCUSED = """() => { const a = document.activeElement; return !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)); }"""
+
+
+async def _text_box_focused(ex: Executor) -> bool:
+    try:
+        return bool(await ex.eval(JS_TEXT_FOCUSED))
+    except Exception:
+        return False
 
 
 def best_option(options: list[dict], wants: list[str]) -> dict | None:
@@ -159,7 +169,8 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
                 shown_now = [o for o in (shown_now if isinstance(shown_now, list) else []) if _key(o) not in baseline_keys]
                 if shown_now:
                     break
-            if type_to_filter and want and not (shown_now and best_option(shown_now, [want] if multi_tree else wants)):
+            if type_to_filter and want and not (shown_now and best_option(shown_now, [want] if multi_tree else wants)) \
+                    and await _text_box_focused(ex):
                 try:
                     await ex.page.keyboard.press("Control+a")     # replace, never append to, text left in the search box
                 except Exception:
@@ -185,7 +196,7 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
         if pick is None and not open_now:
             # the list shows every option (no type-to-filter effect): take the most preferred one present
             pick = best_option(options, wants)
-        if pick is None and open_now and type_to_filter:
+        if pick is None and open_now and type_to_filter and await _text_box_focused(ex):
             # A category's inner list is virtualized (Workday "Job Board" -> Career Builder ... with LinkedIn
             # below the fold): type each preference into the prompt's search box and read what it filters to.
             for w in [x for x in wants if _norm(x)][:4]:
