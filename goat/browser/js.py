@@ -525,6 +525,22 @@ JS_READ_REF = r"""
 }
 """
 
+# The choices of a native control by ref: a <select>'s options, or the labels of a radio/checkbox group.
+JS_FIELD_CHOICES = r"""
+(ref) => {
+""" + _COMMON + r"""
+  const el = findRef(ref);
+  if (!el) return JSON.stringify(null);
+  const tag = el.tagName.toLowerCase(), type = (el.getAttribute('type') || '').toLowerCase();
+  if (tag === 'select') return JSON.stringify(Array.from(el.options).map(o => txt(o)).filter(t => t && !/^(select|select one|choose|--)/i.test(t)));
+  if ((type === 'radio' || type === 'checkbox') && el.name) {
+    const peers = Array.from(document.querySelectorAll('input[type="' + type + '"][name="' + CSS.escape(el.name) + '"]'));
+    return JSON.stringify(peers.map(x => labelFor(x)).filter(Boolean));
+  }
+  return JSON.stringify(null);
+}
+"""
+
 JS_LIST_OPTIONS = r"""
 () => {
   const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1; };

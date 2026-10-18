@@ -81,6 +81,7 @@ def _describe(kind: str, detail: dict) -> str:
         "question:declined": lambda: "question held; the job goes on hold",
         "question:timeout": lambda: "no answer within 15 minutes; holding",
         "answer:saved": lambda: f"saved the answer to {d.get('key', '?')}" + (f", released {d['released']} held job(s)" if d.get("released") else ""),
+        "answer:derived": lambda: f"worked out \"{d.get('question', '')[:80]}\" from your profile: {d.get('answer', '')[:60]}",
         "listing:added": lambda: f"added {d.get('company', '')}, {d.get('title', '')}".strip(", "),
         "listing:new": lambda: f"new listing: {d.get('company', '')} ({d.get('status', '')})".replace(" ()", ""),
         "browser:down": lambda: "Chrome is not answering; jobs go back to the queue",

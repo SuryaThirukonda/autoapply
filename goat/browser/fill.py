@@ -333,3 +333,55 @@ async def type_code_into(ex: Executor, refs: list[str], code: str) -> bool:
         vals.append(info.get("value", ""))
     joined = "".join(vals)
     return joined.replace(" ", "") == code or (len(refs) == 1 and vals[0] == code)
+
+
+async def peek_options(ex: Executor, ref: str) -> tuple[list[str], bytes | None]:
+    """Every choice a field offers, and a screenshot of it, without choosing anything. Native selects and
+    radio groups are read directly; a custom dropdown is opened, read (and photographed open, so the model
+    sees the whole list) and closed again with Escape."""
+    info = await ex.read_ref(ref)            # also scrolls the field into the middle of the view
+    if not info.get("found"):
+        return [], None
+
+    async def crop() -> bytes | None:
+        try:
+            y = int(info.get("y", 0))
+            top = max(0, y - 260)
+            return await ex.zoom_png(0, top, ex.vw, min(ex.vh - top, 620))
+        except Exception:
+            try:
+                return await ex.screenshot_png()
+            except Exception:
+                return None
+
+    native = await ex.eval(js.JS_FIELD_CHOICES, ref)
+    if isinstance(native, list) and native:
+        return [str(x) for x in native][:60], await crop()
+    # react-select exposes its options without opening
+    listed = await ex.eval(js.JS_REACT_SELECT, [ref, None])
+    if isinstance(listed, dict) and listed.get("list") and listed.get("options"):
+        return [str(x) for x in listed["options"]][:60], await crop()
+    # A plain text box has no list to open (a combobox input carries aria-expanded, so it is opened below).
+    plain_text = info.get("type") in ("text", "email", "tel", "number", "date", "") and info.get("expanded") is None
+    if info.get("tag") == "textarea" or (info.get("tag") == "input" and plain_text):
+        return [], await crop()
+    baseline = await ex.eval(js.JS_LIST_OPTIONS)
+    seen = {(o.get("text"), o.get("x"), o.get("y")) for o in (baseline if isinstance(baseline, list) else [])}
+    texts: list[str] = []
+    png = None
+    try:
+        await ex.page.keyboard.press("Escape")
+        await ex.click_ref(ref)
+        await asyncio.sleep(0.7)
+        opened = await ex.eval(js.JS_LIST_OPTIONS)
+        texts = [o["text"] for o in (opened if isinstance(opened, list) else []) if (o.get("text"), o.get("x"), o.get("y")) not in seen]
+        png = await crop()
+    except Exception:
+        pass
+    finally:
+        try:
+            await ex.page.keyboard.press("Escape")
+            await asyncio.sleep(0.2)
+        except Exception:
+            pass
+    return list(dict.fromkeys(texts))[:60], png or await crop()

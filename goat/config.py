@@ -52,6 +52,10 @@ class Models:
     classifier: str = _env("CLASSIFIER_MODEL", "gpt-6-luna")
     classifier_effort: str = _env("CLASSIFIER_EFFORT", "none")
     classifier_min_confidence: float = _env_float("CLASSIFIER_MIN_CONFIDENCE", 0.85)
+    # The knowledge-base resolver (same model): reasons about what a question means before matching it.
+    resolver_effort: str = _env("RESOLVER_EFFORT", "low")
+    resolver_min_confidence_key: float = _env_float("RESOLVER_MIN_CONFIDENCE_KEY", 0.75)
+    resolver_min_confidence_derived: float = _env_float("RESOLVER_MIN_CONFIDENCE_DERIVED", 0.85)
     service_tier: str = _env("OPENAI_SERVICE_TIER", "default")  # default | flex (auto-fallback)
     # Hard allowlist. Every request path calls `assert_allowed(model)` before sending anything.
     allowed: list = field(default_factory=lambda: [

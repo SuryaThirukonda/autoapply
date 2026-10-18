@@ -11,7 +11,7 @@ from openai import AsyncOpenAI
 
 from .. import db
 from ..config import SETTINGS, assert_allowed
-from .prompts import CLASSIFIER_INSTRUCTIONS
+from .prompts import CLASSIFIER_INSTRUCTIONS, RESOLVER_INSTRUCTIONS
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +23,20 @@ MAP_SCHEMA = {
         "reason": {"type": "string"},
     },
     "required": ["key", "confidence", "reason"],
+    "additionalProperties": False,
+}
+
+RESOLVE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "meaning": {"type": "string", "description": "what the question asks, in plain words"},
+        "verdict": {"type": "string", "enum": ["stored_key", "derived", "unknown"]},
+        "key": {"type": ["string", "null"], "description": "stored_key: the existing key"},
+        "answer": {"type": ["string", "null"], "description": "derived: the exact value; with choices, one choice verbatim"},
+        "evidence": {"type": "string", "description": "the knowledge-base line or profile sentence that settles it, quoted"},
+        "confidence": {"type": "number"},
+    },
+    "required": ["meaning", "verdict", "key", "answer", "evidence", "confidence"],
     "additionalProperties": False,
 }
 
@@ -59,7 +73,8 @@ class Classifier:
         self.client = client or AsyncOpenAI(api_key=SETTINGS.openai_api_key)
         self.model = SETTINGS.models.classifier
 
-    async def _call(self, job_id: int | None, prompt: str, schema: dict, name: str, instructions: str | None = None) -> dict | None:
+    async def _call(self, job_id: int | None, prompt, schema: dict, name: str, instructions: str | None = None,
+                    effort: str | None = None) -> dict | None:
         t0 = time.monotonic()
         try:
             kwargs = dict(
@@ -70,8 +85,9 @@ class Classifier:
                 safety_identifier=SETTINGS.safety_identifier(),
                 text={"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}},
             )
-            if SETTINGS.models.classifier_effort:
-                kwargs["reasoning"] = {"effort": SETTINGS.models.classifier_effort}
+            eff = effort if effort is not None else SETTINGS.models.classifier_effort
+            if eff:
+                kwargs["reasoning"] = {"effort": eff}
             resp = await self.client.responses.create(**kwargs)
             out = json.loads(resp.output_text)
             u = getattr(resp, "usage", None)
@@ -94,6 +110,27 @@ class Classifier:
         if not out or not out.get("key"):
             return None, 0.0
         return out["key"], float(out.get("confidence", 0))
+
+    async def resolve(self, job_id: int | None, question: str, options: list[str], *, meaning: str | None,
+                      field_type: str, knowledge: str, image_png: bytes | None) -> dict | None:
+        """Does the knowledge base answer this question? The model sees the question, every choice, the
+        agent's reading, a screenshot of the field and the whole knowledge base (first, so it caches).
+        Returns the RESOLVE_SCHEMA dict, or None when the call failed (the caller then asks Surya)."""
+        import base64
+        content = [
+            {"type": "input_text", "text": "KNOWLEDGE BASE\n" + knowledge},
+            {"type": "input_text", "text": (
+                f"QUESTION on the form: {question!r}\n"
+                f"Field type: {field_type or 'unknown'}\n"
+                f"Every answer choice the field offers: {options[:60] if options else '(free text, no choices)'}\n"
+                f"The filling agent's reading: {meaning or '(none given)'}\n"
+                "Decide: stored_key, derived or unknown.")},
+        ]
+        if image_png:
+            content.append({"type": "input_image", "image_url": "data:image/png;base64," + base64.b64encode(image_png).decode(),
+                            "detail": "auto"})
+        return await self._call(job_id, [{"role": "user", "content": content}], RESOLVE_SCHEMA, "resolve",
+                                instructions=RESOLVER_INSTRUCTIONS, effort=SETTINGS.models.resolver_effort)
 
     async def yes_no_from_profile(self, job_id: int | None, question: str, options: list[str], facts: str) -> tuple[str, str]:
         """Settle an employer/industry/affiliation yes/no question from the profile. Default No.

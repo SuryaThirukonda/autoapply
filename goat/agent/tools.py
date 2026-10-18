@@ -61,9 +61,11 @@ FUNCTION_TOOLS: list[dict] = [
      "parameters": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}},
                     "required": ["x", "y", "width", "height"], "additionalProperties": False}},
     {"type": "function", "name": "lookup_answer", "strict": True,
-     "description": "Map a form question onto a stored answer. Returns {key, answer, confidence} or a miss. Exact and alias matches first; a model mapping is used only above the confidence threshold.",
-     "parameters": {"type": "object", "properties": {"question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}},
-                    "required": ["question", "options"], "additionalProperties": False}},
+     "description": "Find the answer to a form question in Surya's knowledge base before ever asking him. Give the question as labelled, every answer choice you can see ([] if none are visible), your plain reading of what it asks, and the field's ref: the harness screenshots the field, opens a dropdown to read all its choices (then closes it), and a resolver matches the meaning (not just the wording) against his stored answers and profile. Returns {key, answer, via} to fill with that key, or a miss.",
+     "parameters": {"type": "object", "properties": {"question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}},
+                                                     "meaning": {"type": ["string", "null"], "description": "what the question asks, in your own words, from the page and the screenshot"},
+                                                     "ref": {"type": ["string", "null"], "description": "the field's ref, so the harness can see it and read its choices"}},
+                    "required": ["question", "options", "meaning", "ref"], "additionalProperties": False}},
     {"type": "function", "name": "ask_user", "strict": True,
      "description": "Send the page's unknown REQUIRED questions to Surya's phone right away (one message) and return immediately. Keep filling the rest of the page. Returns the keys to pass to await_answers.",
      "parameters": {"type": "object", "properties": {"questions": {"type": "array", "items": {"type": "object", "properties": {
@@ -125,6 +127,7 @@ class RunContext:
     posting_text: str = ""         # the posting page's text at open (pay figures, requirements)
     verify_link_tried: bool = False
     consent_page_key: str = ""
+    resolved: dict = field(default_factory=dict)   # norm(question) -> resolver outcome this run
 
     @property
     def job_id(self) -> int:
@@ -234,6 +237,13 @@ def is_free_response(question: str, options: list[str] | None, field_type: str =
     if (field_type or "").lower() in ("textarea", "richtext"):
         return True
     return bool(FREE_RESPONSE.search((question or "").strip()))
+
+
+# Questions the resolver may match to a STORED answer but never answer from the profile on its own.
+NO_DERIVE = re.compile(
+    r"(social security|\bssn\b|passport|driver'?s licen[cs]e|government[- ]issued|national id|date of birth|\bdob\b|birth ?date|"
+    r"criminal|convict|felony|misdemeanou?r|arrest|disciplin|reference|salary|compensation expectation|desired (pay|salary)|"
+    r"pay expectation|gender|\brace\b|ethnic|hispanic|latin[oax]|veteran|disabilit|sexual orientation|transgender|pronoun)", re.I)
 
 
 def _answer_rows_for_prompt(company: str, ats: str) -> list[tuple[str, str, str]]:
@@ -585,7 +595,69 @@ class ToolDispatcher:
         db.event(self.ctx.job_id, "answer:auto_affiliation", {"key": key, "answer": ans, "why": why[:200]})
         return {"key": key, "answer": ans, "confidence": 1.0, "via": "profile_default_no", "note": f"answered from the profile: {why[:120]}"}
 
-    async def t_lookup_answer(self, question: str, options: list[str]):
+    async def _kb_resolve(self, question: str, options: list[str], field_type: str = "", meaning: str | None = None,
+                          ref: str | None = None) -> tuple[dict | None, dict]:
+        """Ask the resolver whether the knowledge base answers this question. Returns (presented answer or
+        None, info). A derived answer (a fact the profile states plainly, with the quote) is saved to the
+        answer store under a new key, so the gate sees a sourced decision and the question never comes back."""
+        clf = self.ctx.classifier
+        nq = answers.norm(question)
+        if clf is None or not hasattr(clf, "resolve"):
+            return None, {}
+        if nq in self.ctx.resolved:
+            return self.ctx.resolved[nq]
+        company, portal = self.ctx.job.get("company", ""), self.ctx.portal
+        opts = [str(o) for o in (options or [])]
+        png = None
+        if ref:
+            try:
+                seen, png = await fill.peek_options(self.ctx.ex, ref)
+                opts = list(dict.fromkeys(opts + [s for s in seen if s]))
+            except Exception as e:
+                log.debug("peek_options failed: %s", e)
+        if png is None:
+            try:
+                png = await self.ctx.ex.screenshot_png()
+            except Exception:
+                png = None
+        from .knowledge import knowledge_text
+        out = await clf.resolve(self.ctx.job_id, question, opts, meaning=meaning, field_type=field_type,
+                                knowledge=knowledge_text(company, portal), image_png=png)
+        info = {"meaning": (out or {}).get("meaning"), "choices": opts}
+        result: tuple[dict | None, dict] = (None, info)
+        if out:
+            verdict, conf = out.get("verdict"), float(out.get("confidence") or 0)
+            evidence = str(out.get("evidence") or "").strip()
+            if verdict == "stored_key" and out.get("key") and conf >= SETTINGS.models.resolver_min_confidence_key:
+                a = answers.get(str(out["key"]), company, portal)
+                if a is not None and a.has_value:
+                    answers.record_classifier_alias(question, a.key, conf)
+                    pres = self._present(a, via="resolver", confidence=conf)
+                    pres.update({"meaning": out.get("meaning"), "choices": opts})
+                    result = (pres, info)
+            elif (verdict == "derived" and out.get("answer") and evidence and not NO_DERIVE.search(question)
+                  and conf >= SETTINGS.models.resolver_min_confidence_derived):
+                val = str(out["answer"]).strip()
+                if opts:
+                    val = next((o for o in opts if answers.norm(o) == answers.norm(val)), "")
+                key = answers.key_from_question(question)
+                existing = answers.get(key, company, portal)
+                if val and not (existing is not None and existing.scope == "company"):
+                    answers.save_answer(key, val, answer_type="choice" if opts else "text", source="derived",
+                                        source_ref=f"job:{self.ctx.job_id}",
+                                        note=f"{str(out.get('meaning') or '')[:120]} | evidence: {evidence[:240]}",
+                                        aliases=[question])
+                    db.event(self.ctx.job_id, "answer:derived", {"key": key, "question": question[:200], "answer": val[:200],
+                                                                 "evidence": evidence[:300], "confidence": conf})
+                    a = answers.get(key, company, portal)
+                    if a is not None:
+                        pres = self._present(a, via="derived", confidence=conf)
+                        pres.update({"meaning": out.get("meaning"), "evidence": evidence[:300], "choices": opts})
+                        result = (pres, info)
+        self.ctx.resolved[nq] = result
+        return result
+
+    async def t_lookup_answer(self, question: str, options: list[str], meaning: str | None = None, ref: str | None = None):
         a = answers.lookup(question, self.ctx.job.get("company", ""), self.ctx.portal)
         if a is not None and a.has_value:
             return self._present(a), None
@@ -601,6 +673,16 @@ class ToolDispatcher:
                 return out, None
         if is_affiliation_question(question, options):
             return await self._settle_affiliation(question, options), None
+        if is_free_response(question, options):
+            return {"miss": True, "hint": "free-response: draft it yourself from the PROFILE under the drafting rules, guardcheck it, "
+                                          "and fill it with source 'generated'; Surya is never asked to write prose"}, None
+        if self.ctx.classifier is not None and hasattr(self.ctx.classifier, "resolve"):
+            pres, info = await self._kb_resolve(question, options, "", meaning, ref)
+            if pres is not None:
+                return pres, None
+            return {"miss": True, "meaning": info.get("meaning"), "choices": info.get("choices"),
+                    "hint": "the knowledge base does not settle this; if the field is required call ask_user (with these choices), "
+                            "if optional leave it blank"}, None
         if self.ctx.classifier is not None:
             con = db.connect()
             keys = [(r["key"], str(r["answer"])) for r in con.execute(
@@ -635,6 +717,13 @@ class ToolDispatcher:
             if is_affiliation_question(text, opts):
                 auto.append(await self._settle_affiliation(text, opts))
                 continue
+            # The knowledge base first (the resolver result from lookup_answer is reused, not recomputed).
+            pres, info = await self._kb_resolve(text, opts, ftype, None, q.get("ref"))
+            if pres is not None:
+                auto.append(pres)
+                continue
+            if info.get("choices") and not opts:
+                opts = info["choices"]       # Surya gets the real choices with the question
             key = answers.key_from_question(text)
             qs.append({"key": key, "question": text, "options": opts, "field_type": ftype, "ref": q.get("ref")})
         if not qs:
