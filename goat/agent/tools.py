@@ -575,18 +575,42 @@ class ToolDispatcher:
 
     async def t_go_to_step(self, step: str):
         import asyncio
+        want = step.strip().lower()
+
+        async def current_step() -> str:
+            text = await self.ctx.ex.page_text(4000)
+            m = re.search(r"current step \d+ of \d+\s*\n\s*([^\n]+)", text, re.I)
+            return (m.group(1).strip().lower() if m else "")
+
+        if (await current_step()).startswith(want):
+            return {"status": "already_there", "step": step}, None
+        # 1. the rail label, when the tenant makes it clickable
         pos = await self.ctx.ex.eval(self.JS_RAIL_STEP, step)
-        if not (isinstance(pos, dict) and pos.get("ok")):
-            return {"error": f"no rail step named {step!r} is visible; use `click` on the Back button repeatedly, or the computer tool on the rail"}, None
-        before = self.ctx.ex.url
-        await self.ctx.ex.click_xy(int(pos["x"]), int(pos["y"]))
-        await asyncio.sleep(1.5)
+        if isinstance(pos, dict) and pos.get("ok"):
+            await self.ctx.ex.click_xy(int(pos["x"]), int(pos["y"]))
+            await asyncio.sleep(1.5)
+        # 2. otherwise walk back one page at a time with the Back button (never Save and Continue: that moves forward)
+        for _ in range(7):
+            if (await current_step()).startswith(want):
+                break
+            snap = await snapmod.take(self.ctx.ex)
+            back = next((it for it in snap.items if (it.get("label") or "").strip().lower() == "back" and it.get("tag") == "button"), None)
+            if back is None:
+                break
+            try:
+                await self.ctx.ex.click_ref(back["ref"])
+            except Exception:
+                break
+            await asyncio.sleep(1.5)
         self.ctx.budget.step()
         snap = await snapmod.take(self.ctx.ex)
         self.ctx.last_snapshot = snap
-        on_it = any(step.lower() in (h or "").lower() for h in snap.headings[:4]) or step.lower() in (await self.ctx.ex.page_text(3000)).lower()[:1500]
-        db.event(self.ctx.job_id, "nav:step", {"step": step, "ok": on_it})
-        return {"status": "moved" if on_it else "clicked", "headings": snap.headings[:5], "note": "snapshot taken; fill the section, then Save and Continue forward through each step to Review"}, None
+        now = await current_step()
+        ok = now.startswith(want)
+        db.event(self.ctx.job_id, "nav:step", {"step": step, "ok": ok, "current": now[:60]})
+        if not ok:
+            return {"status": "not_reached", "current_step": now, "hint": "use the Back button yourself, one page at a time, reading the 'current step' line after each click"}, None
+        return {"status": "moved", "current_step": now, "note": "snapshot taken; fill the section, then Save and Continue forward through each step to Review"}, None
 
     async def t_tabs(self, action: str, index: int | None = None, url: str | None = None):
         ex = self.ctx.ex
