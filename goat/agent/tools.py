@@ -437,7 +437,14 @@ class ToolDispatcher:
                     results.append({"ref": f["ref"], "status": "failed",
                                     "error": f"the stored answer is Yes but this option reads '{opt_label[:50]}' (negated); pick the option whose label matches the answer, or leave it unchecked"})
                     continue
-            plan.append({"ref": f["ref"], "value": val, "_src": src, "_label": f.get("label", "")})
+            # A capped box (maxlength or a "Maximum N characters" hint) silently cuts longer text: refuse it.
+            cap = int(item.get("max_chars") or 0) if item and not is_choice else 0
+            if cap and len(str(val)) > cap:
+                results.append({"ref": f["ref"], "status": "failed",
+                                "error": f"too long: {len(str(val))} characters, and this box allows {cap}. Shorten it to at most {cap} "
+                                         "characters (keep the facts; guardcheck it again), then fill it again"})
+                continue
+            plan.append({"ref": f["ref"], "value": val, "_src": src, "_label": f.get("label", ""), "_text": not is_choice})
         if plan:
             res = await fill.fill_batch(self.ctx.ex, [{"ref": p["ref"], "value": p["value"]} for p in plan])
             by = {r.ref: r for r in res}

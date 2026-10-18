@@ -56,6 +56,8 @@ def _fmt_item(i: dict) -> str:
         flags.append("disabled")
     if not i.get("inview", True):
         flags.append("offscreen")
+    if i.get("max_chars"):
+        flags.append(f"max {i['max_chars']} chars")
     fl = (" " + " ".join(flags)) if flags else ""
     if tag == "input" and typ == "checkbox":
         return f'[{i["ref"]}] checkbox "{label}"{fl} [{"x" if i.get("checked") else " "}] {pos}'

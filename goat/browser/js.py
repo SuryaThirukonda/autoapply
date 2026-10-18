@@ -101,6 +101,20 @@ JS_SNAPSHOT = r"""
       item.disabled = !!(el.disabled || el.getAttribute('aria-disabled') === 'true');
       item.invalid = el.getAttribute('aria-invalid') === 'true';
       item.placeholder = el.getAttribute('placeholder') || '';
+      // Character caps (Greenhouse short answers 255, SuccessFactors 200): the maxlength attribute, else a hint
+      // near the field ("Maximum 500 characters", "0 / 255").
+      if ((tag === 'input' && /^(text|email|url|search|)$/.test(type)) || tag === 'textarea' || el.isContentEditable) {
+        let mx = (typeof el.maxLength === 'number' && el.maxLength > 0 && el.maxLength < 100000) ? el.maxLength : 0;
+        if (!mx) {
+          const ff = el.closest('[data-automation-id^="formField"], .field, .form-group, .application-field, [class*="field" i], fieldset') || el.parentElement;
+          const ht = ff ? txt(ff).slice(0, 600) : '';
+          const m = ht.match(/(?:max(?:imum)?(?:\s+of)?|limit(?:ed)?\s+to|up\s+to|no\s+more\s+than)\s*(\d{2,5})\s*(?:characters|chars)\b/i)
+                 || ht.match(/(?:^|\D)(\d{2,5})\s*(?:characters|chars)\s*(?:max(?:imum)?|limit|or\s+(?:less|fewer))\b/i)
+                 || ht.match(/(?:^|\D)\d{1,5}\s*\/\s*(\d{2,5})\s*(?:characters|chars)?\s*$/i);
+          if (m) mx = parseInt(m[1], 10);
+        }
+        if (mx) item.max_chars = mx;
+      }
       if (tag === 'input' || tag === 'textarea') {
         if (type === 'password') item.value = el.value ? '(set)' : '';
         else if (isFile) {
@@ -488,6 +502,10 @@ JS_FILL_BATCH = r"""
         if (type === 'password') { res.error = 'password fields are filled by the credentials helper'; out.push(res); continue; }
         setNative(el, String(f.value));
         res.readback = (el.value || '').slice(0, 300); res.ok = (el.value || '') === String(f.value) || (type === 'number' && Number(el.value) === Number(f.value));
+        const kept = (el.value || '').length, sent = String(f.value).length;
+        if (!res.ok && kept > 0 && kept < sent && String(f.value).startsWith(el.value || '')) {
+          res.error = 'the box kept only ' + kept + ' of ' + sent + ' characters (a length cap); shorten the text to fit and fill it again';
+        }
       } else if (el.getAttribute('contenteditable') === 'true') {
         el.focus(); document.execCommand('selectAll', false, null); document.execCommand('insertText', false, String(f.value));
         res.readback = txt(el).slice(0, 300); res.ok = res.readback.replace(/\s+/g, ' ') === String(f.value).replace(/\s+/g, ' ').trim();
