@@ -38,6 +38,23 @@ PRICES = {
 }
 
 
+def echo_item(o: Any) -> dict:
+    """A response output item as an input item for the next request. A computer_call must carry exactly
+    one of `action` / `actions` (the API rejects both or neither, which ended a T-Mobile run): the batch
+    wins when present, then the single action; a bare call with neither was the model looking at the
+    screen, so it is echoed as a screenshot action."""
+    d = o.model_dump(exclude_none=True) if hasattr(o, "model_dump") else dict(o)
+    if d.get("type") == "computer_call":
+        if d.get("actions"):
+            d.pop("action", None)
+        elif d.get("action"):
+            d.pop("actions", None)
+        else:
+            d.pop("actions", None)
+            d["action"] = {"type": "screenshot"}
+    return d
+
+
 def estimate_cost(model: str, tokens_in: int, cached: int, out: int) -> float:
     base = next((v for k, v in PRICES.items() if model.startswith(k)), (2.0, 0.1, 10.0))
     return ((tokens_in - cached) * base[0] + cached * base[1] + out * base[2]) / 1e6
@@ -198,7 +215,7 @@ class AgentLoop:
                 records.save_json(ctx.job_id, f"request_failed_{int(time.time())}.json", {"items_tail": self.items[-6:], "error": str(e)})
                 return LoopResult("error", f"model request failed: {str(e)[:200]}")
             self.steps += 1
-            self.items += [o.model_dump(exclude_none=True) if hasattr(o, "model_dump") else o for o in resp.output]
+            self.items += [echo_item(o) for o in resp.output]
             produced_tool = False
             step_failed = False
             for item in resp.output:
