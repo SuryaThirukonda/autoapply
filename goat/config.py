@@ -79,6 +79,7 @@ class Budgets:
     """Per-job budgets. A spent budget ends the run with a named reason; a retry moves up a tier."""
     max_failed_submits: int = _env_int("BUDGET_FAILED_SUBMITS", 2)
     max_steps: int = _env_int("BUDGET_STEPS", 0)          # 0 = no cap (Surya, 2026-10-18: never cut a run short on turns)
+    max_pages: int = _env_int("BUDGET_PAGES", 0)          # 0 = no cap: a resumed Workday application re-walks every page
     wall_s_default: int = _env_int("BUDGET_WALL_S", 45 * 60)
     wall_s_by_portal: dict = field(default_factory=lambda: {
         "greenhouse": _env_int("BUDGET_WALL_S_GREENHOUSE", 15 * 60),

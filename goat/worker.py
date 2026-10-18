@@ -312,8 +312,8 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             if res.outcome == "page_done":
                 note = f"You are now on page {ctx.page_no}. Call snapshot and fill this page."
                 loop = AgentLoop(ctx, client=loop.client, advisor=loop.advisor)  # fresh conversation per page
-                if pages > 12:
-                    raise BudgetExceeded("budget_spent: more than 12 form pages")
+                if SETTINGS.budgets.max_pages and pages > SETTINGS.budgets.max_pages:
+                    raise BudgetExceeded(f"budget_spent: more than {SETTINGS.budgets.max_pages} form pages")
                 continue
             if res.outcome == "submitted":
                 app_id = ledger.record_application(job["listing_id"], job["company"], job["title"], job["url"], "goat", signal=res.reason)
