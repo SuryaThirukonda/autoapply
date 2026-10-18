@@ -100,8 +100,13 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     if (portal or "").lower() == "workday" and re.search(r"\bReview\b", page_text[:3000]):
         gaps = [sec for sec in ("Work Experience", "Field of Study") if re.search(sec + r"\s*\n\s*No Response", page_text)]
         if gaps:
-            return GateResult("blocked", [f"the Review page shows '{g}: No Response': call go_to_step('My Experience'), fill it from the experience.* keys, "
+            return GateResult("blocked", [f"the Review page shows '{g}: No Response': call go_to_step('My Experience'), then fill_sections, "
                                           "then Save and Continue forward to Review" for g in gaps])
+        from .adapters.workday_sections import review_gaps
+        missing = review_gaps(page_text, job.get("company", ""))
+        if missing:
+            return GateResult("blocked", [f"the Review page does not show {m}: call go_to_step('My Experience'), then fill_sections, then Save and Continue forward to Review"
+                                          for m in missing[:4]])
     why = why_blocked(snapshot.errors)
     reasons += why
 

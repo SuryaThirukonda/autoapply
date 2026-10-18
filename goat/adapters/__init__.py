@@ -460,16 +460,44 @@ class Workday(Adapter):
              "dropdowns: use choose (State -> Texas; Phone Device Type -> Mobile; Country -> United States of America; Field of Study -> "
              "Computer Science; How Did You Hear -> Job Board then LinkedIn). The school is 'Texas A & M University'. Date widgets: use choose "
              "or the calendar; a typed year may not commit. 'Enter website' marked for robots only is a honeypot: leave it empty. "
-             "My Experience: Work Experience is empty until you click its Add button (Job Title, Company, Location, 'I currently work here', From, To, Role Description), "
-             "one entry per experience.work.N key set in order, Add Another between entries; Skills is a 'Type to Add Skills' multi-select "
-             "(experience.skills_list, one choose per skill); Websites has its own Add (experience.websites). A resumed application opens at "
-             "its last step: use the rail at the top to go back to My Experience and finish it before Review. "
+             "My Experience: the harness fills Work Experience (every experience.work.N entry with its full description) and Websites itself when the page "
+             "opens, and again whenever you call fill_sections; read its report, then do only what it lists as failed plus Education (school prompt, "
+             "degree, field of study, dates) and the résumé. Never add a work entry by hand while fill_sections has not been called on this page. "
+             "A resumed application opens at its last step: go_to_step('My Experience'), call fill_sections, then Save and Continue forward to Review. "
              "Date fields (graduation, employment dates) are three spinbuttons that ignore ordinary typing: always use "
              "`set_date` (graduation = education.graduation_mmddyyyy, i.e. 05/15/2028). Revio IS a current role: tick "
              "'I currently work here' and leave its end date blank.")
 
     def is_review_page(self, snap: Snapshot) -> bool:
         return any(re.search(r"\breview\b", h, re.I) for h in snap.headings) or "review" in snap.url.lower()
+
+    ENTRY_LABEL = re.compile(r"^(job title|company|location|month|year|day|calendar|role description|description|url|website|"
+                             r"i currently work here|delete|add( another)?)\b", re.I)
+
+    async def prefill(self, ex, snap: Snapshot, job: dict, page_no: int) -> PrefillResult:
+        """My Experience: the deterministic section filler adds every work entry and website first; the generic
+        pass then skips the entry fields (its 'Location' rule would otherwise type his home city into a job's location)."""
+        from .workday_sections import WorkdaySections, is_experience_page
+        if is_experience_page("", snap.headings) or any(re.match(r"^(job title|company)\*?$", i.get("label") or "", re.I) for i in snap.items):
+            rep = await WorkdaySections(ex, job, page_no).run()
+            from .. import db
+            db.event(job["id"], "adapter:sections", rep.summary())
+            fresh = await _resnap(ex)
+            snap = Snapshot(url=fresh.url, title=fresh.title, headings=fresh.headings,
+                            items=[i for i in fresh.items if not self.ENTRY_LABEL.match((i.get("label") or "").strip())],
+                            groups=[g for g in fresh.groups if "currently work here" not in (g.get("label") or "").lower()],
+                            errors=fresh.errors, challenge=fresh.challenge)
+            res = await super().prefill(ex, snap, job, page_no)
+            res.set += len(rep.added) + len(rep.updated)
+            res.failed += len(rep.failed)
+            (res.details or []).append({"label": "My Experience sections", "ok": not rep.failed, "sections": rep.summary()})
+            return res
+        return await super().prefill(ex, snap, job, page_no)
+
+
+async def _resnap(ex) -> Snapshot:
+    from ..browser import snapshot as snapmod
+    return await snapmod.take(ex)
 
 
 class Oracle(Adapter):

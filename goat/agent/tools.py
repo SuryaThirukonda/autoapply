@@ -101,6 +101,9 @@ FUNCTION_TOOLS: list[dict] = [
     {"type": "function", "name": "go_to_step", "strict": True,
      "description": "Workday only: jump to a completed step of the application by its name in the progress rail at the top ('My Information', 'My Experience', 'Application Questions 1 of 2', 'Voluntary Disclosures', 'Review'). Use it from the Review page when a section shows 'No Response' that you must fill, then Save and Continue forward again.",
      "parameters": {"type": "object", "properties": {"step": {"type": "string"}}, "required": ["step"], "additionalProperties": False}},
+    {"type": "function", "name": "fill_sections", "strict": True,
+     "description": "Workday My Experience page: deterministically add every stored work-history entry (title, company, location, dates, current flag, full role description) and every website, Add/Add Another included, skipping entries already present. Returns added / updated / failed / skipped. Call it before touching Work Experience or Websites by hand; fix only what it reports failed.",
+     "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
     {"type": "function", "name": "tabs", "strict": True,
      "description": "This application's browser tabs. A click that opens a new tab on the portal moves you into it automatically; use this to see them or move between them. Actions: 'list'; 'switch' (index); 'close' (index, never the last tab); 'back' (browser Back in this tab); 'reload'; 'goto' (url, only hosts of this application or its portal).",
      "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["list", "switch", "close", "back", "reload", "goto"]},
@@ -577,6 +580,17 @@ class ToolDispatcher:
       const r = click.getBoundingClientRect();
       return JSON.stringify({ ok: true, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), tag: click.tagName });
     }"""
+
+    async def t_fill_sections(self):
+        from ..adapters.workday_sections import WorkdaySections
+        rep = await WorkdaySections(self.ctx.ex, self.ctx.job, self.ctx.page_no).run()
+        db.event(self.ctx.job_id, "adapter:sections", {**rep.summary(), "by": "model"})
+        out = rep.summary()
+        if not rep.added and not rep.updated and not rep.failed:
+            out["note"] = "no Work Experience / Websites section found on this page (or nothing stored applies); take a snapshot"
+        else:
+            out["note"] = "take a snapshot: the refs changed. Finish only the failed items, then Education and the résumé."
+        return out, None
 
     async def t_go_to_step(self, step: str):
         import asyncio
@@ -1162,6 +1176,12 @@ class ToolDispatcher:
                 db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "verified": True})
                 return {"error": "not parked: opened the account verification link from this portal's email. Sign in again "
                                  "(credentials mode 'login_universal', then click Sign In) and continue the application."}, None
+        if low.startswith("needs_you") and re.search(r"work[- ]?(history|experience)|entr(y|ies)|website|skills?", low) \
+                and self.ctx.portal == "workday" and self.ctx.control_failures.get("sections:bounce", 0) < 1:
+            self.ctx.control_failures["sections:bounce"] = 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "sections": True})
+            return {"error": "not parked: the harness adds the work-history entries and websites itself. Call fill_sections on the My Experience "
+                             "page (go_to_step('My Experience') first if you are elsewhere), finish what it reports failed, then continue."}, None
         pending = [k for k in self.ctx.asked_keys
                    if not ((a := answers.get(k, self.ctx.job.get("company", ""), self.ctx.portal)) and a.has_value)]
         if pending and self.ctx.park_attempts < 2 and not low.startswith(

@@ -311,6 +311,19 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             res: LoopResult = await loop.run_page(history, note)
             if res.outcome == "page_done":
                 note = f"You are now on page {ctx.page_no}. Call snapshot and fill this page."
+                # Deterministic prefill on every page, not only the first (Workday's My Experience is page 2 or later).
+                try:
+                    await ex.settle(quiet_ms=500)
+                    snap = await snapmod.take(ex)
+                    ctx.last_snapshot = snap
+                    pre = await adapter.prefill(ex, snap, client_job, ctx.page_no)
+                    if client_job.get("resume_file"):
+                        ctx.resume_file = client_job["resume_file"]
+                    db.event(job_id, "adapter:prefill", {"page": ctx.page_no, "set": pre.set, "failed": pre.failed, "skipped_self_id": pre.skipped_self_id, "details": pre.details})
+                    if pre.set or pre.failed:
+                        note += f" The harness already set {pre.set} field(s) here" + (f" and failed on {pre.failed}" if pre.failed else "") + "; verify them in the outline."
+                except Exception as e:  # noqa: BLE001 - prefill is best effort; the model fills what it missed
+                    db.event(job_id, "adapter:prefill:error", {"page": ctx.page_no, "error": str(e)[:300]})
                 loop = AgentLoop(ctx, client=loop.client, advisor=loop.advisor)  # fresh conversation per page
                 if SETTINGS.budgets.max_pages and pages > SETTINGS.budgets.max_pages:
                     raise BudgetExceeded(f"budget_spent: more than {SETTINGS.budgets.max_pages} form pages")
