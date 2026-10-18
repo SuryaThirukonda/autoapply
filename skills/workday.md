@@ -39,11 +39,8 @@ Location from `experience.work.N.*`, `set_date` From (and To unless `.current` i
 here"), the Role Description from `.description`; then "Add Another" for the next entry, in `experience.work.order`.
 Education: school via `education.school`; on tenants whose note says "press Enter to confirm your entry" (Nissan)
 `choose` types the name and presses Enter itself when no list match appears. Degree picker, Field of Study (a search
-prompt: `choose` with education.major), GPA. Skills: "Type to Add Skills" is a multi-select; `choose` each skill from `experience.skills_list`, one call per skill. After the
-first chip the outline shows the field as "Skills (selected items; choose on this control adds another)": keep
-calling `choose` on that control (its search box sits inside the chip list). Portal wordings such as "Python
-(Programming Language)" are the right picks.
-Websites: Add, then one URL per entry from `experience.websites`. The résumé upload sits on the same page. A resumed
+prompt: `choose` with education.major), GPA. Skills: leave "Type to Add Skills" EMPTY on Workday for now: its search prompt has taken whole result lists at once (29
+Java entries on Nissan); the résumé carries the skills. Websites: Add, then one URL per entry from `experience.websites`. The résumé upload sits on the same page. A resumed
 application opens at its last step: `go_to_step("My Experience")` jumps there through the rail (the outline does not
 list the rail), fill, then Save and Continue forward through every step to Review. The gate refuses a Review that still
 shows "Work Experience: No Response".
