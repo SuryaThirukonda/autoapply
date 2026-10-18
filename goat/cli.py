@@ -41,6 +41,10 @@ def cmd_show(a) -> None:
     if not j:
         print("no such job"); return
     _print(dict(j))
+    from .judge import latest
+    v = latest(a.job)
+    if v:
+        print(f"judge: {v['verdict']} ({v['bucket']}) {v['notes'][:200]}")
     for e in con.execute("SELECT ts, kind, detail, model, tokens_in, tokens_out, cost_usd FROM events WHERE job_id=? ORDER BY n DESC LIMIT ?", (a.job, a.events)):
         print(f"{e['ts']} {e['kind']:<24} {(e['detail'] or '')[:160]} {e['model'] or ''} {e['tokens_in'] or ''}/{e['tokens_out'] or ''} ${e['cost_usd'] or 0:.4f}")
 

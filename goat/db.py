@@ -130,6 +130,11 @@ CREATE TABLE IF NOT EXISTS decisions (
 );
 CREATE INDEX IF NOT EXISTS decisions_job ON decisions(job_id);
 
+CREATE TABLE IF NOT EXISTS judgements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id INTEGER, verdict TEXT, bucket TEXT, notes TEXT, model TEXT, ts INTEGER
+);
+CREATE INDEX IF NOT EXISTS judgements_job ON judgements(job_id);
 CREATE TABLE IF NOT EXISTS proposals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT,                            -- alias | field_map | code

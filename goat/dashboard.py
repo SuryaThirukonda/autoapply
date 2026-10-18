@@ -215,7 +215,9 @@ def api_job(job_id: int) -> dict | None:
     rec = SETTINGS.records_dir / str(job_id)
     files = sorted(p.name for p in rec.iterdir()) if rec.exists() else []
     cost = sum((e.get("cost_usd") or 0) for e in events)
+    judgements = _rows("SELECT verdict, bucket, notes, model, ts FROM judgements WHERE job_id=? ORDER BY id DESC LIMIT 5", (job_id,))
     return {"job": job, "events": events, "decisions": decisions, "questions": questions, "files": files, "cost_usd": round(cost, 4),
+            "judgements": judgements,
             "novnc_url": SETTINGS.human.novnc_url,
             "hermes_history": _json_detail(_rows("SELECT ts, kind, detail FROM events WHERE job_id IS NULL AND kind LIKE 'hermes:%' AND detail LIKE ? ORDER BY n DESC LIMIT 40",
                                                  (f'%{job["listing_id"]}%',)))}

@@ -76,6 +76,33 @@ def attempt_history(job_id: int, listing_id: str) -> list[str]:
     return list(reversed(out))
 
 
+async def after_hold(job: dict, ctx, ex, reason: str) -> dict | None:
+    """What follows a hold: a screenshot and a notification for ordinary holds; for a shadow draft (the gate
+    passed, no click) the judge's verdict instead, stored with the job and logged as job:judged."""
+    from .judge import Judge, should_judge
+    job_id = job["id"]
+    if not should_judge(reason):
+        try:
+            png = await ex.screenshot_png()
+            records.save_screenshot(job_id, png, "hold")
+            await notify(f"Held: {job['company']} — {job['title']}\n{reason[:300]}", png)
+        except Exception:
+            pass
+        return None
+    verdict = None
+    try:
+        png = await ex.screenshot_png()
+        records.save_screenshot(job_id, png, "shadow")
+        text = await ex.page_text(20000)
+        verdict = await Judge(client=getattr(getattr(ctx, "classifier", None), "client", None)).judge(
+            job_id, records.decisions(job_id), png, text, getattr(ctx, "gate_result", None))
+    except Exception as e:  # noqa: BLE001 - the hold is already recorded; the judge is extra evidence
+        db.event(job_id, "judge:error", {"error": str(e)[:300]})
+    if verdict:
+        db.event(job_id, "job:judged", {"verdict": verdict["verdict"], "bucket": verdict["bucket"], "notes": verdict["notes"][:500], "fields": verdict.get("fields", [])[:12]})
+    return verdict
+
+
 async def readback_after_page(ctx, snap, job_id: int, page: int) -> list[str]:
     """Advisory read-back after a page change: the decisions whose controls are still on screen are compared
     with the live DOM (no scrolling) and the mismatches logged as gate:readback for the model and the audit."""
@@ -389,13 +416,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
         else:
             set_status(job_id, states.HOLD, reason=reason, blocked_on=p.blocked_on, tab_target_id=tab_id)
             outcome = RunOutcome(states.HOLD, reason)
-            if not reason.startswith("shadow_mode"):
-                try:
-                    png = await ex.screenshot_png()
-                    records.save_screenshot(job_id, png, "hold")
-                    await notify(f"Held: {job['company']} — {job['title']}\n{reason[:300]}", png)
-                except Exception:
-                    pass
+            await after_hold(job, ctx, ex, reason)
     except BudgetExceeded as b:
         with db.tx() as con:
             con.execute("UPDATE jobs SET model_tier=model_tier+1 WHERE id=?", (job_id,))
