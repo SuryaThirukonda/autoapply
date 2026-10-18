@@ -328,6 +328,30 @@ def _fill(host: str, item_id: str, email: str | None,
     _touch(host)
 
 
+def env_login_active() -> bool:
+    """True when the one application password from the environment (PASSWORD_BIT) is the credential source:
+    it is set, and the Bitwarden vault is not unlocked (signed out, locked, or no CLI at all)."""
+    if not SETTINGS.creds.universal_password:
+        return False
+    try:
+        return status() != "unlocked"
+    except Exception:
+        return True
+
+
+def _fill_from_env(host: str, email: str | None, type_email: Callable[[str], None] | None,
+                   type_password: Callable[[str], None] | None) -> str:
+    """Type APPLICATION_EMAIL + PASSWORD_BIT (one login on every portal). The value never leaves this function
+    except through the typing callback."""
+    if type_email is not None:
+        type_email(email or SETTINGS.creds.application_email)
+    if type_password is not None:
+        type_password(SETTINGS.creds.universal_password)
+    _touch(host)
+    log.info("creds: filled %s from the environment login (Bitwarden vault not unlocked)", host)
+    return "filled_universal"
+
+
 def fill_credentials(
     host: str,
     email: str,
@@ -342,6 +366,8 @@ def fill_credentials(
     if mode not in ("create", "login", "login_universal"):
         raise ValueError(f"mode must be 'create', 'login' or 'login_universal', not {mode!r}")
     host = host.lower()
+    if env_login_active():
+        return _fill_from_env(host, email, type_email, type_password)
     if mode == "login_universal":
         # An account goat created on this tenant is recorded in the index with the password it was created
         # with: that is the truth for this host. Otherwise Surya's one universal login for the ATS family.
@@ -393,6 +419,8 @@ def fill_confirm_password(host: str, type_password: Callable[[str], None]) -> st
     """Type the password again into a "confirm password" box. Returns "filled",
     "filled_fallback" or "exists_unknown"."""
     host = host.lower()
+    if env_login_active():
+        return _fill_from_env(host, None, None, type_password)
     row = lookup(host)
     if row is not None:
         _fill(host, row["bw_item_id"], None, None, type_password)

@@ -559,7 +559,13 @@ JS_READ_REF = r"""
   const c = el.closest('[class*="__control"], [class*="control"], [class*="Control"], [data-automation-id^="formField"], .field, .form-group');
   if (c) shown = txt(c).slice(0, 300);
   el.scrollIntoView({ block: 'center', inline: 'nearest' });
-  const r2 = el.getBoundingClientRect();
+  let r2 = el.getBoundingClientRect();
+  // A react-select search input can be a few pixels wide (Greenhouse job boards: 3.5 px): a click there
+  // misses the widget, so aim at its control box instead.
+  if (r2.width < 8 && (el.getAttribute('role') === 'combobox' || /__input|select__input/i.test(el.className || ''))) {
+    const ctl = el.closest('[class*="__control"], [class*="control"], [class*="Control"]');
+    if (ctl) { const rc = ctl.getBoundingClientRect(); if (rc.width > 20 && rc.height > 10) r2 = rc; }
+  }
   return JSON.stringify({ found: true, tag, type, label: labelFor(el), value, shown, x: Math.round(r2.x + r2.width / 2), y: Math.round(r2.y + r2.height / 2), w: Math.round(r2.width), h: Math.round(r2.height),
     disabled: !!el.disabled, expanded: el.getAttribute('aria-expanded'), invalid: el.getAttribute('aria-invalid') === 'true' });
 }

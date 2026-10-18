@@ -193,6 +193,7 @@ AFFILIATION = re.compile(
     r"\bcompetitors?\b|subsidiar|parent company|former employee|current employee|independent contractor|consultant (for|to)|"
     r"\bindustry\b)", re.I)
 _YES = re.compile(r"^(yes|y|true)\b", re.I)
+SELECT_ALL = {"all", "all offered locations", "all offered", "all locations", "all of the above", "select all", "every location", "any"}
 _NO = re.compile(r"^(no|n|false|none)\b", re.I)
 FREE_RESPONSE = re.compile(
     r"^(why\b|describe|tell (us|me)|explain|share\b|what (interests|excites|motivates|makes|draws|attracts)|how (would|did|have|do) you|"
@@ -423,6 +424,10 @@ class ToolDispatcher:
                     # The stored text names this option ("Not Specified"), negated or not: only when the label
                     # starts with it, so "willing" never ticks "Not willing to relocate".
                     label_matched = any(lab.startswith(x) for x in [nv, *parts] if x)
+                elif item.get("type") == "checkbox" and parts and parts[0] in SELECT_ALL and not NEGATED.match((item.get("label") or "").strip()):
+                    # "All offered locations; ..." on a multi-select group: every box is ticked (Surya, 2026-10-18)
+                    val = "true"
+                    label_matched = True
                 elif item.get("type") == "checkbox" and parts and parts[0] in AFFIRMATIVE and not NEGATED.match((item.get("label") or "").strip()):
                     # "Yes; I agree; Accept" on a single consent checkbox: its first choice is a plain yes.
                     val = "true"

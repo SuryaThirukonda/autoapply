@@ -253,6 +253,18 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             await ex.settle()
             if not ex.policy.allowed(ex.url) or "login" in ex.url.lower():
                 await ex.goto(apply_url)   # expired session: re-open and re-fill from the store
+        # A wrapper page that embeds the Greenhouse form in an iframe (careerpuck for Lyft, company career
+        # sites): the outline cannot see into a cross-origin frame, so open the embedded form itself.
+        if portal == "greenhouse" and "greenhouse.io" not in (ex.url or "").lower():
+            try:
+                embedded = next((fr.url for fr in ex.page.frames if "greenhouse.io" in (fr.url or "").lower() and "job_app" in fr.url), None)
+            except Exception:
+                embedded = None
+            if embedded:
+                log.info("worker: job %s: opening the embedded Greenhouse form %s", job_id, embedded[:120])
+                apply_url = embedded
+                ex.policy = HostPolicy([job["url"], apply_url])
+                await ex.goto(apply_url)
         tab_id = await ex.target_id()
         with db.tx() as con:
             con.execute("UPDATE jobs SET apply_url=?, tab_target_id=? WHERE id=?", (apply_url, tab_id, job_id))

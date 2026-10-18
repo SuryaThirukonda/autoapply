@@ -159,6 +159,10 @@ class Creds:
     bw_clientsecret: str = _env("BW_CLIENTSECRET")
     bw_server: str = _env("BW_SERVER")  # e.g. https://vault.bitwarden.eu; empty = bw's default
     application_email: str = _env("APPLICATION_EMAIL", "")
+    # Surya's one application password, used for sign-in and sign-up on every portal whenever the Bitwarden
+    # vault is not unlocked (Surya, 2026-10-18: "bitwarden cli is signed out, use PASSWORD_BIT"). Typed by the
+    # harness only; never logged, never shown to the model.
+    universal_password: str = _env("PASSWORD_BIT", "")
     # Surya uses one login on every Workday tenant; this vault item holds it. Sign-in AND sign-up on
     # any myworkdayjobs tenant reuse it instead of generating a per-tenant password.
     universal_item: str = _env("BW_UNIVERSAL_ITEM", "boeing.wd1.myworkdayjobs.com")

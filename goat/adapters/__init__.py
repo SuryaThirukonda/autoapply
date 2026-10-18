@@ -408,6 +408,10 @@ class Greenhouse(Adapter):
             board = host.split(".")[-2] if host.count(".") >= 1 else host
             if host.startswith(("careers.", "jobs.", "www.")):
                 board = host.split(".")[1]
+            # Wrappers that carry the board token in the path: careerpuck (Lyft) /job-board/<board>/job/<id>
+            mb = re.search(r"/job-board/([^/]+)/", u.path)
+            if mb:
+                board = mb.group(1)
             return f"https://job-boards.greenhouse.io/embed/job_app?for={board}&token={q['gh_jid'][0]}"
         m = re.match(r"^/([^/]+)/jobs/(\d+)", u.path)
         if "greenhouse.io" in host and m and "/embed/" not in u.path:
