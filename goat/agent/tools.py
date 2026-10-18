@@ -201,10 +201,16 @@ AFFILIATION = re.compile(
     r"household member|immediate family|\bspouse\b|board member|\bofficers?\b|\bdirectors?\b|government official|public official|"
     r"conflict of interest|financial interest|\bown (stock|shares)|\bvendors?\b|\bsuppliers?\b|\bcustomers?\b|\bclients?\b|"
     r"\bcompetitors?\b|subsidiar|parent company|former employee|current employee|independent contractor|consultant (for|to)|"
-    r"\bindustry\b)", re.I)
+    r"\bindustry\b|close personal relation|domestic partner|significant other|\bkin\b|know anyone|acquaint|royal family|"
+    r"political (party|office)|candidate for (political )?office|government (entity|employee|official)|member of your (family|household))", re.I)
 _YES = re.compile(r"^(yes|y|true)\b", re.I)
 SELECT_ALL = {"all", "all offered locations", "all offered", "all locations", "all of the above", "select all", "every location", "any"}
 _NO = re.compile(r"^(no|n|false|none)\b", re.I)
+# A "No" in the portal's wording: what a default-No answer picks when the plain word is not offered.
+_NEGATIVE_OPTION = re.compile(r"^(no\b|n\b|false\b|none\b|not to my knowledge|not that i('m| am)? aware|not applicable|n/?a\b|"
+                              r"i (do not|don't) (know|have|believe)|i have (never|no)\b|i am not\b|neither\b)", re.I)
+# Questions about people / employers the profile may name: a hit on one of them sends the question to the model.
+_PROFILE_STOP = {"the", "and", "for", "with", "university", "department", "group", "inc", "llc", "corp", "company", "team", "club"}
 FREE_RESPONSE = re.compile(
     r"^(why\b|describe|tell (us|me)|explain|share\b|what (interests|excites|motivates|makes|draws|attracts)|how (would|did|have|do) you|"
     r"please (describe|explain|tell|share|provide a (brief|short))|give (us )?an example|walk (us|me) through|what is (a|one|the) "
@@ -221,10 +227,24 @@ def is_affiliation_question(question: str, options: list[str] | None) -> bool:
         return False
     if re.search(r"(if (yes|so)|please (explain|describe|list|provide)|who\b|which\b|name of|names of)", question, re.I) and not options:
         return False
+    if not options and FREE_RESPONSE.search(question or ""):
+        return False          # "Describe your relationship with the team" is prose, not a yes/no
     opts = [o.strip() for o in (options or []) if o and o.strip() and not re.match(r"^(select|choose|please select)", o.strip(), re.I)]
     if not opts:
         return True
-    return len(opts) <= 4 and any(_YES.match(o) for o in opts) and any(_NO.match(o) for o in opts)
+    return len(opts) <= 4 and any(_YES.match(o) for o in opts) and any(_NEGATIVE_OPTION.match(o) for o in opts)
+
+
+def default_no_choice(question: str, options: list[str] | None) -> str | None:
+    """The wording a default-No answer takes on this form: 'No' for a yes/no box, else the single negative
+    option offered ('Not to my knowledge' preferred), None when the form offers no negative wording."""
+    opts = [o.strip() for o in (options or []) if o and o.strip() and not re.match(r"^(select|choose|please select)", o.strip(), re.I)]
+    if not opts:
+        return "No"
+    negs = [o for o in opts if _NEGATIVE_OPTION.match(o)]
+    if not negs:
+        return None
+    return next((o for o in negs if "knowledge" in o.lower()), negs[0])
 
 
 def consent_question_key(question: str) -> str | None:
@@ -730,14 +750,26 @@ class ToolDispatcher:
         """Employer / industry / affiliation / relationship yes-no questions: answered from the profile,
         default No (Surya, 2026-10-15), saved so the decision is remembered and reviewable."""
         facts = profile.affiliations_brief()
-        if self.ctx.classifier is not None and facts:
+        choice = default_no_choice(question, options)
+        hits = profile.mentions(question)
+        used_model = False
+        if choice is not None and not hits:
+            # Deterministic (Surya's standing rule, 2026-10-18): no employer or person from his profile is named,
+            # so the answer is No in whatever wording the form offers, without a model call.
+            ans, why = choice, "default No (standing rule: the question names nobody from the profile)"
+        elif self.ctx.classifier is not None and facts:
+            used_model = True
             ans, why = await self.ctx.classifier.yes_no_from_profile(self.ctx.job_id, question, options, facts)
+            if ans == "No" and choice:
+                ans = choice
         else:
-            ans, why = "No", "default No"
+            ans, why = choice or "No", "default No"
         key = answers.key_from_question(question)
-        answers.save_answer(key, ans, answer_type="choice", source="default_no" if ans == "No" else "profile",
-                            note=f"auto from profile: {why[:150]}", aliases=[question])
-        db.event(self.ctx.job_id, "answer:auto_affiliation", {"key": key, "answer": ans, "why": why[:200]})
+        is_no = bool(_NEGATIVE_OPTION.match(ans))
+        stored = ans if ans == "No" or not is_no else f"{ans}; No"
+        answers.save_answer(key, stored, answer_type="choice_chain" if ";" in stored else "choice",
+                            source="default_no" if is_no else "profile", note=f"auto from profile: {why[:150]}", aliases=[question])
+        db.event(self.ctx.job_id, "answer:auto_affiliation", {"key": key, "answer": ans, "why": why[:200], "model": used_model, "mentions": hits[:4]})
         return {"key": key, "answer": ans, "confidence": 1.0, "via": "profile_default_no", "note": f"answered from the profile: {why[:120]}"}
 
     async def _kb_resolve(self, question: str, options: list[str], field_type: str = "", meaning: str | None = None,

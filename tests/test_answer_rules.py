@@ -179,7 +179,7 @@ async def test_affiliation_question_settles_no_and_is_remembered(store):
     d, _ = _dispatcher(job, classifier=clf)
     out, _ = await d.t_lookup_answer("Are you currently employed by a bank or credit union?", ["Yes", "No"])
     assert out["answer"] == "No" and out["via"] == "profile_default_no"
-    assert clf.calls and "Employment and affiliations" in clf.calls[0][1]
+    assert clf.calls == []          # deterministic since 2026-10-18: the question names nobody from the profile
     again = answers.lookup("Are you currently employed by a bank or credit union?")
     assert again.answer == "No" and again.source == "default_no"
 

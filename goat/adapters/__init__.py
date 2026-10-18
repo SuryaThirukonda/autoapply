@@ -62,6 +62,8 @@ def consent_key(label: str) -> str | None:
     """The standing answer key that authorizes ticking this consent, or None to leave it alone."""
     if SMS.search(label):
         return "consent.sms"
+    if re.search(r"(authori[sz]ed to work|work authori[sz]ation|eligib(le|ility) to work|without restrictions?|sponsorship|legally (able|permitted))", label, re.I):
+        return None                       # a work-authorization question, not a consent (Niantic, judged 2026-10-18)
     if MARKETING.search(label) and not PROCESSING.search(label):
         return None                       # a purely optional marketing / newsletter / talent-community opt-in
     if not CONSENT.search(label):
