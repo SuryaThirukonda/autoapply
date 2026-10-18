@@ -62,21 +62,77 @@ async def _text_box_focused(ex: Executor) -> bool:
     except Exception:
         return False
 
+async def _select_all_text(ex: Executor) -> bool:
+    """Ctrl+A only when a text box has focus: in a focused listbox it selects every option (a Workday
+    multi-select took 30 SQL chips that way, 2026-10-18)."""
+    if not await _text_box_focused(ex):
+        return False
+    try:
+        await ex.page.keyboard.press("Control+a")
+        return True
+    except Exception:
+        return False
 
-JS_IS_WORKDAY_PROMPT = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el || el.tagName !== 'INPUT') return false;
+
+
+JS_IS_WORKDAY_PROMPT = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return false;
   const a = el.getAttribute('data-automation-id') || '';
-  return /search|prompt/i.test(a) || !!el.closest('[data-automation-id*="prompt" i], [data-automation-id*="multiSelect" i], [data-automation-id*="selectWidget" i], [data-automation-id*="searchBox" i]'); }"""
+  if (el.tagName === 'INPUT') return /search|prompt/i.test(a) || !!el.closest('[data-automation-id*="prompt" i], [data-automation-id*="multiSelect" i], [data-automation-id*="selectWidget" i], [data-automation-id*="searchBox" i]');
+  return !!el.closest('[data-automation-id="multiSelectContainer"]'); }"""
+
+# The search box of a Workday multi-select, which lives inside the chip list once something is selected: it gets
+# its own ref (<ref>i) so it can be focused and read like any other element.
+JS_PROMPT_INPUT = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return null;
+  if (el.tagName === 'INPUT') return ref;
+  const box = el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id^="formField"]') || el;
+  const inp = box.querySelector('input:not([type="hidden"])');
+  if (!inp) return null;
+  const r = inp.getBoundingClientRect();
+  if (r.width < 2 || r.height < 2) return null;
+  if (!inp.getAttribute('data-goat-ref')) inp.setAttribute('data-goat-ref', ref + 'i');
+  return inp.getAttribute('data-goat-ref'); }"""
+
+
+async def _prompt_input(ex: Executor, ref: str) -> str:
+    """The ref to type into: the element itself when it is the search box, else the box inside its container
+    (clicking the container makes Workday show it)."""
+    try:
+        r = await ex.eval(JS_PROMPT_INPUT, ref)
+        if r:
+            return str(r)
+        # the search box is hidden until the chip list (or its prompt icon) is clicked
+        await ex.click_ref(ref)
+        for _ in range(4):
+            await asyncio.sleep(0.5)
+            r = await ex.eval(JS_PROMPT_INPUT, ref)
+            if r:
+                return str(r)
+        icon = await ex.eval("""(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return null;
+          const box = el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id^="formField"]') || el;
+          const ic = box.querySelector('[data-automation-id*="prompt" i], [data-automation-id*="Icon" i], [aria-label*="prompt" i], button');
+          if (!ic) return null; const r = ic.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; }""", ref)
+        if isinstance(icon, dict):
+            await ex.click_xy(int(icon["x"]), int(icon["y"]))
+            for _ in range(4):
+                await asyncio.sleep(0.5)
+                r = await ex.eval(JS_PROMPT_INPUT, ref)
+                if r:
+                    return str(r)
+        return ref
+    except Exception:
+        return ref
 
 
 JS_REMOVE_CHIPS = """(args) => {
-  const [ref, keep] = args;
+  const [ref, keepArg] = args;
+  const keepList = Array.isArray(keepArg) ? keepArg : (keepArg ? [keepArg] : []);
   const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return 0;
   const box = el.closest('[data-automation-id^="formField"], [data-automation-id="multiSelectContainer"], .field, .form-group') || el.parentElement;
   const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim().toLowerCase();
   let n = 0;
   for (const item of Array.from(box.querySelectorAll('[data-automation-id="selectedItem"]'))) {
     const t = norm(item.textContent);
-    if (keep && t.includes(norm(keep))) continue;
+    if (keepList.some(k => k && t.includes(norm(k)))) continue;
     const x = item.querySelector('[data-automation-id="DELETE_charm"], [data-automation-id*="delete" i], button, [role="button"]');
     if (x) { x.click(); n++; }
   }
@@ -84,7 +140,7 @@ JS_REMOVE_CHIPS = """(args) => {
 }"""
 
 
-async def _remove_wrong_chips(ex: Executor, ref: str, keep: str = "") -> int:
+async def _remove_wrong_chips(ex: Executor, ref: str, keep="") -> int:
     try:
         n = await ex.eval(JS_REMOVE_CHIPS, [ref, keep])
         if n:
@@ -105,6 +161,8 @@ def _chip_matches(chip: str, wants: list[str]) -> bool:
             return True
         if re.fullmatch(re.escape(w.strip().lower()) + r"\s*(\(.*\))?", (chip or "").strip().lower()):
             return True
+        if re.search(r"\(\s*" + re.escape(w.strip()) + r"\s*\)", chip or "", re.I):
+            return True
     return False
 
 
@@ -117,13 +175,49 @@ async def _type_and_enter(ex: Executor, ref: str, wants: list[str], baseline_key
     if not text:
         return False, "nothing to type"
     try:
-        await ex.focus_ref(ref)
-        await ex.page.keyboard.press("Control+a")
+        st0 = await ex.eval(js.JS_FIELD_COMMIT, ref)
+        chips_before = [c for c in (st0.get("chips") or []) if c] if isinstance(st0, dict) else []
+    except Exception:
+        chips_before = []
+    for c in chips_before:
+        if _chip_matches(c, [text]):
+            return True, c          # already selected: clicking it again would only remove it
+    try:
+        await ex.page.keyboard.press("Escape")          # a results list from the previous term would be read as new
+        await asyncio.sleep(0.3)
+        base_now = await ex.eval(js.JS_LIST_OPTIONS)
+        baseline_keys = set(baseline_keys) | {(o.get("text"), o.get("x"), o.get("y")) for o in (base_now if isinstance(base_now, list) else [])}
+        input_ref = await _prompt_input(ex, ref)
+        await ex.focus_ref(input_ref)
+        if not await _text_box_focused(ex):
+            # chips sit in front of the search box: a mouse click lands on them; focus the box directly
+            await ex.eval("""(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return false; el.focus(); return document.activeElement === el; }""", input_ref)
+            await asyncio.sleep(0.3)
+        # A results list still open from an earlier search makes Enter pick its highlighted row instead of
+        # searching: close it, then re-open the prompt through its icon so the box searches again.
+        stale = await ex.eval(js.JS_LIST_OPTIONS)
+        if isinstance(stale, list) and stale:
+            await ex.page.keyboard.press("Escape")
+            await asyncio.sleep(0.4)
+            icon = await ex.eval("""(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return null;
+              const box = el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id^="formField"]') || el;
+              const ic = box.querySelector('[data-automation-id="promptIcon"], [data-automation-id*="prompt" i][role="button"], [data-automation-id*="Icon" i]');
+              if (!ic) return null; const r = ic.getBoundingClientRect(); return r.width > 2 ? { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) } : null; }""", input_ref)
+            if isinstance(icon, dict):
+                await ex.click_xy(int(icon["x"]), int(icon["y"]))
+                await asyncio.sleep(0.8)
+            await ex.eval("""(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (el) el.focus(); }""", input_ref)
+            await asyncio.sleep(0.2)
+        if not await _select_all_text(ex):
+            return False, "the prompt's text box did not take focus"
         await ex.page.keyboard.press("Backspace")
         await ex.type_text(text[:80], real_keys=True, delay_ms=15)
         await asyncio.sleep(0.8)
+        pre = await ex.eval(js.JS_LIST_OPTIONS)      # whatever is listed before the search is stale, not a result
+        pre = pre if isinstance(pre, list) else []
+        baseline_keys = set(baseline_keys) | {(o.get("text"), o.get("x"), o.get("y")) for o in pre}
+        pre_texts = {str(o.get("text", "")).strip() for o in pre}
         await ex.page.keyboard.press("Enter")
-        await asyncio.sleep(1.8)
     except Exception as e:
         return False, f"{type(e).__name__}"
 
@@ -134,17 +228,35 @@ async def _type_and_enter(ex: Executor, ref: str, wants: list[str], baseline_key
         except Exception:
             return []
 
+    # The search runs on the server: "No Items." / an empty list is the transient state. Poll until results or
+    # a chip appear (up to ~7 s).
+    # results count only when their TEXTS differ from what was listed before the search (a stale list from an
+    # earlier term re-renders at new positions but says the same things)
+    listed: list = []
+    for _ in range(14):
+        await asyncio.sleep(0.5)
+        chips_probe = await chips_now()
+        if [c for c in chips_probe if c not in chips_before]:
+            break
+        got = await ex.eval(js.JS_LIST_OPTIONS)
+        got = [o for o in (got if isinstance(got, list) else []) if o.get("text")]
+        fresh = [o for o in got if str(o.get("text", "")).strip() not in pre_texts and str(o.get("text", "")).strip().lower() not in ("no items.", "no items", "")]
+        if fresh:
+            listed = fresh
+            break
     chips = await chips_now()
-    for c in chips:
+    new_chips = [c for c in chips if c not in chips_before]
+    for c in new_chips:
         if _chip_matches(c, wants):
             return True, c
-    if chips:
-        await _remove_wrong_chips(ex, ref, keep="")
-    listed = await ex.eval(js.JS_LIST_OPTIONS)
-    listed = [o for o in (listed if isinstance(listed, list) else []) if (o.get("text"), o.get("x"), o.get("y")) not in baseline_keys
-              and o.get("text") and o.get("text") not in chips]
-    pick = best_option(listed, [w for w in wants if w])
-    if pick is not None and _chip_matches(pick["text"], wants):
+    if new_chips:
+        await _remove_wrong_chips(ex, ref, keep=chips_before)
+    listed = [o for o in listed if o.get("text") not in chips]
+    pick = next((o for o in listed if _chip_matches(o.get("text", ""), wants)), None)
+    if pick is None:
+        cand = best_option(listed, [w for w in wants if w])
+        pick = cand if cand is not None and _chip_matches(cand["text"], wants) else None
+    if pick is not None:
         try:
             pos = await ex.eval(js.JS_SCROLL_OPTION, pick["text"])
             if isinstance(pos, dict) and pos.get("ok"):
@@ -158,9 +270,9 @@ async def _type_and_enter(ex: Executor, ref: str, wants: list[str], baseline_key
         except Exception as e:
             return False, f"click on {pick['text']!r} failed: {type(e).__name__}"
         for c in await chips_now():
-            if _chip_matches(c, [pick["text"], *wants]):
+            if c not in chips_before and _chip_matches(c, [pick["text"], *wants]):
                 return True, c
-        await _remove_wrong_chips(ex, ref, keep="")
+        await _remove_wrong_chips(ex, ref, keep=chips_before)
     try:
         await ex.page.keyboard.press("Escape")
     except Exception:
@@ -278,10 +390,7 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
                     break
             if type_to_filter and want and not (shown_now and best_option(shown_now, [want] if multi_tree else wants)) \
                     and await _text_box_focused(ex):
-                try:
-                    await ex.page.keyboard.press("Control+a")     # replace, never append to, text left in the search box
-                except Exception:
-                    pass
+                await _select_all_text(ex)     # replace, never append to, text left in the search box
                 await ex.type_text(want[:40], real_keys=True, delay_ms=20)
                 await asyncio.sleep(1.2)
         options = await ex.eval(js.JS_LIST_OPTIONS)
@@ -307,10 +416,7 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
             # A category's inner list is virtualized (Workday "Job Board" -> Career Builder ... with LinkedIn
             # below the fold): type each preference into the prompt's search box and read what it filters to.
             for w in [x for x in wants if _norm(x)][:4]:
-                try:
-                    await ex.page.keyboard.press("Control+a")
-                except Exception:
-                    pass
+                await _select_all_text(ex)
                 await ex.type_text(w[:40], real_keys=True, delay_ms=20)
                 await asyncio.sleep(1.2)
                 filtered = await ex.eval(js.JS_LIST_OPTIONS)
@@ -400,12 +506,13 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
     except Exception:
         workday_prompt = False
     if workday_prompt:
-        await _remove_wrong_chips(ex, ref, keep="")      # a wrong chip from an earlier try never stays
+        whys = []
         for w in [x for x in wants if x and x.strip()][:3]:
             ok, shown = await _type_and_enter(ex, ref, [w, *[x for x in wants if x and x != w]], baseline_keys)
             if ok:
                 return FieldResult(ref, True, shown)
-        last_err += "; typing the text and pressing Enter left no selected chip either"
+            whys.append(f"{w[:30]!r}: {shown[:120]}")
+        last_err += "; search-and-select: " + " | ".join(whys)
     try:
         await ex.page.keyboard.press("Escape")
     except Exception:
@@ -440,8 +547,7 @@ async def _force_commit(ex: Executor, ref: str, text: str, want: str) -> tuple[b
             await ex.click_ref(ref)
             await asyncio.sleep(0.6)
             opened = await ex.eval(js.JS_LIST_OPTIONS)
-            if not (isinstance(opened, list) and any(o.get("text") == text for o in opened)) and want:
-                await ex.page.keyboard.press("Control+a")
+            if not (isinstance(opened, list) and any(o.get("text") == text for o in opened)) and want and await _select_all_text(ex):
                 await ex.type_text(want[:40], real_keys=True, delay_ms=20)
                 await asyncio.sleep(1.2)
                 opened = await ex.eval(js.JS_LIST_OPTIONS)
@@ -561,7 +667,7 @@ async def set_date(ex: Executor, ref: str, value: str) -> FieldResult:
                 await ex.click_xy(int(sec["x"]), int(sec["y"]))
             except ClickRefused as e:
                 return FieldResult(ref, False, "", str(e))
-        await ex.page.keyboard.press("Control+a")
+        await _select_all_text(ex)
         await ex.type_text(digits, real_keys=True, delay_ms=40)
         await asyncio.sleep(0.25)
     await _blur(ex)

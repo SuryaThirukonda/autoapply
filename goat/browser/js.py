@@ -23,9 +23,16 @@ _COMMON = r"""
     if (el.id) { try { const l = doc.querySelector('label[for="' + CSS.escape(el.id) + '"]'); if (l) t = txt(l); } catch (e) {} }
     if (!t) { const l = el.closest('label'); if (l) t = txt(l); }
     if (!t) t = el.getAttribute('aria-label') || '';
+    let selectedList = false;
+    if (/^items selected$/i.test(t) || (el.getAttribute && el.getAttribute('data-automation-id') === 'selectedItemList')) { t = ''; selectedList = true; }
     if (!t) { const ids = el.getAttribute('aria-labelledby'); if (ids) { t = ids.split(/\s+/).map(i => { const n = doc.getElementById(i); return n ? txt(n) : ''; }).filter(Boolean).join(' '); } }
     if (!t) { const ff = el.closest('[data-automation-id^="formField"], .field, .form-group, .application-field, [class*="field" i], fieldset'); if (ff) { const l = ff.querySelector('label, legend, [class*="label" i]'); if (l && !l.contains(el)) t = txt(l); } }
     if (!t) t = el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '';
+    if (selectedList) {
+      // Workday keeps the search box inside the chip list once something is selected: say so, and name the section.
+      if (!t) { const sec = el.closest('[data-automation-id="multiSelectContainer"]'); const lab = sec && sec.parentElement && sec.parentElement.querySelector('label, [data-automation-id="formLabel"]'); if (lab) t = txt(lab); }
+      t = (t || 'selected items') + ' (selected items; choose on this control adds another)';
+    }
     return t.replace(/\s+/g, ' ').trim().slice(0, 200);
   }
   function* allRoots(root) {
@@ -591,7 +598,7 @@ JS_LIST_OPTIONS = r"""
 () => {
   const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1; };
   const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-  const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], li[role="presentation"] div[role="option"], .select__option, [class*="__option"], [class*="option" i][id*="option" i], ul[role="listbox"] li, [role="listbox"] [role="option"]'));
+  const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], li[role="presentation"] div[role="option"], .select__option, [class*="__option"], [class*="option" i][id*="option" i], ul[role="listbox"] li, [role="listbox"] [role="option"]')).filter(o => !o.closest('[data-automation-id="selectedItemList"]'));
   const out = [];
   for (const o of opts) {
     if (!vis(o)) continue;
@@ -628,7 +635,7 @@ JS_FIELD_COMMIT = r"""
   if (!el) return JSON.stringify({ found: false });
   const box = el.closest('[data-automation-id^="formField"], [data-automation-id="multiSelectContainer"], .field, .form-group, [class*="field" i]') || el.parentElement;
   const scope = box || document;
-  const chips = Array.from(scope.querySelectorAll('[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"] li, [class*="multi-value__label" i], [class*="selected-item" i], [class*="chip" i]'))
+  const chips = Array.from(scope.querySelectorAll('[data-automation-id="selectedItem"], [class*="multi-value__label" i], [class*="selected-item" i], [class*="chip" i]'))
     .filter(vis).map(c => txt(c)).filter(Boolean);
   const prompt = !!(box && box.querySelector('[data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"], [data-automation-id="promptIcon"], [data-automation-id="promptSearchButton"]'));
   const errEl = box ? Array.from(box.querySelectorAll('[data-automation-id="errorMessage"], [role="alert"], [class*="error" i]')).find(e => vis(e) && txt(e)) : null;
