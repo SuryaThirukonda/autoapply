@@ -33,7 +33,7 @@ FUNCTION_TOOLS: list[dict] = [
          "ref": {"type": "string"},
          "answer_key": {"type": ["string", "null"], "description": "key from ANSWERS or from lookup_answer"},
          "value": {"type": ["string", "null"], "description": "literal value when no key applies (true/false for checkboxes and radios)"},
-         "source": {"type": ["string", "null"], "description": "required with a literal: 'generated' for free-response text you wrote under the writing rules, 'resume' for a value copied verbatim from the résumé text, 'clear' with an empty value to blank a field holding a stale or wrong value"},
+         "source": {"type": ["string", "null"], "description": "required with a literal: 'generated' for free-response text you wrote under the writing rules, 'resume' for a value copied verbatim from the résumé text, 'clear' with an empty value to blank a field holding a stale or wrong value, 'as_is' (value null) to keep what the field already shows because Surya set it himself in the browser or told you it is done"},
          "label": {"type": "string", "description": "the field label as shown"}},
          "required": ["ref", "answer_key", "value", "source", "label"], "additionalProperties": False}}},
                     "required": ["fields"], "additionalProperties": False}},
@@ -384,6 +384,24 @@ class ToolDispatcher:
         snap = self.ctx.last_snapshot
         for f in fields:
             item = snap.find(f.get("ref", "")) if snap else None
+            if (f.get("source") or "").lower() == "as_is":
+                # Surya set this field himself in Chrome (or answered "I already filled it out"): what the page
+                # shows IS his decision. Record it unchanged so the gate sees a sourced value (2026-10-18).
+                try:
+                    info = await self.ctx.ex.read_ref(f.get("ref", ""))
+                except Exception:
+                    info = {}
+                cur = str(info.get("value") or "") if info.get("found") else ""
+                # plain inputs are judged by their value; only widget-style controls (react-select, Workday buttons) by the text they show
+                widgety = str(info.get("tag") or "").lower() not in ("input", "textarea", "select") or info.get("expanded") is not None
+                if cur in ("", "unchecked") and not (widgety and info.get("shown") and not re.match(r"^(select|select\.\.\.|select one|choose)$", str(info.get("shown")).strip(), re.I)):
+                    results.append({"ref": f.get("ref"), "status": "failed", "error": "the field is empty: nothing to keep as-is; set it from an answer_key or ask_user"})
+                    continue
+                shown = cur if cur not in ("", "unchecked") else str(info.get("shown"))[:120]
+                records.record_decision(self.ctx.job_id, self.ctx.page_no, f.get("label") or item.get("label", "") if item else f.get("label", ""),
+                                        shown, "user:manual", f.get("ref", ""))
+                results.append({"ref": f.get("ref"), "status": "kept", "readback": shown[:120]})
+                continue
             is_choice = bool(item and (item.get("type") in ("radio", "checkbox") or item.get("tag") in ("select", "dropdown", "toggle")))
             if item and item.get("tag") == "toggle" and f.get("answer_key"):
                 # A toggle option is pressed only when its own label agrees with the stored answer.
