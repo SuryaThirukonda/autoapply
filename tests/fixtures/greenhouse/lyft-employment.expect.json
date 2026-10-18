@@ -1,0 +1,41 @@
+{
+ "labels": [
+  "First Name*",
+  "Last Name*",
+  "Email*",
+  "Country*",
+  "Toggle flyout",
+  "Phone*",
+  "Location (City)*",
+  "Clear selections",
+  "Locate me",
+  "Remove file",
+  "Remove employment",
+  "Company name",
+  "Title",
+  "Start date month",
+  "Toggle flyout",
+  "Start date year",
+  "End date month",
+  "Toggle flyout",
+  "End date year",
+  "Remove employment",
+  "Company name",
+  "Title",
+  "Start date month",
+  "Toggle flyout",
+  "Start date year",
+  "End date month",
+  "Toggle flyout",
+  "End date year",
+  "Add another",
+  "Current University*"
+ ],
+ "groups": [],
+ "headings": [
+  "Apply for this job",
+  "Voluntary Self-Identification"
+ ],
+ "items": 74,
+ "source_host": "job-boards.greenhouse.io"
+}
