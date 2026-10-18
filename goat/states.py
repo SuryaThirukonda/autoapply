@@ -59,7 +59,7 @@ HOLD_REASONS = (
     "bot_check_question",        # question addressed to a robot/AI
     "verification_email_not_received",
     "code_not_received",
-    "credentials_unknown",       # account exists, no stored credential, reset mail out of scope
+    "credentials_unknown",       # sign-in failed and the password reset (open_password_reset_link) was tried, or no mail helper
     "posting_closed",
     "gate_failed",
     "submit_failed",

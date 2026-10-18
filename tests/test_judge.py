@@ -120,3 +120,18 @@ async def test_worker_after_hold_judges_shadow_drafts_and_nothing_else(tmp_path,
     out = await worker.after_hold(job, ctx, Ex(), "answer_timeout: q.x")
     assert out is None and len(calls) == 1 and notified and notified[0].startswith("Held:")
     assert (SETTINGS.records_dir / "1").exists()
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_draft_is_judged_from_the_archived_decisions(tmp_path, monkeypatch):
+    _seed(tmp_path)
+    monkeypatch.setattr(SETTINGS, "records_dir", tmp_path / "records")
+    from goat import records
+    d = records.job_dir(1)
+    (d / "decisions_attempt1.md").write_text("| 1 | Email | a@x.com | standing:identity.email | 1 |", encoding="utf-8")
+    (d / "decisions_attempt2.md").write_text("| 1 | Phone | 281 | standing:identity.phone | 2 |", encoding="utf-8")
+    fake = _FakeClient({"verdict": "pass", "bucket": "none", "notes": "ok", "fields": []})
+    await judge.Judge(client=fake).judge(1, [], None, "Review")
+    log = next(c["text"] for c in fake.calls[0]["input"][0]["content"] if c.get("text", "").startswith("DECISION LOG"))
+    assert "archived" in log and "Phone | 281" in log and "a@x.com" not in log
+    assert "checked" in judge.JUDGE_INSTRUCTIONS and "archived" in judge.JUDGE_INSTRUCTIONS

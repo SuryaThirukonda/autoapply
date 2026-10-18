@@ -42,3 +42,13 @@ def test_set_password_types_the_env_password_only(monkeypatch):
     assert out == "filled_universal" and typed == {"pw": "pw-for-test"}
     monkeypatch.setattr(SETTINGS.creds, "universal_password", "")
     assert bitwarden.fill_credentials("acme.wd5.myworkdayjobs.com", "", lambda v: None, lambda v: None, "set_password") == "exists_unknown"
+
+
+def test_sign_in_failed_regex_covers_portal_wordings():
+    from goat.agent.tools import ACCOUNT_EXISTS, SIGN_IN_FAILED
+    for s in ("Wrong email address or password", "Your account might be locked", "The email address or password you entered is incorrect",
+              "Invalid credentials", "Password does not match", "We could not sign you in"):
+        assert SIGN_IN_FAILED.search(s), s
+    for s in ("Password must be at least 8 characters", "Sign In", "Forgot your password?", "Create Account", "Verify New Password"):
+        assert not SIGN_IN_FAILED.search(s), s
+    assert ACCOUNT_EXISTS.search("An account with this email already exists") and not ACCOUNT_EXISTS.search("Create your account")

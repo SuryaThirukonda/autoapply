@@ -37,8 +37,14 @@ JUDGE_INSTRUCTIONS = (
     "You audit a finished draft of an online job application before it is submitted. You get the decision log (every "
     "field the agent set: label, value it read back, the source of that value), the text of the final page and a "
     "screenshot. Decide whether every required field holds the intended value: the value in the log, in the portal's "
-    "own wording where the portal rewords options. 'pass' only when nothing is missing or wrong. Put the single most "
-    "important problem in `bucket` and name the fields. Never invent values; judge only what the log and page show."
+    "own wording where the portal rewords options. How to read the log: a value of 'checked' or 'pressed' on a "
+    "radio, checkbox or toggle means the option named in that label was selected (the label carries the choice, e.g. "
+    "'Authorized to work / Yes'); a value equal to a 'Label* Value' read-back is the portal echoing the label in front "
+    "of the pick; '(set)' is a password or code that is never shown. A log marked 'archived' comes from an earlier "
+    "attempt of the same draft that the portal saved (the run resumed at its review page): treat it as the current "
+    "intent. The log's format is never a defect by itself. 'pass' only when nothing is missing or wrong on the page. "
+    "Put the single most important problem in `bucket` and name the fields. Never invent values; judge only what the "
+    "log and page show."
 )
 
 
@@ -61,6 +67,18 @@ def latest(job_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def archived_decisions(job_id: int, max_chars: int = 12000) -> str:
+    """The newest decisions_attemptN.md the worker archived for this job, as text (empty when none)."""
+    from . import records
+    try:
+        files = sorted(records.job_dir(job_id).glob("decisions_attempt*.md"), key=lambda p: int(p.stem.rsplit("attempt", 1)[1]))
+    except Exception:
+        return ""
+    if not files:
+        return ""
+    return files[-1].read_text(encoding="utf-8")[:max_chars]
+
+
 class Judge:
     def __init__(self, client=None, model: str | None = None):
         self.client = client
@@ -73,11 +91,18 @@ class Judge:
         return self.client
 
     @staticmethod
-    def _log_text(decisions: list[dict]) -> str:
+    def _log_text(decisions: list[dict], job_id: int | None = None) -> str:
         lines = []
         for d in decisions[-150:]:
             lines.append(f"- page {d.get('page')}: {str(d.get('field_label') or '')[:80]} = {str(d.get('value') or '')[:120]!r} (source {d.get('source')})")
-        return "\n".join(lines) or "(no decisions recorded)"
+        if lines:
+            return "\n".join(lines)
+        # A resumed draft (Workday reopens at Review) records nothing new: the previous attempt's archive is the intent.
+        archived = archived_decisions(job_id) if job_id is not None else ""
+        if archived:
+            return "(archived: the portal saved this draft in an earlier attempt; this run resumed it)\n" + archived
+        return "(no decisions recorded)"
+
 
     async def judge(self, job_id: int, decisions: list[dict], screenshot_png: bytes | None, page_text: str,
                     gate: dict | None = None) -> dict | None:
@@ -88,7 +113,7 @@ class Judge:
             db.event(job_id, "judge:error", {"error": str(e)[:300]})
             return None
         content = [
-            {"type": "input_text", "text": "DECISION LOG\n" + self._log_text(decisions)},
+            {"type": "input_text", "text": "DECISION LOG\n" + self._log_text(decisions, job_id)},
             {"type": "input_text", "text": "FINAL PAGE TEXT\n" + (page_text or "")[:12000]},
             {"type": "input_text", "text": "CODE GATE RESULT\n" + json.dumps(gate or {})[:1500]},
         ]

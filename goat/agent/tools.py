@@ -135,6 +135,9 @@ class RunContext:
     park_attempts: int = 0
     posting_text: str = ""         # the posting page's text at open (pay figures, requirements)
     verify_link_tried: bool = False
+    creds_mode: str = ""           # the last credentials mode filled (login / login_universal / create / set_password)
+    reset_needed: bool = False     # a Sign In with the universal password failed on this tenant
+    reset_link_tried: bool = False # open_password_reset_link was called this run
     consent_page_key: str = ""
     resolved: dict = field(default_factory=dict)   # norm(question) -> resolver outcome this run
     control_failures: dict = field(default_factory=dict)   # ref -> failed choose / set_date calls this run
@@ -219,6 +222,16 @@ FREE_RESPONSE = re.compile(
 
 
 SOCIAL_SIGNIN = re.compile(r"(sign in|sign up|log ?in|continue|apply|register)\s+(with|using|via)\s+(google|linkedin|apple|microsoft|facebook|indeed)", re.I)
+# What a portal says when the universal password is not the one this tenant holds (Workday, Oracle, iCIMS wordings).
+SIGN_IN_FAILED = re.compile(
+    r"(wrong email address or password|account might be locked|incorrect (email|username|password)|invalid (email|username|password|credentials|login)|"
+    r"(email|username|password)( address)? (or password )?(is|was|you entered is) (incorrect|invalid|wrong)|could not (sign|log) you in|unable to (sign|log) in|"
+    r"(sign|log)[- ]?in failed|authentication failed|password (does not|doesn't) match)", re.I)
+ACCOUNT_EXISTS = re.compile(r"(already (exists|have an account|registered|in use)|an account with this email|email (address )?is already)", re.I)
+RESET_STEPS = ("sign-in with the universal password failed on this tenant: do the password reset. Click 'Forgot your password?' (or 'Reset password'), "
+               "fill the email box from answer_key identity.email, click the send button, call open_password_reset_link, snapshot, call credentials "
+               "mode 'set_password' with the new-password ref (confirm box via confirm_password_ref, email_ref ''), click the save button, then "
+               "credentials mode 'login_universal' and click Sign In.")
 
 
 def is_affiliation_question(question: str, options: list[str] | None) -> bool:
@@ -582,6 +595,27 @@ class ToolDispatcher:
         out = {"clicked": info.get("label") or label, "url": new_url}
         if note:
             out["note"] = note
+        # After a Sign In / Create Account click the harness reads the outcome itself: a failed sign-in with the
+        # universal password means this tenant holds an older one, and the reset flow is the next step.
+        clicked = (info.get("label") or label or "").strip()
+        if self.ctx.creds_mode in ("login", "login_universal", "create") and re.search(r"sign ?in|log ?in|create account|sign up|continue|next|submit", clicked, re.I):
+            await self.ctx.ex.settle(quiet_ms=600)
+            try:
+                text = await self.ctx.ex.page_text(30000)
+            except Exception:
+                text = ""
+            m = SIGN_IN_FAILED.search(text) if self.ctx.creds_mode != "create" else None
+            if m:
+                self.ctx.reset_needed = True
+                self.ctx.control_failures["creds:login_failed"] = self.ctx.control_failures.get("creds:login_failed", 0) + 1
+                db.event(self.ctx.job_id, "creds:sign_in_failed", {"host": self.ctx.portal_host, "quote": m.group(0)[:80]})
+                out["sign_in"] = "failed"
+                out["next"] = RESET_STEPS
+            elif self.ctx.creds_mode == "create" and ACCOUNT_EXISTS.search(text):
+                self.ctx.reset_needed = True
+                db.event(self.ctx.job_id, "creds:account_exists", {"host": self.ctx.portal_host})
+                out["account"] = "exists"
+                out["next"] = "the account already exists on this tenant: go to Sign In, call credentials login_universal and click Sign In; if that fails, " + RESET_STEPS
         return out, None
 
     JS_RAIL_STEP = r"""(name) => {
@@ -953,6 +987,10 @@ class ToolDispatcher:
     async def t_credentials(self, mode: str, email_ref: str, password_ref: str, confirm_password_ref: str | None):
         if self.ctx.creds is None:
             return {"error": "credentials helper not configured (Bitwarden CLI)"}, None
+        if mode in ("login", "login_universal") and self.ctx.reset_needed and not self.ctx.reset_link_tried \
+                and self.ctx.control_failures.get("creds:login_failed", 0) >= 1:
+            # The same password would fail again (Assurant, GE Vernova, 2026-10-18): the reset flow first.
+            return {"error": RESET_STEPS}, None
         ex = self.ctx.ex
         host = self.ctx.portal_host
         email = SETTINGS.creds.application_email
@@ -985,6 +1023,10 @@ class ToolDispatcher:
         records.record_decision(self.ctx.job_id, self.ctx.page_no, f"account {mode} ({host})", "(set)", "policy:may_create_accounts", password_ref)
         if status == "exists_unknown":
             raise Parked(f"credentials_unknown: account exists on {host} with no stored credential", "hold")
+        if status.startswith("filled"):
+            self.ctx.creds_mode = mode
+            if mode == "set_password":
+                self.ctx.reset_needed = False
         return {"status": status, "email": email}, None
 
     async def t_enter_email_code(self, code_refs: list[str]):
@@ -1017,6 +1059,7 @@ class ToolDispatcher:
         if self.ctx.mail is None:
             return {"error": "mail helper not configured (Gmail API)"}, None
         import asyncio
+        self.ctx.reset_link_tried = True
         after_ts = db.now() - 600
         fetch = getattr(self.ctx.mail, "fetch_password_reset_link", None)
         if fetch is None:
@@ -1190,25 +1233,21 @@ class ToolDispatcher:
             return {"error": "not parked: self-identification fields are settled by their self_id.* keys (choose with the key; the chain ends with "
                              "his own answers for forms without a decline option). Whatever the picker shows after that is correct. Move on: "
                              "finish the other sections (Work Experience via go_to_step('My Experience') if the Review shows No Response) and submit."}, None
-        if low.startswith("credentials") and self.ctx.park_attempts < 2:
-            # The helper works (one application password): a credentials park needs a real sign-in failure on
-            # the page. Wrong-password pages get the reset procedure; anything else gets told to use the helper.
+        if low.startswith("credentials") and self.ctx.mail is not None and not self.ctx.reset_link_tried \
+                and self.ctx.control_failures.get("creds:bounce", 0) < 2:
+            # One application password everywhere: a credentials park is allowed only after the reset flow was
+            # tried (whatever the vault's state). Wrong-password pages get the reset steps; others, the helper.
+            self.ctx.control_failures["creds:bounce"] = self.ctx.control_failures.get("creds:bounce", 0) + 1
             try:
-                from ..creds.bitwarden import env_login_active
-                helper_ok = env_login_active()
-            except Exception:
-                helper_ok = False
-            if helper_ok:
                 text = await self.ctx.ex.page_text(30000)
-                self.ctx.park_attempts += 1
-                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "helper available"})
-                if re.search(r"wrong email address or password|account might be locked|incorrect (email|password)|invalid (email|password|credentials)", text, re.I):
-                    return {"error": "not parked: this tenant holds his account under an older password. Click 'Forgot your password?', fill the "
-                                     "email (answer_key identity.email), click the send button, call open_password_reset_link, snapshot, then "
-                                     "credentials mode 'set_password' on the new-password boxes, click save, then credentials login_universal and Sign In."}, None
-                return {"error": "not parked: the password helper is configured. On a Create Account page call credentials mode 'create' "
-                                 "(it types the email, password and confirm box), click Create Account, then snapshot and continue; on a Sign In "
-                                 "page call credentials login_universal, click Sign In, then snapshot. Park only after the page itself reports a failure."}, None
+            except Exception:
+                text = ""
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "reset not tried"})
+            if SIGN_IN_FAILED.search(text) or self.ctx.reset_needed:
+                return {"error": "not parked: " + RESET_STEPS}, None
+            return {"error": "not parked: the password helper is configured. On a Sign In page call credentials login_universal and click Sign In; "
+                             "on a Create Account page call credentials mode 'create' (it types the email, password and confirm box) and click Create Account. "
+                             "If the page then reports a wrong password, do the reset flow (open_password_reset_link); park only after that was tried."}, None
         if (low.startswith("credentials") or "verify your" in low or "verification" in low) and not self.ctx.verify_link_tried \
                 and self.ctx.mail is not None:
             # An account that exists but cannot sign in is usually waiting on its verification email (a short
@@ -1251,7 +1290,7 @@ class ToolDispatcher:
             if not scan_page_prohibitions(await self.ctx.ex.page_text(30000)):
                 reason = "stuck: " + reason.split(":", 1)[-1].strip()      # never label a hold "prohibited" without the page saying so
                 low = reason.lower()
-        if self.ctx.park_attempts < 2 and (low.startswith("automation_prohibited") or "password" in low or "credential" in low or "create account" in low or "sign in" in low):
+        if self.ctx.park_attempts < 2 and not low.startswith("credentials") and (low.startswith("automation_prohibited") or "password" in low or "create account" in low or "sign in" in low):
             # "Prohibited" must be on the page, not inferred; account pages are handled by the credentials tool.
             from ..gate import scan_page_prohibitions
             text = await self.ctx.ex.page_text(30000)
