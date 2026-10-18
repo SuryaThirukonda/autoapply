@@ -155,6 +155,7 @@ class WorkerControl:
         self.current_job_id: int | None = None
         self.browser_ok: bool | None = None
         self.browser_failures = 0
+        self.current: dict | None = None    # {"job": ..., "ex": Executor} while a job runs
 
     # -- called from any thread
     def _call(self, fn) -> None:
@@ -235,6 +236,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
         return _browser_down(job_id, "CDP endpoint not answering")
 
     ex = Executor(policy=HostPolicy([job["url"], apply_url]), job_id=job_id)
+    CONTROL.current = {"job": job, "ex": ex}          # the chat agent may look at this tab (never operate it)
     mail, creds = _helpers()
     client_job = {**job, "resume_file": None}
     ctx = RunContext(job=client_job, ex=ex, budget=budget, classifier=Classifier(), mail=mail, creds=creds)
@@ -357,6 +359,9 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
         db.event(job_id, "job:error", {"error": str(e)[:500]})
         outcome = RunOutcome(states.HOLD, f"error: {e}")
     finally:
+        CONTROL.current = None
+        from . import memory
+        memory.note_outcome(job, outcome.status, outcome.reason)
         try:
             records.write_decisions_markdown(job_id, {
                 "company": job.get("company"), "title": job.get("title"), "posting": job.get("url"), "application_url": ex.url,

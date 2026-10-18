@@ -17,7 +17,7 @@ from typing import Any
 
 from openai import APIStatusError, AsyncOpenAI, RateLimitError
 
-from .. import db, records
+from .. import db, memory, records, skills
 from ..budget import BudgetExceeded, Parked
 from ..browser.executor import ClickRefused, NavigationRefused, to_pw_key
 from ..config import SETTINGS, assert_allowed
@@ -91,12 +91,21 @@ class AgentLoop:
         if not facts:
             fp = SETTINGS.config_dir / "surya_facts.md"
             facts = fp.read_text(encoding="utf-8")[:16000] if fp.exists() else ""
-        return [
+        blocks = [
             {"role": "developer", "content": [{"type": "input_text", "text": INSTRUCTIONS}]},
             {"role": "developer", "content": [{"type": "input_text", "text": "PROFILE (everything known about Surya; the only source for drafted text):\n" + facts}]},
             {"role": "developer", "content": [{"type": "input_text", "text": answers_block(rows)}]},
-            {"role": "developer", "content": [{"type": "input_text", "text": job_brief(self.ctx.job, attempt_history)}]},
         ]
+        # Procedures for this portal (skills/*.md) and what recent runs taught (data/memory): both are stable
+        # within a job, so they sit in the cached prefix before the job brief.
+        sk = skills.for_filler(self.ctx.portal)
+        if sk:
+            blocks.append({"role": "developer", "content": [{"type": "input_text", "text": sk}]})
+        mem = memory.snapshot(2500)
+        if mem:
+            blocks.append({"role": "developer", "content": [{"type": "input_text", "text": mem}]})
+        blocks.append({"role": "developer", "content": [{"type": "input_text", "text": job_brief(self.ctx.job, attempt_history)}]})
+        return blocks
 
     async def _screenshot_output(self, call_id: str, acks: list[dict]) -> dict:
         data_url = await self.ctx.ex.screenshot_data_url()

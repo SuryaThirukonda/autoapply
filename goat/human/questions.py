@@ -27,6 +27,10 @@ Sender = Callable[[int, list[dict], bytes | None], Awaitable[list[int | None]]]
 
 _NUMBERED = re.compile(r"^\s*(\d{1,2})\s*[).:\-]\s*")
 _DECLINE_WORDS = {"hold", "hold it", "skip", "-", "pass"}
+# "I already filled it out", "done", "leave it as is": Surya set the field himself in the browser (2026-10-18).
+_AS_IS = re.compile(r"^(done|all set|already (done|filled|set|entered|selected|answered)|i (already |have )?(filled|did|entered|selected|clicked|set|answered|completed|handled) (it|that|this|them|those|the \w+)( out| in| myself)?|"
+                    r"(leave|keep) (it|that|this|them)( as is| as-is| alone)?|as is|as-is|no change|it'?s (done|filled|set))\W*$", re.I)
+AS_IS = "AS_IS"
 
 
 def _answer_type(field_type: str | None, options: list[str] | None) -> str:
@@ -252,6 +256,28 @@ class QuestionBroker:
                 earliest = min(earliest, float(row["a"]))
         return earliest
 
+    def _kept_as_is(self, job_id: int, key: str) -> bool:
+        row = db.connect().execute(
+            "SELECT answer FROM pending_questions WHERE job_id=? AND key=? AND answered_at IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (job_id, key)).fetchone()
+        return bool(row is not None and row["answer"] == AS_IS)
+
+    def keep_as_is(self, job_id: int, *, source: str = "chat") -> dict:
+        """Every open question of this job is settled as AS_IS: Surya set the fields himself. Nothing is stored
+        in the answer store; a waiting run wakes and records the page's values with fill_batch as_is."""
+        rows = db.connect().execute(
+            "SELECT * FROM pending_questions WHERE job_id=? AND answered_at IS NULL ORDER BY id", (int(job_id),)).fetchall()
+        if not rows:
+            return {"ok": False, "reason": "no_pending_question", "message": f"job {job_id} has no open question"}
+        keys = []
+        with db.tx() as con:
+            for row in rows:
+                con.execute("UPDATE pending_questions SET answered_at=?, answer=? WHERE id=?", (db.now(), AS_IS, row["id"]))
+                keys.append(row["key"])
+        db.event(int(job_id), "question:answered", {"saved": keys, "declined": [], "as_is": True, "via": source})
+        self._wake(int(job_id))
+        return {"ok": True, "keys": keys, "as_is": True}
+
     def declined_keys(self, job_id: int, keys: list[str]) -> list[str]:
         """Keys whose latest pending row for this job was declined ('hold') and still has no answer."""
         con = db.connect()
@@ -281,6 +307,9 @@ class QuestionBroker:
                 a = answers.get(k)
                 if a is not None and a.has_value:
                     found[k] = str(a.answer)
+                elif self._kept_as_is(job_id, k):
+                    found[k] = (f"{AS_IS}: Surya set this field himself in the browser. Take a snapshot and record it with "
+                                "fill_batch source 'as_is' (value null); never clear or re-set it.")
                 else:
                     missing.append(k)
             if not missing:
@@ -334,6 +363,12 @@ class QuestionBroker:
                 if part.lower() in _DECLINE_WORDS:
                     self._decline_row(con, row)
                     declined.append(row["key"])
+                    jobs.add(row["job_id"])
+                    continue
+                if _AS_IS.match(part.strip()):
+                    # he set it himself: no answer is stored; the waiting run records the page's value (fill_batch as_is)
+                    con.execute("UPDATE pending_questions SET answered_at=?, answer=? WHERE id=?", (db.now(), AS_IS, row["id"]))
+                    saved.append({"key": row["key"], "answer": AS_IS, "released": 0})
                     jobs.add(row["job_id"])
                     continue
                 key, value, released = self._save_row(con, row, part, source_ref, source, scope, scope_value)

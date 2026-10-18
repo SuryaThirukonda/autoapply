@@ -152,6 +152,8 @@ async def main(run_worker: bool = True, run_scraper: bool = True) -> None:
         # RDS is the only link to AWS. Telegram runs on the website's server, so the local bot stays off
         # (two bots polling one token would fight over updates).
         from .cloud import CloudLink
+        from .chat.service import ChatService
+        tasks.append(asyncio.create_task(ChatService(worker_control=worker.CONTROL).run(stop), name="chat"))
         link = CloudLink()
         link.start(asyncio.get_running_loop())
     else:

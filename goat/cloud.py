@@ -96,6 +96,8 @@ def _describe(kind: str, detail: dict) -> str:
         "queue:reordered": lambda: "queue reordered",
         "posting:pay": lambda: f"posting pay: {d.get('pay') or 'none listed'}",
         "digest": lambda: "daily digest",
+        "chat:message": lambda: f"Surya: {str(d.get('text', ''))[:160]}",
+        "chat:reply": lambda: f"goat: {str(d.get('text', ''))[:160]}",
     }
     if kind in special:
         try:
@@ -654,6 +656,9 @@ class CloudLink:
             else:
                 return {"ok": False, "message": f"unknown worker action {action}"}
             return {"ok": True}
+        if kind == "chat":
+            from .chat.service import enqueue
+            return enqueue(p, source=by)
         if kind == "resync":
             self.request_full()
             return {"ok": True}

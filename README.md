@@ -170,6 +170,32 @@ This walks a fake job ("Simulator Co", no Chrome) through every progress mark ag
 
 The old all-in-one cloud VM (Docker, Xvfb, noVNC) is in `legacy/vm/`. It is git-ignored and not used.
 
+## Talking to goat on Telegram (the chat agent)
+
+Any message to the bot that is not a reply to a question or a slash command is a conversation turn. The
+Telegram worker on EC2 writes it to the `commands` table (kind `chat`); the cloud link on the PC hands it to
+`goat/chat/` (a gpt-6-luna Responses loop with the system prompt in `goat/chat/soul.md`); the reply comes back
+as a `chat:reply` event, which the worker sends as a threaded reply, with a screenshot when there is one.
+
+What it can do: `status`, `list_jobs`, `job_detail`, `job_action` (run_now / requeue / hold / skip), `worker`
+(pause / resume / stop_now / skip_current), `answer_question`, `keep_as_is` (you set the fields yourself in
+Chrome: "I filled it, continue"), `add_listing` (paste a URL), `screenshot` and `page_outline` of a job's page,
+`browser` (click / type / key / scroll / goto on a PARKED job's tab; a running job's tab is look-only),
+`remember` (a fact about you with an answer key, or a note about the work), `read_skill`, `recent_events`.
+It never submits, never touches a CAPTCHA, never sees a password or code.
+
+Replying "I already filled it out" / "done" / "leave it as is" to a question message settles it as AS_IS: the
+run records what the page shows (`fill_batch` source `as_is`) and carries on instead of parking.
+
+## Skills and memory
+
+- `skills/*.md`: procedures with a small front matter (`name`, `description`, `portals`, `agents`, `triggers`).
+  The filling agent carries the skills for the job's portal in its cached prefix; the chat agent always has the
+  index and pulls in the skills a message triggers. Local-only skills go under `data/skills/`. Skills hold
+  procedures, never facts about Surya.
+- `data/memory/MEMORY.md` (curated standing notes) and `data/memory/notes/YYYY-MM-DD.md` (one line per run
+  outcome, plus notes added over chat). Both agents get a snapshot at the top of their prompts.
+
 ## Workday-style workflow test
 
 `tests/fixtures/workday.html` imitates a Workday application: a rail of four pages, "Select One" button
