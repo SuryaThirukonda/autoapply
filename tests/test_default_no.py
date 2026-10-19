@@ -99,3 +99,16 @@ def test_work_authorization_checkbox_is_not_a_consent():
     from goat.adapters import consent_key
     assert consent_key("Are you authorized to work without restrictions in the country where this position is based?") is None
     assert consent_key("I have read and agree to the privacy notice") == "consent.privacy_notice"
+
+
+def test_grouped_date_options_cover_a_stored_date():
+    from goat.agent.tools import date_option_covers
+    assert date_option_covers("May 2028", "April/May/June")
+    assert date_option_covers("05/15/2028", "Apr - Jun")
+    assert date_option_covers("May 2028", "May 2028")
+    assert date_option_covers("May 2028", "2028")
+    assert date_option_covers("2028", "2027-2028")
+    assert not date_option_covers("May 2028", "January/February/March")
+    assert not date_option_covers("May 2028", "May 2027")
+    assert not date_option_covers("Yes", "April/May/June")
+    assert not date_option_covers("Texas A&M", "May")

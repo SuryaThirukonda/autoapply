@@ -27,6 +27,8 @@ _COMMON = r"""
     if (/^items selected$/i.test(t) || (el.getAttribute && el.getAttribute('data-automation-id') === 'selectedItemList')) { t = ''; selectedList = true; }
     if (!t) { const ids = el.getAttribute('aria-labelledby'); if (ids) { t = ids.split(/\s+/).map(i => { const n = doc.getElementById(i); return n ? txt(n) : ''; }).filter(Boolean).join(' '); } }
     if (!t) { const ff = el.closest('[data-automation-id^="formField"], .field, .form-group, .application-field, [class*="field" i], fieldset'); if (ff) { const l = ff.querySelector('label, legend, [class*="label" i]'); if (l && !l.contains(el)) t = txt(l); } }
+    // Lever custom questions: the text sits in a sibling block BEFORE the field container (.application-label + .application-field)
+    if (!t) { const ff = el.closest('.application-field, [class*="field" i]'); let p = ff && ff.previousElementSibling; for (let i = 0; i < 2 && p && !t; i++, p = p.previousElementSibling) { if (/label|question/i.test(p.className || '')) t = txt(p).replace(/\s*[✱*]\s*$/, ''); } }
     if (!t) t = el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '';
     if (selectedList) {
       // Workday keeps the search box inside the chip list once something is selected: say so, and name the section.

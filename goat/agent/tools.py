@@ -248,6 +248,39 @@ def is_affiliation_question(question: str, options: list[str] | None) -> bool:
     return len(opts) <= 4 and any(_YES.match(o) for o in opts) and any(_NEGATIVE_OPTION.match(o) for o in opts)
 
 
+_MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+
+
+def date_option_covers(value: str, label: str) -> bool:
+    """A grouped date option covers a stored date: 'April/May/June' or 'Apr - Jun' for 'May 2028' (month),
+    '2028' or '2027-2028' for the year. Anything that is not a date never matches this way (Ashby, 2026-10-18)."""
+    from ..browser.fill import parse_date
+    parts = parse_date(value or "")
+    if not parts.get("month") and not parts.get("year"):
+        return False
+    lab = (label or "").lower()
+    tokens = [t.strip() for t in re.split(r"[/,;|]|\bor\b|\band\b|\s[-–—]\s", lab) if t.strip()]
+    if parts.get("month"):
+        name = _MONTH_NAMES[int(parts["month"]) - 1]
+        hits = [t for t in tokens if re.fullmatch(rf"{name[:3]}[a-z]*(\s+\d{{4}})?", t)]
+        if hits:
+            yr = parts.get("year")
+            return not yr or not re.search(r"\d{4}", lab) or yr in lab
+        # a range of month names: "Apr - Jun"
+        m = re.search(r"\b([a-z]{3,9})\s*[-–—to]+\s*([a-z]{3,9})\b", lab)
+        if m:
+            def idx(s):
+                return next((i for i, n in enumerate(_MONTH_NAMES) if n.startswith(s[:3])), None)
+            a, b = idx(m.group(1)), idx(m.group(2))
+            if a is not None and b is not None and a <= int(parts["month"]) - 1 <= b:
+                return True
+    if parts.get("year") and not parts.get("month"):
+        return bool(re.search(rf"\b{parts['year']}\b", lab))
+    if parts.get("year") and parts.get("month") and re.fullmatch(rf"\s*{parts['year']}\s*", lab):
+        return True
+    return False
+
+
 def default_no_choice(question: str, options: list[str] | None) -> str | None:
     """The wording a default-No answer takes on this form: 'No' for a yes/no box, else the single negative
     option offered ('Not to my knowledge' preferred), None when the form offers no negative wording."""
@@ -480,7 +513,8 @@ class ToolDispatcher:
             if is_choice and item and item.get("type") in ("radio", "checkbox") and str(val).strip().lower() not in AFFIRMATIVE | {"false", "no", "off", "unchecked"}:
                 lab = answers.norm(item.get("label") or ""); nv = answers.norm(str(val))
                 parts = [answers.norm(p) for p in str(val).split(";") if answers.norm(p)]
-                if nv and (nv == lab or (len(nv) >= 4 and nv in lab) or any(p == lab or (len(p) >= 4 and p in lab) for p in parts)):
+                if nv and (nv == lab or (len(nv) >= 4 and nv in lab) or any(p == lab or (len(p) >= 4 and p in lab) for p in parts)
+                           or date_option_covers(str(val), item.get("label") or "")):
                     val = "true"
                     # The stored text names this option ("Not Specified"), negated or not: only when the label
                     # starts with it, so "willing" never ticks "Not willing to relocate".

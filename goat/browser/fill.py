@@ -77,6 +77,20 @@ async def _select_all_text(ex: Executor) -> bool:
 
 
 
+# The value a picker holds when the ref is its toggle button or its emptied search box: the companion input in
+# the same container (property first, then the attribute React leaves behind).
+JS_COMPANION_VALUE = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return '';
+  const val = (i) => (i.value || i.getAttribute('value') || '').trim();
+  if (el.tagName === 'INPUT' && val(el)) return val(el);
+  let n = el.parentElement;
+  for (let i = 0; i < 3 && n; i++, n = n.parentElement) {
+    const inp = Array.from(n.querySelectorAll('input[role="combobox"], input[aria-haspopup], input:not([type=hidden]):not([type=checkbox]):not([type=radio])')).find(x => x !== el && val(x));
+    if (inp) return val(inp);
+    const chip = n.querySelector('[class*="single-value" i], [class*="selected" i], [data-automation-id="selectedItem"]');
+    if (chip && chip.textContent.trim()) return chip.textContent.trim();
+  }
+  return ''; }"""
+
 JS_IS_WORKDAY_PROMPT = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return false;
   const a = el.getAttribute('data-automation-id') || '';
   if (el.tagName === 'INPUT') return /search|prompt/i.test(a) || !!el.closest('[data-automation-id*="prompt" i], [data-automation-id*="multiSelect" i], [data-automation-id*="selectWidget" i], [data-automation-id*="searchBox" i]');
@@ -344,6 +358,15 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
     if not info.get("found"):
         return FieldResult(ref, False, "", "ref not found")
     before = (info.get("value") or info.get("shown") or "")
+    if info.get("tag") == "select":
+        # A native <select> has no DOM list to click (Lever's custom questions, 2026-10-18): pick by its options.
+        native = await ex.eval(js.JS_FIELD_CHOICES, ref)
+        opts = [{"text": o} for o in (native if isinstance(native, list) else [])]
+        pick = best_option(opts, [w for w in wants if w]) if opts else None
+        if pick is None:
+            return FieldResult(ref, False, before, f"no option matched {wants[:3]}; the select offers: {[o['text'] for o in opts][:12]}")
+        r = (await fill_batch(ex, [{"ref": ref, "value": pick["text"]}]))[0]
+        return FieldResult(ref, r.ok, r.readback or pick["text"], r.error)
     # Workday multi-select trees (How Did You Hear About Us?) count their picks ("0 items selected") and nest
     # options under categories: the prompt's search box filters the whole tree, so each want is typed and
     # matched exactly instead of drilling into a category by hand.
@@ -472,9 +495,17 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
             await asyncio.sleep(0.6)
             after = await ex.read_ref(ref)
             shown = (after.get("value") or after.get("shown") or "")
+            if not shown.strip() or after.get("tag") == "button":
+                # Ashby: the ref may be the toggle button beside the combobox input that actually holds the pick
+                # (ibotta, 2026-10-18), or the autocomplete clears its input and shows the pick elsewhere. Read the
+                # companion input, then the outline's reading of the control (what the gate will see).
+                try:
+                    comp = await ex.eval(JS_COMPANION_VALUE, ref)
+                    if isinstance(comp, str) and comp.strip():
+                        shown = comp
+                except Exception:
+                    pass
             if not shown.strip():
-                # Ashby's autocomplete clears its input once a row is picked and shows the pick elsewhere: the
-                # outline's reading of the control (what the gate will see) is the truth (2026-10-18).
                 try:
                     from . import snapshot as _snapmod
                     item = (await _snapmod.take(ex)).refs.get(ref) or {}
