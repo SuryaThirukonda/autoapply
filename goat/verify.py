@@ -20,15 +20,28 @@ from dataclasses import dataclass, field
 from . import answers, db, records
 
 
+# Judge findings the agent can fix itself on the page (a blank required field, a wrong pick, a date that did not
+# commit, a missing file); a portal error or a missing verdict is not one of them.
+FIXABLE_BUCKETS = ("missing_required", "wrong_value", "wrong_option_wording", "date_not_committed", "file_not_attached",
+                   "unsourced_value", "consent_or_attestation", "other")
+
+
 @dataclass
 class Verification:
     ok: bool
     why: list[str] = field(default_factory=list)
     verdict: dict | None = None
     unconfirmed: int = 0
+    fixes: list[str] = field(default_factory=list)   # what the agent can fix before Surya is asked
+    needs_surya: bool = False                         # something only he can settle (an unanswered question)
 
     def summary(self) -> str:
         return "; ".join(self.why)[:600]
+
+    @property
+    def fixable(self) -> bool:
+        """One more try by the agent is worth it: every reason is something it can fix on the page."""
+        return bool(self.fixes) and not self.needs_surya and len(self.fixes) >= len(self.why)
 
 
 def open_readback(ctx) -> list[str]:
@@ -48,9 +61,11 @@ async def verify(ctx, ex) -> Verification:
     """Run every check; the judge always runs, so a held draft's Telegram message carries its verdict."""
     from .judge import judge_page
     why: list[str] = []
+    fixes: list[str] = []
     rb = open_readback(ctx)
     if rb:
         why.append("read-back: " + "; ".join(rb[:3]))
+        fixes += [f"{m} (go back to that page with go_to_step, re-set the field from its answer_key, then return and submit)" for m in rb[:4]]
     pending = pending_questions(ctx)
     if pending:
         why.append("unanswered question(s): " + ", ".join(pending[:4]))
@@ -62,11 +77,17 @@ async def verify(ctx, ex) -> Verification:
     else:
         if verdict["verdict"] != "pass":
             why.append(f"judge: {verdict['verdict']} ({verdict['bucket']}): {verdict['notes'][:200]}")
+            if verdict["bucket"] in FIXABLE_BUCKETS:
+                named = ", ".join(str(f)[:60] for f in (verdict.get("fields") or [])[:6])
+                fixes.append(f"the judge ({verdict['bucket']}): {verdict['notes'][:300]}" + (f" Fields: {named}." if named else "")
+                             + " Fix exactly that from the stored answers (answer_keys), then call submit again.")
         if "unsupported" not in verdict:
             why.append("the fact check did not run")
         elif verdict["unsupported"]:
             why.append("not backed by the profile: " + "; ".join(str(u)[:120] for u in verdict["unsupported"][:4]))
-    v = Verification(ok=not why, why=why, verdict=verdict, unconfirmed=len(unconfirmed))
+            fixes += [f"not backed by the profile: {str(u)[:200]}. Rewrite or re-set that answer so it states only what the "
+                      "profile supports (a stored answer_key where one exists), then call submit again." for u in verdict["unsupported"][:4]]
+    v = Verification(ok=not why, why=why, verdict=verdict, unconfirmed=len(unconfirmed), fixes=fixes, needs_surya=bool(pending))
     db.event(ctx.job_id, "verify:" + ("pass" if v.ok else "fail"),
              {"why": why, "unconfirmed": len(unconfirmed), "judge": (verdict or {}).get("verdict"),
               "unsupported": (verdict or {}).get("unsupported", [])[:8]})

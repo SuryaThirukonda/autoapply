@@ -1308,6 +1308,16 @@ class ToolDispatcher:
             # otherwise hold it for his OK on Telegram (goat/verify.py).
             from ..verify import verify
             v = await verify(ctx, ctx.ex)
+            if not v.ok and v.fixable and ctx.control_failures.get("verify:fix", 0) < 1:
+                # One chance to fix what the check found (a blank required field, a wrong pick, an unsupported claim)
+                # before Surya is asked (CoVar and Range, 2026-10-18).
+                ctx.control_failures["verify:fix"] = 1
+                db.event(ctx.job_id, "verify:fix_requested", {"fixes": v.fixes[:6]})
+                with db.tx() as con:
+                    con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), ctx.job_id))
+                return {"status": "blocked", "gate": "verification",
+                        "fix_these_then_call_submit_again": v.fixes[:6],
+                        "note": "the code gate passed, but the final check found these; fix them, then call submit once more"}, None
             if not v.ok:
                 ctx.submitted = {"status": "review_needed", "gate": gate.as_dict()}
                 raise Parked("review_needed: " + v.summary(), "hold")

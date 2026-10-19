@@ -196,17 +196,37 @@ async def test_a_verified_draft_is_submitted_at_once(store, judged, tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_a_judge_fail_holds_for_review_and_never_clicks(store, judged, tmp_path, monkeypatch):
+async def test_a_judge_fail_gets_one_fix_then_holds_for_review_and_never_clicks(store, judged, tmp_path, monkeypatch):
     monkeypatch.setattr(SETTINGS, "auto_submit", "verified")
     judged.canned = {**judged.canned, "verdict": "fail", "bucket": "missing_required", "notes": "Last Name is blank", "fields": ["Last Name"]}
     job = _job()
     ex, d, ctx = await _filled(tmp_path, job)
     try:
-        with pytest.raises(Parked) as pi:
+        out, _ = await d.t_submit(None)                         # first failure: the agent gets the findings to fix
+        assert out["status"] == "blocked" and out["gate"] == "verification"
+        assert "Last Name is blank" in out["fix_these_then_call_submit_again"][0] and "Fields: Last Name" in out["fix_these_then_call_submit_again"][0]
+        assert await _submits(ex) == 0 and _events("verify:fix_requested")
+        with pytest.raises(Parked) as pi:                       # still failing: Surya is asked
             await d.t_submit(None)
         assert pi.value.reason.startswith("review_needed: judge: fail (missing_required): Last Name is blank")
         assert pi.value.state == "hold" and await _submits(ex) == 0 and not ctx.auto_submitted
-        assert ctx.verdict["verdict"] == "fail" and _events("verify:fail")
+        assert ctx.verdict["verdict"] == "fail" and len(_events("verify:fail")) == 2
+    finally:
+        await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_fixed_draft_submits_on_the_second_check(store, judged, tmp_path, monkeypatch):
+    monkeypatch.setattr(SETTINGS, "auto_submit", "verified")
+    judged.canned = {**judged.canned, "verdict": "fail", "bucket": "wrong_value", "notes": "School shows UT", "fields": ["School"]}
+    job = _job()
+    ex, d, ctx = await _filled(tmp_path, job)
+    try:
+        out, _ = await d.t_submit(None)
+        assert out["status"] == "blocked"
+        judged.canned = {**judged.canned, "verdict": "pass", "bucket": "none", "notes": "fixed", "fields": []}
+        out, _ = await d.t_submit(None)
+        assert out["status"] == "submitted" and await _submits(ex) == 1 and ctx.auto_submitted
     finally:
         await ex.close(close_browser=True)
 
@@ -218,6 +238,8 @@ async def test_an_answer_the_profile_does_not_back_holds_for_review(store, judge
     job = _job()
     ex, d, ctx = await _filled(tmp_path, job)
     try:
+        out, _ = await d.t_submit(None)                         # first: rewrite it so it states only what the profile supports
+        assert out["status"] == "blocked" and "Rewrite or re-set that answer" in out["fix_these_then_call_submit_again"][0]
         with pytest.raises(Parked) as pi:
             await d.t_submit(None)
         assert "not backed by the profile: Why Acme?" in pi.value.reason and await _submits(ex) == 0
@@ -233,7 +255,7 @@ async def test_a_page_left_with_a_mismatch_or_an_unanswered_question_holds_for_r
     try:
         ctx.readback_open = {1: ["field School [e7] shows '' but decision was 'Texas A&M University'"]}
         ctx.asked_keys = ["q.what_is_your_favourite_editor"]
-        with pytest.raises(Parked) as pi:
+        with pytest.raises(Parked) as pi:                       # a question only Surya can answer: no fix round
             await d.t_submit(None)
         r = pi.value.reason
         assert r.startswith("review_needed: read-back: page 1: field School") and "unanswered question(s): q.what_is_your_favourite_editor" in r
@@ -272,6 +294,14 @@ async def test_a_released_job_submits_without_the_check(store, judged, tmp_path,
         assert judged.calls == [] and not ctx.auto_submitted and await _submits(ex) == 1
     finally:
         await ex.close(close_browser=True)
+
+
+def test_what_counts_as_fixable():
+    from goat.verify import Verification
+    assert Verification(False, why=["judge: fail"], fixes=["fix it"]).fixable
+    assert not Verification(False, why=["judge: fail", "unanswered question(s): q.x"], fixes=["fix it"], needs_surya=True).fixable
+    assert not Verification(False, why=["the judge gave no verdict"]).fixable
+    assert not Verification(False, why=["judge: fail (layout_or_portal_error)", "the fact check did not run"], fixes=[]).fixable
 
 
 def test_the_submit_tool_has_room_for_the_judge(store):
