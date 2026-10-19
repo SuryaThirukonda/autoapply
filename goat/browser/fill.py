@@ -256,6 +256,7 @@ def lang_safe(s: str) -> str:
 def _chip_matches(chip: str, wants: list[str]) -> bool:
     """A selected chip equals one of the wanted wordings, or is one of them plus a parenthetical qualifier
     ("Python (Programming Language)" for "Python")."""
+    chip = ENUM_PREFIX.sub("", chip or "", count=1) if re.match(r"^\s*\d{1,2}[.)]\s+\D", chip or "") else chip
     c = _norm(lang_safe(chip))
     for w in wants:
         if not w:
@@ -408,7 +409,22 @@ def _foreign_qualifier(text: str, wants: list[str]) -> bool:
     return bool(extra) and not extra <= named
 
 
+# A numbered option list ("1. Protected Veteran", "2. Not a Protected Veteran" on Oracle, 2026-10-19)
+ENUM_PREFIX = re.compile(r"^\s*(\d{1,2}|[a-zA-Z])[.)]\s+")
+
+
 def best_option(options: list[dict], wants: list[str]) -> dict | None:
+    """best_option_core, then once more with each option's leading numbering ("2. ") set aside; the option returned
+    is always the one the page listed."""
+    hit = _best_option_core(options, wants)
+    if hit is not None or not any(ENUM_PREFIX.match(str(o.get("text") or "")) for o in options):
+        return hit
+    bare = [{**o, "text": ENUM_PREFIX.sub("", str(o.get("text") or ""), count=1), "_i": i} for i, o in enumerate(options)]
+    hit = _best_option_core(bare, wants)
+    return options[hit["_i"]] if hit is not None else None
+
+
+def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
     """Exact match first. A prefix/contains match is accepted only when it is UNambiguous: if several
     options share the prefix (Texas A&M University - College Station / - Commerce / - Kingsville) the
     caller must name the exact one. Picking the shortest would silently choose the wrong campus."""

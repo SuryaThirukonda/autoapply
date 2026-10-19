@@ -507,3 +507,15 @@ def test_a_school_with_words_in_front_is_another_school():
     assert best_option([{"text": "West Texas A&M University"}, {"text": "Texas A&M University"}], ["Texas A&M University"])["text"] == "Texas A&M University"
     assert best_option([{"text": "Texas A&M University - College Station"}], ["Texas A&M University", "Texas A&M University - College Station"])["text"] == \
         "Texas A&M University - College Station"
+
+
+
+def test_a_numbered_option_list_matches_his_wording():
+    """American Express' Oracle Veteran Status (2026-10-19): '1. Protected Veteran', '2. Not a Protected Veteran',
+    '3. Declines to Self-Identify'."""
+    from goat.browser.fill import best_option, _chip_matches
+    opts = [{"text": "1. Protected Veteran"}, {"text": "2. Not a Protected Veteran"}, {"text": "3. Declines to Self-Identify"}]
+    hit = best_option(opts, ["I am not a protected veteran", "Not a protected veteran"])
+    assert hit is opts[1]
+    assert _chip_matches("2. Not a Protected Veteran", ["Not a protected veteran"])
+    assert best_option([{"text": "2027"}, {"text": "2028"}], ["2028"])["text"] == "2028"     # plain numbers untouched
