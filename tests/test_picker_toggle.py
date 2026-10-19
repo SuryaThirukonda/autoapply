@@ -71,3 +71,31 @@ def test_a_number_box_that_normalizes_the_value_still_reads_back_equal():
     assert readback.values_equal("3.90", "3.9", "text")
     assert not readback.values_equal("4.0", "3.9", "text")
     assert not readback.values_equal("4.0", "", "text")
+
+
+SCHOOLS = ["Texas A & M University", "Texas A&M University - College Station", "Texas A&M University-College Station", "Texas A&M"]
+
+
+@pytest.mark.parametrize("offered,want", [
+    (["Texas A&M", "Texas A&M University - Commerce"], "Texas A&M"),                      # Sierra's curated list
+    (["Texas A&M University - Central Texas", "Texas A&M University - College Station"], "Texas A&M University - College Station"),
+    (["Texas A&M University - Commerce"], None),                                       # another campus: never
+    (["Texas A&M University-Kingsville"], None),
+    (["Texas A & M University"], "Texas A & M University"),
+])
+def test_a_school_pick_never_lands_on_another_campus(offered, want):
+    got = fill.best_option([{"text": t} for t in offered], SCHOOLS)
+    assert (got or {}).get("text") == want
+
+
+def test_dash_answers_outside_schools_still_match():
+    assert fill.best_option([{"text": "Yes - I am authorized"}, {"text": "No - I am not"}], ["Yes"])["text"] == "Yes - I am authorized"
+    assert fill.best_option([{"text": "Houston, TX"}], ["Houston"])["text"] == "Houston, TX"
+
+
+def test_a_class_only_toggle_button_is_found():
+    """Ashby's real markup (Sierra, 2026-10-18): the open button has no label, only a _toggleButton_ class."""
+    import re
+    from goat.browser import js
+    m = re.search(r"const TOGGLE = (/.*?/i);", js.JS_OPEN_TOGGLE)
+    assert m and "toggle[-_ ]?button" in m.group(1)

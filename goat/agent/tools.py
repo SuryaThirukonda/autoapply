@@ -589,6 +589,9 @@ class ToolDispatcher:
             if is_choice and item and item.get("type") in ("radio", "checkbox") and str(val).strip().lower() not in AFFIRMATIVE | {"false", "no", "off", "unchecked"}:
                 lab = answers.norm(item.get("label") or ""); nv = answers.norm(str(val))
                 parts = [answers.norm(p) for p in str(val).split(";") if answers.norm(p)]
+                # "Spring 2028 (May 2028)" names the option "Spring 2028": a stored note in brackets is not part of the
+                # option's wording (Sierra, 2026-10-18)
+                parts += [s for s in (answers.norm(re.sub(r"\s*\([^)]*\)", "", p)) for p in str(val).split(";")) if s and s not in parts]
                 if nv and (nv == lab or (len(nv) >= 4 and nv in lab) or any(p == lab or (len(p) >= 4 and p in lab) for p in parts)
                            or date_option_covers(str(val), item.get("label") or "")):
                     val = "true"
@@ -1368,14 +1371,24 @@ class ToolDispatcher:
         hi = max((y, mo or 12) for y, mo in dates)
         return lo > (2028, 5) or hi < (2028, 5)
 
+    # A posting the portal no longer has (AtkinsRealis on Workday, 2026-10-18: "The page you are looking for doesn't exist"):
+    # the job is closed, not a portal error the watchdog keeps retrying.
+    POSTING_GONE = re.compile(r"(page you are looking for (doesn'?t|does not|no longer) exist|job (you are looking for |posting )?(is )?no longer "
+                              r"(available|exists|open|active)|(position|job|requisition) has been (filled|closed|removed)|no longer accepting "
+                              r"applications|this job (has expired|is closed)|job not found)", re.I)
+
     async def t_park(self, reason: str):
         # A portal failure page (Workday "Something went wrong ... Error Code") cannot be fixed on the form:
         # park it as a portal error at once; the watchdog retries it in a fresh tab later.
         from ..gate import portal_error
         try:
-            perr = portal_error(await self.ctx.ex.page_text(30000))
+            page_now = await self.ctx.ex.page_text(30000)
         except Exception:
-            perr = None
+            page_now = ""
+        gone = self.POSTING_GONE.search(page_now or "")
+        if gone and not self.ctx.submitted:
+            raise Parked(f"posting_closed: the portal says {gone.group(0)[:80]!r}", "dead")
+        perr = portal_error(page_now) if page_now else None
         if perr and self.ctx.control_failures.get("portal:reload", 0) < 1:
             # One refresh first: Workday's "Something went wrong" page usually clears on reload (ICF, 2026-10-18).
             self.ctx.control_failures["portal:reload"] = 1

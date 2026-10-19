@@ -126,3 +126,22 @@ def test_a_disabled_control_with_a_default_value_needs_no_decision(store):
     g = run_gate(job=job, snapshot=_snap(items), page_text="Education\nSubmit Application", expected_resume=None,
                  free_text_answers=[], portal="ashby", page_no=1)
     assert g.result == "blocked" and "End Date" in g.reasons[0]
+
+
+GONE = """<!doctype html><html><body><h1>Careers</h1><p>The page you are looking for doesn't exist.</p>
+<a href="#">Search for Jobs</a></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_park_on_a_removed_posting_closes_the_job(store, tmp_path):
+    """AtkinsRealis (2026-10-18): Workday's 'The page you are looking for doesn't exist' held as a portal error."""
+    job = _job()
+    ex = await _page(tmp_path, GONE)
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        with pytest.raises(Parked) as pi:
+            await d.t_park("portal_error: the listing page does not exist")
+        assert pi.value.state == "dead" and pi.value.reason.startswith("posting_closed:")
+    finally:
+        await ex.close(close_browser=True)

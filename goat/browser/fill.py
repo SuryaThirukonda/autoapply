@@ -303,12 +303,28 @@ async def _type_and_enter(ex: Executor, ref: str, wants: list[str], baseline_key
                    else f"the prompt's search for {text!r} returned nothing usable" + (f" (it took {chips[:2]!r}, removed)" if chips else ""))
 
 
+# An institution's campus or branch after a dash ("Texas A&M University - Commerce") is a different school unless one of
+# the wanted variants names it ("- College Station"): a prefix match must never land on another campus (2026-10-18).
+_INSTITUTION = re.compile(r"\b(university|college|institute|school|academy|polytechnic)\b|\ba\s*&\s*m\b", re.I)
+_DASH_QUALIFIER = re.compile(r"\s[-\u2013\u2014]\s|(?<=\S)[-\u2013\u2014](?=[A-Z])")
+
+
+def _foreign_qualifier(text: str, wants: list[str]) -> bool:
+    parts = _DASH_QUALIFIER.split((text or "").strip(), maxsplit=1)
+    if len(parts) < 2:
+        return False
+    extra = set(_norm(parts[1]).split())
+    named = {w for x in wants for w in _norm(x).split()}
+    return bool(extra) and not extra <= named
+
+
 def best_option(options: list[dict], wants: list[str]) -> dict | None:
     """Exact match first. A prefix/contains match is accepted only when it is UNambiguous: if several
     options share the prefix (Texas A&M University - College Station / - Commerce / - Kingsville) the
     caller must name the exact one. Picking the shortest would silently choose the wrong campus."""
     seen: set[str] = set()
     options = [o for o in options if not (_norm(o.get("text")) in seen or seen.add(_norm(o.get("text"))))]
+    institution = any(_INSTITUTION.search(w or "") for w in wants)
     for want in wants:
         w = _norm(want)
         if not w:
@@ -316,7 +332,9 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
         exact = [o for o in options if _norm(o["text"]) == w]
         if exact:
             return exact[0]
-        starts = [o for o in options if _norm(o["text"]) == w or _norm(o["text"]).startswith(w + " ")]
+        # a prefix or contains match on a school never lands on a campus the wants do not name
+        near = [o for o in options if not (institution and _foreign_qualifier(o["text"], wants))]
+        starts = [o for o in near if _norm(o["text"]) == w or _norm(o["text"]).startswith(w + " ")]
         if len(starts) == 1:
             return starts[0]
         if len(starts) > 1:
@@ -327,7 +345,7 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
                 return bare[0]
             continue
         # whole words only: 'no' must never match 'unknown', 'none' or 'not applicable'
-        has = [o for o in options if re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", _norm(o["text"]))]
+        has = [o for o in near if re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", _norm(o["text"]))]
         if len(has) == 1:
             return has[0]
         # "Bachelor's" vs "Bachelors", "E-mail" vs "Email": equal once spaces and punctuation are gone.

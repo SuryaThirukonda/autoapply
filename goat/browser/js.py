@@ -801,7 +801,7 @@ JS_PAGE_TEXT = r"""
 JS_OPEN_TOGGLE = r"""(ref) => {
   const el = document.querySelector('[data-goat-ref="' + ref + '"]');
   if (!el) return {ok: false};
-  const TOGGLE = /(open|toggle|show|expand)\b.{0,30}\b(dropdown|menu|list|options|select)|\bdropdown\b|show options|chevron|caret/i;
+  const TOGGLE = /(open|toggle|show|expand)\b.{0,30}\b(dropdown|menu|list|options|select)|\bdropdown\b|show options|chevron|caret|toggle[-_ ]?button|_toggle/i;
   const text = (x) => [x.getAttribute('aria-label') || '', x.getAttribute('title') || '',
                        (typeof x.className === 'string' ? x.className : (x.className && x.className.baseVal) || '')].join(' ');
   let box = el.parentElement;

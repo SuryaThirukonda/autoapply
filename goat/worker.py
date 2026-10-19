@@ -501,7 +501,11 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
     except Parked as p:
         reason = p.reason
         tab_id = await ex.target_id() or tab_id   # the tab it ended on (it may have followed a new tab)
-        if p.state == "ready_for_you":
+        if p.state == "dead":
+            # the posting is gone (the park found the portal's "no longer exists" page): closed, never retried
+            set_status(job_id, states.DEAD, reason=reason, tab_target_id=tab_id, finished=True)
+            outcome = RunOutcome(states.DEAD, reason)
+        elif p.state == "ready_for_you":
             set_status(job_id, states.READY_FOR_YOU, reason=reason, tab_target_id=tab_id, extra=finish_extra(job_id))
             outcome = RunOutcome(states.READY_FOR_YOU, reason)
             try:

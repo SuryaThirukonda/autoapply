@@ -195,3 +195,36 @@ async def test_a_no_option_written_as_a_sentence_takes_a_stored_no(store, tmp_pa
         assert await ex.page.evaluate("() => document.getElementById('sy').checked") is False
     finally:
         await ex.close(close_browser=True)
+
+
+SEASONS = """<!doctype html><html><body style="margin:20px">
+<fieldset><legend>What is your anticipated graduation season?</legend>
+  <label><input type="radio" name="gs" id="s28"> Spring 2028</label>
+  <label><input type="radio" name="gs" id="f28"> Fall 2028</label></fieldset>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_stored_answer_with_a_bracketed_note_names_its_option(store, tmp_path):
+    """Sierra (2026-10-18): 'Spring 2028 (May 2028)' was refused on the option 'Spring 2028'."""
+    job = _job()
+    answers.save_answer("bank.grad-term", "Spring 2028 (May 2028)", answer_type="text", source="hermes")
+    page = tmp_path / "seasons.html"
+    page.write_text(SEASONS, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        opts = {o["label"].strip(): o["ref"] for g in snap.groups for o in g["options"]}
+        out, _ = await d.t_fill_batch([{"ref": opts["Fall 2028"], "answer_key": "bank.grad-term", "value": None, "source": None, "label": "Season"}])
+        assert out["results"][0]["status"] == "failed"
+        out, _ = await d.t_fill_batch([{"ref": opts["Spring 2028"], "answer_key": "bank.grad-term", "value": None, "source": None, "label": "Season"}])
+        assert out["results"][0]["status"] == "set", out
+        assert await ex.page.evaluate("() => document.getElementById('s28').checked") is True
+    finally:
+        await ex.close(close_browser=True)
