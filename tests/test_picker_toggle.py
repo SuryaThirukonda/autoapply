@@ -99,3 +99,40 @@ def test_a_class_only_toggle_button_is_found():
     from goat.browser import js
     m = re.search(r"const TOGGLE = (/.*?/i);", js.JS_OPEN_TOGGLE)
     assert m and "toggle[-_ ]?button" in m.group(1)
+
+
+SIERRA_SEARCH = """<!doctype html><html><body style="margin:20px">
+<div class="field"><label for="uni">What University do you currently attend?</label>
+  <input id="uni" role="combobox" aria-autocomplete="list" autocomplete="off"><ul id="res" role="listbox"></ul></div>
+<script>
+  const LIST = ["Texas A&M", "Texas Tech University", "University of Texas at Austin"];
+  const inp = document.getElementById('uni'), res = document.getElementById('res');
+  inp.addEventListener('input', () => {
+    const q = inp.value.trim().toLowerCase(); res.innerHTML = '';
+    if (!q) return;
+    for (const u of LIST.filter(u => u.toLowerCase().includes(q))) {   // one substring: a long name finds nothing
+      const li = document.createElement('li'); li.setAttribute('role', 'option'); li.textContent = u;
+      li.addEventListener('mousedown', (e) => { e.preventDefault(); inp.value = u; res.innerHTML = ''; });
+      res.appendChild(li);
+    }
+  });
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_long_name_is_retried_as_a_shorter_query(tmp_path):
+    """Sierra (2026-10-19): 'Texas A&M University' finds nothing in a substring search over a list holding 'Texas A&M'."""
+    page = tmp_path / "search.html"
+    page.write_text(SIERRA_SEARCH, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if (i.get("label") or "").startswith("What University"))
+        r = await fill.choose(ex, ref, ["Texas A&M University", "Texas A & M University", "Texas A&M University - College Station", "Texas A&M"])
+        assert r.ok, r.error
+        assert await ex.page.evaluate("() => document.getElementById('uni').value") == "Texas A&M"
+    finally:
+        await ex.close(close_browser=True)

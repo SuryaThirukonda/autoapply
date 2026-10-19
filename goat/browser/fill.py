@@ -464,6 +464,24 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
                     filtered = [o for o in (filtered if isinstance(filtered, list) else []) if _key(o) not in baseline_keys]
                     if filtered:
                         break
+                if not filtered and not shown_now:
+                    # A search that matches the whole query as one substring finds nothing for a long name (Sierra's
+                    # curated Ashby list has "Texas A&M": "Texas A&M University" returns No results, "Texas" finds it,
+                    # 2026-10-19): retry with the first two words, then the first word, and match against every want.
+                    words = re.findall(r"\S+", want)
+                    for short in [" ".join(words[:2]), words[0] if words else ""]:
+                        if not short or short == want or len(short) < 4:
+                            continue
+                        await _select_all_text(ex)
+                        await ex.type_text(short[:40], real_keys=True, delay_ms=20)
+                        for _ in range(8):
+                            await asyncio.sleep(0.5)
+                            filtered = await ex.eval(js.JS_LIST_OPTIONS)
+                            filtered = [o for o in (filtered if isinstance(filtered, list) else []) if _key(o) not in baseline_keys]
+                            if filtered:
+                                break
+                        if filtered and best_option(filtered, wants):
+                            break
                 if not filtered and shown_now:
                     # The typed wording filtered a react-select down to nothing (Lyft's 'Work Authorization' lists
                     # sentences, the want was 'Yes'): clear it so the whole list is back for the yes/no mapping.
