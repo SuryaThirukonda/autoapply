@@ -1837,7 +1837,11 @@ class ToolDispatcher:
 
     SATISFIED = re.compile(r"(work authorization|authorized to work|sponsorship|citizen|bachelor|gpa|18 years|relocat|onsite|on-site|hybrid|remote|2028|rising senior|eligible to obtain|clearance eligib|"
                            r"\bsatisf|40 hours|full[- ]time|hours (per|a) week|\d+ weeks|start date|begin|beginning|available from|"
-                           r"(may|june) \d{1,2},? 2027|summer 2027|weekend|in[- ]person|commut|related (field|discipline|major|area|degree)|computer science|local to|during the internship)", re.I)
+                           r"(may|june) \d{1,2},? 2027|summer 2027|weekend|in[- ]person|commut|related (field|discipline|major|area|degree)|computer science|local to|during the internship|"
+                           # class standing (Nissan, 2026-10-19: "students entering their Junior or Senior year"): he is a
+                           # junior by credits and a rising senior for Summer 2027 (2027-28 is his final year)
+                           r"\bjunior|\bsophomore|class standing|academic (standing|classification)|year in school|rising (junior|senior)|"
+                           r"entering (their |his )?(junior|senior|third|fourth|final))", re.I)
     # What makes a ready_for_you park final: something only Surya can do or decide. Anything else ("resume application
     # fields", "complete the demographic questions") goes through the gate first (t_park).
     RFY_REASON = re.compile(r"captcha|human|\bbot\b|verif|challenge|prohibit|directly|the applicant|themsel|personally|in person|\bai\b|"
@@ -2024,6 +2028,8 @@ class ToolDispatcher:
             self.ctx.park_attempts += 1
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200]})
             return {"error": "not parked: that requirement is SATISFIED by the standing facts (U.S. citizen, authorized, no sponsorship, "
+                             "a junior by credits and a rising senior for Summer 2027 since 2027-28 is his final year ('Sophomore' is only "
+                             "his current year on forms), "
                              "Bachelor's in progress, GPA 4.0, relocates anywhere, graduates May 2028). A posting stating it is not a restriction. "
                              "Continue: open the application (click Apply / Apply Manually) and fill it."}, None
         # "ready_for_you" stands for what only Surya can do (a CAPTCHA, a posting that wants the applicant himself, a

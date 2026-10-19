@@ -1077,3 +1077,13 @@ async def test_a_certification_is_never_picked_without_his_certification_key(sto
     d, ctx = _dispatcher({"id": 34, "company": "TIAA", "ats": "workday"})
     out, _ = await d._t_choose("e121", None, ["Cloud Guild: AWS Cloud Practitioner - TIAA"], "Certification", "resume")
     assert "background.certifications_variants" in out["error"]
+
+
+
+def test_a_junior_or_senior_standing_requirement_is_satisfied():
+    """Nissan (2026-10-19): 'students entering their Junior or Senior year at the start of the upcoming academic term'
+    was held because his year on forms is Sophomore."""
+    from goat.agent.tools import ToolDispatcher
+    r = ("eligibility: Nissan requires students entering their Junior or Senior year at the start of the upcoming academic "
+         "term; Surya's standing academic classification is Sophomore.")
+    assert ToolDispatcher.SATISFIED.search(r) and not ToolDispatcher.DISQUALIFIERS.search(r)
