@@ -441,6 +441,10 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
             continue
         # whole words only: 'no' must never match 'unknown', 'none' or 'not applicable'
         has = [o for o in near if re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", _norm(o["text"]))]
+        if institution:
+            # words in FRONT of a school's name make it another school: "West Texas A&M University" contains "Texas A&M
+            # University" and was picked on Coinbase's and ID.me's Greenhouse forms (2026-10-19)
+            has = [o for o in has if _norm(o["text"]).startswith(w)]
         if len(has) == 1:
             return has[0]
         # "Bachelor's" vs "Bachelors", "E-mail" vs "Email": equal once spaces and punctuation are gone.

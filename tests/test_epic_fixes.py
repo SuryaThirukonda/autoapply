@@ -496,3 +496,14 @@ async def test_number_boxes_take_the_month_or_year_and_a_formatted_phone_counts(
         assert vals == ["8", "2025", "(281) 832-1205"]
     finally:
         await ex.close(close_browser=True)
+
+
+
+def test_a_school_with_words_in_front_is_another_school():
+    """Coinbase and ID.me (2026-10-19): a filtered list holding only 'West Texas A&M University' got picked for
+    'Texas A&M University'."""
+    from goat.browser.fill import best_option
+    assert best_option([{"text": "West Texas A&M University"}], ["Texas A&M University"]) is None
+    assert best_option([{"text": "West Texas A&M University"}, {"text": "Texas A&M University"}], ["Texas A&M University"])["text"] == "Texas A&M University"
+    assert best_option([{"text": "Texas A&M University - College Station"}], ["Texas A&M University", "Texas A&M University - College Station"])["text"] == \
+        "Texas A&M University - College Station"
