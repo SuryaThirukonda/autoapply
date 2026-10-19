@@ -212,6 +212,19 @@ AFFIRM_LABEL = re.compile(r"^(yes\b|i (agree|consent|accept|acknowledge|certify|
 
 # Yes/no questions about where Surya works or worked, industries, affiliations and relationships.
 # Surya, 2026-10-15: "answer is almost always no (that's default if it stalls)".
+def _plain_wordings(answer) -> list[str]:
+    """The ';'-separated wordings of a stored answer, without structured entries: background.certifications holds
+    "{'name': 'AWS Certified Cloud Practitioner', ...}", and as the head of background.certifications_variants that
+    text was typed into Axiom's and Northrop's Workday certification search, became a free-text chip and was
+    reported "set" (2026-10-19)."""
+    out = []
+    for w in str(answer if answer is not None else "").split(";"):
+        w = w.strip()
+        if w and not w.startswith(("{", "[")) and w not in out:
+            out.append(w)
+    return out
+
+
 # A work-entry field: its value is Surya's stored entry (experience.work.N.*), never a résumé or generated literal.
 WORK_ENTRY_FIELD = re.compile(r"^\s*(current |most recent |previous )?(company( name)?|employer( name)?|organi[sz]ation( name)?|"
                               r"job title|position title)\s*[*:]?\s*$", re.I)
@@ -745,21 +758,21 @@ class ToolDispatcher:
             val, src, err = self._resolve_value(answer_key, None, None, label)
             if err:
                 return {"error": err}, None
-            wants = [w.strip() for w in str(val).split(";") if w.strip()] + wants
+            wants = _plain_wordings(val) + wants
             # Portal spellings of the same answer ("Texas A & M University" on Workday) live in <key>_variants.
             variants = answers.get(answer_key + "_variants", self.ctx.job.get("company", ""), self.ctx.portal)
             if variants and variants.has_value:
-                wants += [w.strip() for w in str(variants.answer).split(";") if w.strip() and w.strip() not in wants]
-            stored_wants = [w.strip() for w in str(val).split(";") if w.strip()]
+                wants += [w for w in _plain_wordings(variants.answer) if w not in wants]
+            stored_wants = _plain_wordings(val)
             if variants and variants.has_value:
-                stored_wants += [w.strip() for w in str(variants.answer).split(";") if w.strip()]
+                stored_wants += _plain_wordings(variants.answer)
             if answer_key.endswith("_variants"):
                 # The variants are the portal spellings tried AFTER the answer itself: picked by the variants key,
                 # Epic Games' school search got only "Texas A & M University"-style wordings, all unknown to it,
                 # and never "Texas A&M University" (2026-10-19).
                 base = answers.get(answer_key[: -len("_variants")], self.ctx.job.get("company", ""), self.ctx.portal)
                 if base and base.has_value:
-                    head = [w.strip() for w in str(base.answer).split(";") if w.strip()]
+                    head = _plain_wordings(base.answer)
                     wants = head + [w for w in wants if w not in head]
                     stored_wants = head + stored_wants
         elif not wants:

@@ -521,7 +521,8 @@ class Workday(Adapter):
              "`set_date` (graduation = education.graduation_mmddyyyy, i.e. 05/15/2028). Revio IS a current role: tick "
              "'I currently work here' and leave its end date blank. Certifications are optional: add his AWS Certified Cloud "
              "Practitioner only when the Certification list offers it; if it does not (Axiom Space, Northrop Grumman list only "
-             "other AWS exams), delete that certification block and move on, never pick another certificate.")
+             "other AWS exams), delete that certification block and move on, never pick another certificate. Then a Review "
+             "showing 'Certifications: No Response' is correct and final: never go back to My Experience for it.")
 
     def is_review_page(self, snap: Snapshot) -> bool:
         return any(re.search(r"\breview\b", h, re.I) for h in snap.headings) or "review" in snap.url.lower()

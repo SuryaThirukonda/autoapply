@@ -912,3 +912,12 @@ async def test_a_work_entry_field_never_takes_a_resume_literal(store):
     res = {r["ref"]: r for r in out["results"]}
     assert res["e87"]["status"] == "failed" and "experience.work.N.company" in res["e87"]["error"]
     assert res["e88"]["status"] == "failed"          # the control's own label says Job Title
+
+
+
+def test_structured_answers_are_never_wordings_to_pick():
+    from goat.agent.tools import _plain_wordings
+    assert _plain_wordings("{'name': 'AWS Certified Cloud Practitioner', 'issuer': 'Amazon Web Services'}") == []
+    assert _plain_wordings("AWS Certified Cloud Practitioner; Cloud Practitioner; Cloud Practitioner") == \
+        ["AWS Certified Cloud Practitioner", "Cloud Practitioner"]
+    assert _plain_wordings(None) == []
