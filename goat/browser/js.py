@@ -280,7 +280,30 @@ JS_PAGE_ERRORS = r"""
   function vis(el) { try { const r = el.getBoundingClientRect(); const s = el.ownerDocument.defaultView.getComputedStyle(el);
       return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && parseFloat(s.opacity || '1') > 0.01; } catch (e) { return false; } }
   function txt(el) { return (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim(); }
+  // The question a field belongs to: its own label when that says something, else the nearest question text above it
+  // (Greenhouse's file questions label the hidden input just "Attach").
+  function questionOf(field) {
+    let lab = null;
+    try { if (field.id) lab = document.querySelector('label[for="' + CSS.escape(field.id) + '"]'); } catch (e) { lab = null; }
+    const own = lab ? txt(lab) : '';
+    if (own && !/^(attach|upload|browse|choose file|select file)$/i.test(own.trim())) return own.slice(0, 120);
+    let p = field.parentElement;
+    for (let i = 0; i < 6 && p; i++, p = p.parentElement) {
+      const q = p.querySelector('label:not(.visually-hidden), legend, [class*="label" i]:not(.visually-hidden)');
+      if (q && !q.contains(field)) { const t = txt(q); if (t && !/^(attach|upload|browse)$/i.test(t.trim())) return t.slice(0, 160); }
+    }
+    return own.slice(0, 120);
+  }
   function nearestLabel(el) {
+    // An error tied to its field by id ("question_123-error" for "question_123", aria-errormessage) names THAT field,
+    // not whichever label happens to sit nearby (Stoke Space, 2026-10-18: a required essay upload's error was read as
+    // the work-authorization question's, and the run kept re-setting the wrong field).
+    try {
+      const m = el.id && el.id.match(/^(.+?)[-_](error|errors|err|help)$/i);
+      const owner = (m && document.getElementById(m[1])) ||
+                    (el.id && document.querySelector('[aria-errormessage="' + CSS.escape(el.id) + '"], [aria-describedby~="' + CSS.escape(el.id) + '"]'));
+      if (owner) { const q = questionOf(owner); if (q) return q; }
+    } catch (e) { /* fall through */ }
     let p = el, hops = 0;
     while (p && hops < 6) { const l = p.querySelector ? p.querySelector('label, [class*="label" i]') : null; if (l) { const t = txt(l); if (t && t.length < 120) return t.slice(0, 120); } p = p.parentElement; hops++; }
     const al = el.getAttribute && (el.getAttribute('aria-label') || ''); return (al || '').slice(0, 120);
@@ -541,7 +564,9 @@ JS_FILL_BATCH = r"""
       } else if (tag === 'button' && (el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked'))) {
         const want = (f.value === true || /^(true|yes|on|checked|1|pressed)$/i.test(String(f.value)));
         const isOn = () => (el.getAttribute('aria-pressed') ?? el.getAttribute('aria-checked')) === 'true';
-        if (isOn() !== want) el.click();
+        // A toggle that has to change is pressed by the caller with a REAL mouse click: a script click turned Ashby's
+        // Yes/No button on screen while its form still reported the answer missing (Niantic, ibotta, 2026-10-18).
+        if (isOn() !== want) { res.real_click = true; res.want = want; el.scrollIntoView({ block: 'center', inline: 'nearest' }); }
         res.readback = isOn() ? 'pressed' : 'unpressed'; res.ok = isOn() === want;
       } else if (tag === 'input' && type === 'file') {
         res.error = 'use upload_resume'; out.push(res); continue;
@@ -594,7 +619,8 @@ JS_READ_REF = r"""
     if (ctl) { const rc = ctl.getBoundingClientRect(); if (rc.width > 20 && rc.height > 10) r2 = rc; }
   }
   return JSON.stringify({ found: true, tag, type, label: labelFor(el), value, shown, x: Math.round(r2.x + r2.width / 2), y: Math.round(r2.y + r2.height / 2), w: Math.round(r2.width), h: Math.round(r2.height),
-    disabled: !!el.disabled, expanded: el.getAttribute('aria-expanded'), invalid: el.getAttribute('aria-invalid') === 'true' });
+    disabled: !!el.disabled, expanded: el.getAttribute('aria-expanded'), invalid: el.getAttribute('aria-invalid') === 'true',
+    pressed: (el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked')) ? (el.getAttribute('aria-pressed') ?? el.getAttribute('aria-checked')) === 'true' : null });
 }
 """
 

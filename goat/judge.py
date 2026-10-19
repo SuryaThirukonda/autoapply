@@ -68,6 +68,8 @@ FACT_CHECK_INSTRUCTIONS = (
     "organization; it never supports an answer about family or relatives abroad, foreign contacts or travel, citizenship, "
     "legal, criminal, financial, medical or security-clearance history, or an amount of experience: those need an explicit "
     "statement in the profile or the evidence, else they are unsupported. "
+    "A statement about the company, its products or the role is supported when the JOB POSTING says it (IXL, 2026-10-18: "
+    "the role's duties came from the posting). "
     "Motivation and opinion ('I am interested in X because ...') need no support beyond the facts they cite. "
     "For a single-choice question listed with several picks, only the last pick counts. When no unconfirmed answers "
     "are listed, return an empty list."
@@ -142,7 +144,7 @@ class Judge:
 
     async def judge(self, job_id: int, decisions: list[dict], screenshot_png: bytes | None, page_text: str,
                     gate: dict | None = None, outline: str = "", *, profile: str = "",
-                    unconfirmed: list[dict] | None = None) -> dict | None:
+                    unconfirmed: list[dict] | None = None, posting: str = "") -> dict | None:
         t0 = time.monotonic()
         try:
             model = assert_allowed(self.model)
@@ -160,6 +162,7 @@ class Judge:
         if fact_check:
             content += [
                 {"type": "input_text", "text": "APPLICANT PROFILE\n" + (profile or "(missing)")[:40000]},
+                {"type": "input_text", "text": "JOB POSTING (claims about the company or the role may rest on it)\n" + (posting or "(not captured)")[:10000]},
                 {"type": "input_text", "text": "UNCONFIRMED ANSWERS\n" + self._unconfirmed_text(unconfirmed)},
             ]
         if screenshot_png:
@@ -206,7 +209,8 @@ async def judge_page(job: dict, ctx, ex, *, shot: str = "shadow", fact_check: bo
         kwargs = {}
         if fact_check:
             kwargs = {"profile": profile.text(),
-                      "unconfirmed": records.unconfirmed_answers(job_id, job.get("company") or "", job.get("ats") or "")}
+                      "unconfirmed": records.unconfirmed_answers(job_id, job.get("company") or "", job.get("ats") or ""),
+                      "posting": str(getattr(ctx, "posting_text", "") or "")}
         verdict = await Judge(client=getattr(getattr(ctx, "classifier", None), "client", None)).judge(
             job_id, records.decisions(job_id), png, text, getattr(ctx, "gate_result", None), outline=outline, **kwargs)
     except Exception as e:  # noqa: BLE001 - the judge is evidence, never a crash

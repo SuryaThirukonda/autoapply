@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import answers, db, profile, records, states
-from ..budget import Budget, Parked
+from ..budget import Budget, BudgetExceeded, Parked
 from ..browser import fill, snapshot as snapmod
 from ..browser.captcha import detect_challenge
 from ..browser.executor import ClickRefused, Executor, NavigationRefused
@@ -430,8 +430,8 @@ class ToolDispatcher:
             self.ctx.consecutive_failures = 0 if ok else self.ctx.consecutive_failures + 1
             db.event(self.ctx.job_id, f"tool:{name}", {"args": args, "out": out}, latency_ms=int((time.monotonic() - t0) * 1000))
             return json.dumps(out, default=str), img
-        except (Parked,):
-            raise
+        except (Parked, BudgetExceeded):
+            raise                          # a park or a spent budget ends the run; neither is a tool bug
         except (ClickRefused, NavigationRefused) as e:
             self.ctx.consecutive_failures += 1
             db.event(self.ctx.job_id, f"tool:{name}:refused", {"args": args, "error": str(e)})

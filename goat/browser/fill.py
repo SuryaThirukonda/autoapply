@@ -32,6 +32,16 @@ async def fill_batch(ex: Executor, fields: list[dict]) -> list[FieldResult]:
     raw = await ex.eval(js.JS_FILL_BATCH, fields)
     out = []
     for r in raw if isinstance(raw, list) else []:
+        if r.get("real_click"):
+            # a toggle button: press it like a person (pointer + mouse events at its centre), then read it back
+            try:
+                await ex.click_ref(str(r.get("ref", "")))
+                await asyncio.sleep(0.3)
+                info = await ex.read_ref(str(r.get("ref", "")))
+                on = bool(info.get("pressed"))
+                r = {**r, "readback": "pressed" if on else "unpressed", "ok": on == bool(r.get("want"))}
+            except ClickRefused as e:
+                r = {**r, "ok": False, "error": str(e)}
         out.append(FieldResult(ref=r.get("ref", ""), ok=bool(r.get("ok")), readback=str(r.get("readback", "")),
                                error=str(r.get("error", ""))))
     return out

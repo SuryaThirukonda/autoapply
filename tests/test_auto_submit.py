@@ -38,8 +38,8 @@ class FakeJudge:
     def __init__(self, client=None, model=None):
         pass
 
-    async def judge(self, job_id, decisions, png, text, gate=None, outline="", *, profile="", unconfirmed=None):
-        FakeJudge.calls.append({"job_id": job_id, "profile": profile, "unconfirmed": unconfirmed, "gate": gate})
+    async def judge(self, job_id, decisions, png, text, gate=None, outline="", *, profile="", unconfirmed=None, posting=""):
+        FakeJudge.calls.append({"job_id": job_id, "profile": profile, "unconfirmed": unconfirmed, "gate": gate, "posting": posting})
         return dict(FakeJudge.canned)
 
 
@@ -160,6 +160,7 @@ async def test_the_fact_check_sends_the_profile_and_the_unconfirmed_answers(stor
     texts = [c["text"] for c in client.kw["input"][0]["content"] if c["type"] == "input_text"]
     assert any(t.startswith("APPLICANT PROFILE\nPROFILE: Revio, DeKalb") for t in texts)
     assert any(t.startswith("UNCONFIRMED ANSWERS\n1. Why Acme? = 'I have 5 years of Go'") for t in texts)
+    assert any(t.startswith("JOB POSTING") for t in texts)
     assert "FACT CHECK" in client.kw["instructions"] and client.kw["model"] == "gpt-6-luna" and client.kw["store"] is False
     notes = db.connect().execute("SELECT notes FROM judgements ORDER BY id DESC LIMIT 1").fetchone()[0]
     assert "unsupported: Why Acme?" in notes
@@ -183,12 +184,14 @@ async def test_a_verified_draft_is_submitted_at_once(store, judged, tmp_path, mo
     monkeypatch.setattr(SETTINGS, "auto_submit", "verified")
     job = _job()
     ex, d, ctx = await _filled(tmp_path, job)
+    ctx.posting_text = "acme builds backend systems for schools"
     try:
         out, _ = await d.t_submit(None)
         assert out["status"] == "submitted", out
         assert await _submits(ex) == 1 and ctx.auto_submitted and ctx.judged
         call = judged.calls[-1]
         assert call["profile"] is not None and [u["label"] for u in call["unconfirmed"]] == ["Why Acme?"]
+        assert call["posting"] == "acme builds backend systems for schools"
         assert _events("auto_submit:verified") and _events("verify:pass")[0]["unconfirmed"] == 1
         assert ctx.gate_result["result"] == "pass_shadow"
     finally:
