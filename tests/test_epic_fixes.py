@@ -233,3 +233,38 @@ async def test_a_star_in_the_visible_label_makes_a_field_required(tmp_path):
         assert any(g.get("required") for g in snap.groups if "Gender" in (g.get("label") or "")), snap.groups
     finally:
         await ex.close(close_browser=True)
+
+
+STATUS = """<!doctype html><html><body style="margin:20px">
+<label for="im">What is your current immigration status?</label>
+<select id="im"><option>Select One</option><option>U.S. Citizen</option><option>Permanent Resident</option><option>Not Applicable</option></select>
+<label for="mx">If applicable, when does your current U.S immigration status max-out?</label>
+<select id="mx"><option>Select One</option><option>Within 6 months</option><option>Not Applicable</option></select>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_an_option_only_the_model_offered_is_recorded_as_judgment(store, tmp_path):
+    """Nike (2026-10-19): choose put 'Not Applicable' under work_authorization.us_citizen = Yes and called it the
+    portal's wording for Yes. Such a pick is now the model's judgment, which the fact check verifies."""
+    from goat import records
+    answers.save_answer("work_authorization.us_citizen", "Yes", source="questionnaire")
+    answers.save_answer("q.current_u_s_immigration_status", "U.S. Citizen; US Citizen; Not Applicable", answer_type="choice_chain", source="operator")
+    ex = await _race(tmp_path, STATUS, "status.html")
+    try:
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        refs = [i["ref"] for i in snap.items if i.get("tag") == "select"]
+        out, _ = await d.t_choose(refs[0], "q.current_u_s_immigration_status", [], "Immigration status", None)
+        assert out["readback"] == "U.S. Citizen" and "came from your options" not in out.get("note", "")
+        out, _ = await d.t_choose(refs[1], "work_authorization.us_citizen", ["Not Applicable"], "Status max-out", None)
+        assert out["readback"] == "Not Applicable" and "came from your options" in out["note"]
+        srcs = {r["field_label"]: r["source"] for r in records.decisions(ctx.job_id)}
+        assert srcs["Immigration status"] == "standing:q.current_u_s_immigration_status"
+        assert srcs["Status max-out"] == "judgment:work_authorization.us_citizen"
+        flag, ev = answers.unconfirmed_source("judgment:work_authorization.us_citizen")
+        assert flag and "work_authorization.us_citizen = 'Yes'" in ev
+    finally:
+        await ex.close(close_browser=True)

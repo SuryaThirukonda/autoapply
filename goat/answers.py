@@ -256,6 +256,10 @@ def unconfirmed_source(source: str | None, company: str = "", ats: str = "") -> 
         return False, ""
     if low.startswith("user:manual"):
         return True, "kept as the page showed it"
+    if low.startswith("judgment:"):
+        key = s.split(":", 1)[1].strip()
+        a = get(key, company, ats)
+        return True, (f"the agent picked this option for the stored answer {key} = {str(a.answer)[:160]!r}" if a and a.has_value else "")
     return True, ""
 
 

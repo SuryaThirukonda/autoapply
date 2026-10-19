@@ -741,15 +741,27 @@ class ToolDispatcher:
                     wants = head + [w for w in wants if w not in head]
         elif not wants:
             return {"error": "give options or an answer_key"}, None
+        model_opts = [o for o in (options or []) if o]
+        his_wants = [w for w in wants if w not in model_opts]
         r = await fill.choose(self.ctx.ex, ref, wants)
         self.ctx.budget.step()
         if r.ok:
-            records.record_decision(self.ctx.job_id, self.ctx.page_no, label, r.readback, src if answer_key is None else src, r.ref or ref)
+            shown = str(r.readback)
+            # Matched only by an option the model supplied, not by the stored answer or its variants: the model's own
+            # mapping ("Not Applicable" recorded under work_authorization.us_citizen = Yes on Nike, 2026-10-19). It is
+            # recorded as judgment so the fact check before an automatic submit looks at it.
+            mine = bool(answer_key) and bool(his_wants) and fill.best_option([{"text": shown}], his_wants) is None \
+                and not any(answers.norm(w) and answers.norm(w) in answers.norm(shown) for w in his_wants)
+            rec_src = f"judgment:{answer_key}" if mine else src
+            records.record_decision(self.ctx.job_id, self.ctx.page_no, label, shown, rec_src, r.ref or ref)
             self.ctx.control_failures.pop(ref, None)
             out = r.as_dict()
-            first = next((w for w in wants if w), "")
-            if first and answers.norm(str(r.readback)) != answers.norm(first):
-                out["note"] = (f"{str(r.readback)[:60]!r} is this portal's wording for {first[:40]!r} (one of the stored variants): "
+            first = next((w for w in his_wants if w), "") or next((w for w in wants if w), "")
+            if mine:
+                out["note"] = (f"{shown[:60]!r} came from your options, not from the stored answer {first[:60]!r}: it must mean the same, "
+                               "and the check before submit will verify it. If it does not, pick the option that says the stored answer.")
+            elif first and answers.norm(shown) != answers.norm(first):
+                out["note"] = (f"{shown[:60]!r} is this portal's wording for {first[:40]!r} (one of the stored variants): "
                                "it is the correct, sourced value. Do not re-set it, do not ask, do not park over it.")
             return out, None
         return self._with_fallback_hint(ref, r.as_dict()), None
@@ -1487,9 +1499,10 @@ class ToolDispatcher:
     # What makes a ready_for_you park final: something only Surya can do or decide. Anything else ("resume application
     # fields", "complete the demographic questions") goes through the gate first (t_park).
     RFY_REASON = re.compile(r"captcha|human|\bbot\b|verif|challenge|prohibit|directly|the applicant|themsel|personally|in person|\bai\b|"
-                            r"automat|essay|upload|\bfile\b|portfolio|transcript|document|signature|\bssn\b|social security|consent|"
+                            r"automat|essay|upload|\bfile\b|portfolio|transcript|document|\bssn\b|social security|consent|"
                             r"legal|eligib|clearance|sponsor|not (offered|available|listed|selectable)|no (selectable|matching) |"
                             r"cannot be (set|selected|answered)|picker .*(not|no)\b", re.I)
+    RFY_GIVE_UP = re.compile(r"^ready_for_you:\s*(please\s+)?(complete|finish|fill|continue|resume|fix|enter|provide|answer|select|add)\b", re.I)
     # Surya 2026-10-18: a car requirement is fine (he arranges one); "local / within N miles" is fine when the posting is
     # paid; a straight hardware role is not.
     DISQUALIFIERS = re.compile(r"(master'?s|ph\.?d|doctoral|graduate program|active (secret|top secret|ts/sci|clearance)|returning intern|co-?op|fall 2027|spring 2028|quant|"
@@ -1673,7 +1686,11 @@ class ToolDispatcher:
         # file goat does not have). Without such a reason it is checked like any eager park: Moderna's "resume
         # application fields" quit on My Information and Epic Games' "complete the demographic questions" quit on
         # questions his stored answers cover (2026-10-19).
-        rfy_soft = low.startswith("ready_for_you") and self.ctx.park_attempts < 2 and not self.RFY_REASON.search(reason)
+        # A reason that only says what is left to do ("complete the CSX Oracle application fields, including the full home
+        # address, work experience, education, remaining questions, and e-signature", 2026-10-19) is never final.
+        rfy_soft = low.startswith("ready_for_you") and self.ctx.park_attempts < 2 and (
+            not self.RFY_REASON.search(reason)
+            or (self.RFY_GIVE_UP.search(reason) and not re.search(r"captcha|human|\bbot\b|challenge", reason, re.I)))
         hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch", "needs_you")) \
             and not rfy_soft
         if not hard and self.ctx.park_attempts < 2:
