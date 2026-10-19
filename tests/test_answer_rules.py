@@ -963,3 +963,50 @@ def test_a_notice_acknowledgement_is_answered_by_his_standing_consent():
     assert acknowledgement_key("Have you worked for Penn State before?", ["Yes", "No"]) is None
     assert acknowledgement_key("Would you like to join our talent community?", ["Yes, I agree to join", "No"]) is None
     assert acknowledgement_key("Are you a US citizen?", ["Yes, I am", "No"]) is None
+
+
+
+def test_a_box_for_the_postings_locations_gets_the_posting_locations():
+    """Northrop Grumman (2026-10-19): 'Which available location(s) on the posting are you open to relocating to?
+    Please only select locations that are listed on the posting' got 'Anywhere in the United States'."""
+    from goat.agent.tools import LOCATION_KEY, POSTING_LOCATIONS, posting_locations
+    from goat.agent.prompts import job_brief
+    lab = ("Which available location(s) on the posting are you open to relocating to? Please only select locations that are "
+           "listed on the posting. Type city and states below (e.g. Palmdale, CA).")
+    assert POSTING_LOCATIONS.search(lab)
+    assert POSTING_LOCATIONS.search("Which of the locations listed in the job posting would you accept?")
+    assert not POSTING_LOCATIONS.search("Are you willing to relocate?")
+    assert not POSTING_LOCATIONS.search("Preferred work location")
+    assert not POSTING_LOCATIONS.search("If you are open to locations outside of the one you applied, please list up to three")
+    assert posting_locations({"locations": '["Aurora, CO"]'}) == ["Aurora, CO"]
+    assert posting_locations({"locations": '["Remote", "Palmdale, CA", "Redondo Beach, CA"]'}) == ["Palmdale, CA", "Redondo Beach, CA"]
+    assert posting_locations({}) == [] and posting_locations({"locations": "[]"}) == []
+    assert LOCATION_KEY.search("availability.relocation_scope") and LOCATION_KEY.search("availability.office_preference")
+    assert "posting locations: Aurora, CO" in job_brief({"company": "Northrop Grumman", "locations": '["Aurora, CO"]'}, [])
+
+
+@pytest.mark.asyncio
+async def test_fill_batch_types_the_posting_locations(store, monkeypatch):
+    from goat.browser.snapshot import Snapshot
+    lab = ("Which available location(s) on the posting are you open to relocating to? Please only select locations that are "
+           "listed on the posting. Type city and states below (e.g. Palmdale, CA).")
+    d, ctx = _dispatcher({"id": 216, "company": "Northrop Grumman", "ats": "workday", "locations": '["Aurora, CO"]'})
+    snap = Snapshot(url="u", title="t", headings=[], items=[{"ref": "e59", "tag": "textarea", "label": lab, "value": ""}],
+                    groups=[], errors={}, challenge={})
+    for i in snap.items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    typed = {}
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        out = []
+        for p in plan:
+            typed[p["ref"]] = p["value"]
+            out.append(FieldResult(p["ref"], True, p["value"], ""))
+        return out
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("availability.relocation_scope", "Anywhere in the United States", answer_type="text", source="questionnaire")
+    await d.t_fill_batch([{"ref": "e59", "answer_key": "availability.relocation_scope", "value": None, "source": None, "label": lab}])
+    assert typed.get("e59") == "Aurora, CO", typed

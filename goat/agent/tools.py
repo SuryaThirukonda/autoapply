@@ -231,6 +231,31 @@ RULE_TEXT = re.compile(r"^\s*(select|pick|choose|tick|check|add|always|leave)\b|
                        r"^\s*(all|every|any) (offered|available|listed)( \w+)?\s*$", re.I)
 
 
+# "Which available location(s) on the posting are you open to relocating to? Please only select locations that are
+# listed on the posting. Type city and states below (e.g. Palmdale, CA)." (Northrop Grumman, 2026-10-19): the box wants
+# the posting's own locations, not his "Anywhere in the United States".
+POSTING_LOCATIONS = re.compile(
+    r"(locations?(\(s\))?\s+(that are |which are )?(listed |shown |offered |posted )?(on|in) (the|this) (job )?(posting|requisition|job description|job ad)\b|"
+    r"(available|listed|posted|offered) locations?(\(s\))? (on|in|for) (the|this) (job|posting|position|role|requisition)\b)", re.I)
+LOCATION_KEY = re.compile(r"(relocat|location|office)", re.I)
+
+
+def posting_locations(job: dict | None) -> list[str]:
+    """The listing's own "City, ST" locations (Remote and region-only entries left out)."""
+    import json as _json
+    raw = (job or {}).get("locations")
+    try:
+        locs = _json.loads(raw) if isinstance(raw, str) else list(raw or [])
+    except Exception:
+        locs = [x for x in str(raw or "").split(";")]
+    out = []
+    for x in locs:
+        x = str(x or "").strip()
+        if x and "," in x and not re.search(r"\bremote\b", x, re.I) and x not in out:
+            out.append(x)
+    return out
+
+
 def concrete_entries(answer) -> list[str]:
     """The entries of a ';' chain that are values, without picker rules."""
     return [w.strip() for w in str(answer if answer is not None else "").split(";") if w.strip() and not RULE_TEXT.search(w.strip())]
@@ -680,10 +705,19 @@ class ToolDispatcher:
                 continue
             if f.get("_force_true"):
                 val = "true"
+            # A text box that asks for the posting's own locations gets every one of them (he is open to all), whatever
+            # location key was named (Northrop Grumman, 2026-10-19).
+            posting_locs: list[str] = []
+            if item and item.get("tag") in ("input", "textarea", "richtext") and item.get("type") not in ("radio", "checkbox") \
+                    and LOCATION_KEY.search(str(f.get("answer_key") or "")) \
+                    and POSTING_LOCATIONS.search(f"{f.get('label') or ''} {item.get('label') or ''}"):
+                posting_locs = posting_locations(self.ctx.job)
+                if posting_locs:
+                    val = "; ".join(posting_locs)
             # An ordered preference list ("LinkedIn; Job Board; Agency") is for pickers. A text box
             # takes the first choice only, never the whole chain.
             if f.get("answer_key") and item and item.get("tag") in ("input", "textarea", "richtext") \
-                    and item.get("type") not in ("radio", "checkbox"):
+                    and item.get("type") not in ("radio", "checkbox") and not posting_locs:
                 a = answers.get(f["answer_key"], self.ctx.job.get("company", ""), self.ctx.portal)
                 if a is not None and a.answer_type in ("choice", "multi_choice", "choice_chain"):
                     # A picker rule is not text: Ryan's "list up to three office locations" box got "Select every location

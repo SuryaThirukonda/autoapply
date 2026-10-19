@@ -32,7 +32,7 @@ def claim_next() -> dict | None:
     skip_marks = ",".join("?" for _ in skip)
     with db.tx() as con:
         row = con.execute(
-            f"SELECT j.*, l.company, l.title, l.url, l.ats, l.variant FROM jobs j JOIN listings l ON l.id=j.listing_id "
+            f"SELECT j.*, l.company, l.title, l.url, l.ats, l.variant, l.locations FROM jobs j JOIN listings l ON l.id=j.listing_id "
             f"WHERE j.status=? AND j.attempts < ? AND j.lane IN ({marks}) AND LOWER(COALESCE(l.ats, '')) NOT IN ({skip_marks}) "
             "ORDER BY j.priority DESC, l.date_posted DESC, j.created_at DESC LIMIT 1",
             (states.QUEUED, SETTINGS.budgets.max_attempts, *lanes, *skip)).fetchone()
