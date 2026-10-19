@@ -651,6 +651,10 @@ JS_FILL_BATCH = r"""
           // typed text never commits in a Workday prompt; Workday drops it on blur (Aerospace Corporation, 2026-10-19)
           res.error = 'this is a Workday prompt (search, then pick from its list): use choose with the answer_key'; out.push(res); continue;
         }
+        if (/cx-select-input/.test(String(el.className || ''))) {
+          // an Oracle picker keeps only a value picked from its list (American Express' ZIP Code, 2026-10-19)
+          res.error = 'picker: an Oracle list picker; set it with choose'; out.push(res); continue;
+        }
         let v = String(f.value);
         if (type === 'number' && !/^-?\d+(\.\d+)?$/.test(v.trim())) {
           // A number box for a month ("MM", 1-12) or a year ("YYYY") takes that part of a month-year answer: Epic Games'

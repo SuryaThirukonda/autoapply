@@ -90,3 +90,19 @@ async def test_a_ticked_marketing_opt_in_is_unticked_by_the_consent_pass(tmp_pat
         assert await ex.page.evaluate("() => document.getElementById('privacy').checked") is True, res.details
     finally:
         await ex.close()
+
+
+async def test_fill_batch_refuses_to_type_into_an_oracle_picker():
+    """American Express (2026-10-19): typed ZIP / City / State text never committed in Oracle's pickers."""
+    from goat.browser import fill
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(PAGE)
+        snap = await snapshot.take(ex)
+        month = next(i for i in snap.items if (i.get("label") or "").startswith("Start Date Month"))
+        out = await fill.fill_batch(ex, [{"ref": month["ref"], "value": "October"}])
+        assert not out[0].ok and out[0].error.startswith("picker:"), out
+    finally:
+        await ex.close()

@@ -830,12 +830,23 @@ class ToolDispatcher:
                 # a radio / checkbox decision names its option ("Were you previously employed at ABA? / No"): logged as
                 # the bare question with 'checked', ABA's judge read it as Yes (2026-10-19)
                 dec_label = f"{dec_label[:120]} / {opt[:60]}"
-            plan.append({"ref": f["ref"], "value": val, "_src": src, "_label": dec_label, "_text": not is_choice})
+            plan.append({"ref": f["ref"], "value": val, "_src": src, "_label": dec_label, "_text": not is_choice,
+                         "_key": f.get("answer_key"), "_source": f.get("source")})
         if plan:
             res = await fill.fill_batch(self.ctx.ex, [{"ref": p["ref"], "value": p["value"]} for p in plan])
             by = {r.ref: r for r in res}
             for p in plan:
                 r = by.get(p["ref"])
+                if r is not None and not r.ok and str(r.error or "").startswith("picker:"):
+                    # an Oracle list picker keeps only a value picked from its list: choose types with real keys and picks
+                    # the match (American Express' ZIP / City / State / County took typed text and stayed empty, 2026-10-19)
+                    out, _ = await self.t_choose(p["ref"], p.get("_key"), [] if p.get("_key") else [str(p["value"])],
+                                                 p["_label"], p.get("_source"))
+                    d = dict(out) if isinstance(out, dict) else {"status": "failed", "error": "choose gave no result"}
+                    d.setdefault("ref", p["ref"])
+                    d["via"] = "choose"
+                    results.append(d)
+                    continue
                 d = r.as_dict() if r else {"ref": p["ref"], "status": "failed", "error": "no result"}
                 results.append(d)
                 if r and r.ok:
