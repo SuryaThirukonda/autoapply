@@ -151,6 +151,9 @@ JS_SNAPSHOT = r"""
           if (shown && !PLACEHOLDER.test(shown)) item.shown = shown.slice(0, 200);
           item.combo = true;
         }
+        // A Workday prompt ("Search", "0 items selected") only keeps an option picked from its list: show it as a
+        // combobox so it is worked with choose (Aerospace Corporation's Field of Study, 2026-10-19).
+        if (!item.combo && (el.getAttribute('data-uxi-widget-type') === 'selectinput' || el.closest('[data-automation-id="multiSelectContainer"]'))) item.combo = true;
         if (type === 'checkbox' || type === 'radio') {
           const key = (el.name ? 'n:' + el.name : 'g:' + (groupLabel(el) || item.label)) + '|' + (root === document ? '' : 'r');
           if (!groups.has(key)) groups.set(key, { kind: type, label: groupLabel(el), required: item.required, options: [], invalid: false });
@@ -572,6 +575,10 @@ JS_FILL_BATCH = r"""
         res.error = 'use upload_resume'; out.push(res); continue;
       } else if (tag === 'input' || tag === 'textarea') {
         if (type === 'password') { res.error = 'password fields are filled by the credentials helper'; out.push(res); continue; }
+        if (el.getAttribute('data-uxi-widget-type') === 'selectinput' || el.closest('[data-automation-id="multiSelectContainer"]')) {
+          // typed text never commits in a Workday prompt; Workday drops it on blur (Aerospace Corporation, 2026-10-19)
+          res.error = 'this is a Workday prompt (search, then pick from its list): use choose with the answer_key'; out.push(res); continue;
+        }
         setNative(el, String(f.value));
         res.readback = (el.value || '').slice(0, 300); res.ok = (el.value || '') === String(f.value) || (type === 'number' && Number(el.value) === Number(f.value));
         const kept = (el.value || '').length, sent = String(f.value).length;

@@ -142,3 +142,27 @@ async def test_text_sent_to_a_dropdown_box_says_to_use_choose(tmp_path):
         assert not out[0].ok and "use choose" in out[0].error
     finally:
         await ex.close(close_browser=True)
+
+
+WORKDAY_PROMPT = """<!doctype html><html><body style="margin:20px">
+<div data-automation-id="formField-fieldOfStudy"><label for="education-253--fieldOfStudy"><span>Field of Study<abbr>*</abbr></span></label>
+ <div data-automation-id="multiSelectContainer" data-uxi-widget-type="multiselect"><div data-automation-id="multiselectInputContainer">
+  <input placeholder="Search" aria-required="true" autocomplete="off" data-uxi-widget-type="selectinput" id="education-253--fieldOfStudy" value="">
+  <div data-automation-id="promptAriaInstruction" aria-hidden="true">0 items selected</div></div></div></div>
+<script>document.getElementById('education-253--fieldOfStudy').addEventListener('blur', e => { e.target.value = ''; });</script>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_workday_prompt_is_a_combobox_and_refuses_typed_text(tmp_path):
+    """Aerospace Corporation (2026-10-19): 'Computer Science' typed into Field of Study never committed."""
+    ex = await _race(tmp_path, WORKDAY_PROMPT, "prompt.html")
+    try:
+        snap = await snapshot.take(ex)
+        item = next(i for i in snap.items if (i.get("label") or "").startswith("Field of Study"))
+        assert item.get("combo")
+        assert "combobox" in snapshot.render(snap)
+        out = await fill.fill_batch(ex, [{"ref": item["ref"], "value": "Computer Science"}])
+        assert not out[0].ok and "use choose" in out[0].error
+    finally:
+        await ex.close(close_browser=True)
