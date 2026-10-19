@@ -642,8 +642,26 @@ JS_FILL_BATCH = r"""
           // typed text never commits in a Workday prompt; Workday drops it on blur (Aerospace Corporation, 2026-10-19)
           res.error = 'this is a Workday prompt (search, then pick from its list): use choose with the answer_key'; out.push(res); continue;
         }
-        setNative(el, String(f.value));
-        res.readback = (el.value || '').slice(0, 300); res.ok = (el.value || '') === String(f.value) || (type === 'number' && Number(el.value) === Number(f.value));
+        let v = String(f.value);
+        if (type === 'number' && !/^-?\d+(\.\d+)?$/.test(v.trim())) {
+          // A number box for a month ("MM", 1-12) or a year ("YYYY") takes that part of a month-year answer: Epic Games'
+          // Start Date (Month) is <input type=number placeholder=MM> and "August 2025" left it empty (2026-10-19).
+          const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+          const ph = (el.getAttribute('placeholder') || '').trim().toUpperCase();
+          const mn = Number(el.getAttribute('min') || 0), mx = Number(el.getAttribute('max') || 0);
+          const yr = (v.match(/\b(19|20)\d{2}\b/) || [])[0];
+          const mi = MONTHS.findIndex(m => new RegExp('\\b' + m, 'i').test(v));
+          const mm = v.match(/^\s*(\d{1,2})[\/-]/);
+          if ((ph === 'MM' || (mn === 1 && mx === 12)) && (mi >= 0 || mm)) v = String(mi >= 0 ? mi + 1 : Number(mm[1]));
+          else if ((ph === 'YYYY' || mn >= 1900) && yr) v = yr;
+        }
+        setNative(el, v);
+        res.readback = (el.value || '').slice(0, 300); res.ok = (el.value || '') === v || (type === 'number' && Number(el.value) === Number(v));
+        if (!res.ok && (type === 'tel' || /phone/i.test((el.name || '') + ' ' + (el.id || '')))) {
+          // the page formats a phone number its own way: "(281) 832-1205" is "281-832-1205" (Epic Games, 2026-10-19)
+          const dv = (el.value || '').replace(/\D/g, ''), dw = v.replace(/\D/g, '');
+          if (dv && dw && (dv === dw || dv.endsWith(dw) || dw.endsWith(dv))) res.ok = true;
+        }
         const kept = (el.value || '').length, sent = String(f.value).length;
         if (!res.ok && kept > 0 && kept < sent && String(f.value).startsWith(el.value || '')) {
           res.error = 'the box kept only ' + kept + ' of ' + sent + ' characters (a length cap); shorten the text to fit and fill it again';

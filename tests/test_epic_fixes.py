@@ -466,3 +466,33 @@ async def test_a_highlight_banner_is_a_form_summary_not_a_field_error(tmp_path):
         assert any("highlighted" in str(s) for s in snap.errors.get("summaries", [])), snap.errors
     finally:
         await ex.close(close_browser=True)
+
+
+NUMBER_DATE = """<!doctype html><html><body style="margin:20px">
+<label for="m">Start Date (Month)</label><input id="m" name="start_date.month" type="number" placeholder="MM" min="1" max="12" value="">
+<label for="y">Start Date (Year)</label><input id="y" name="start_date.year" type="number" placeholder="YYYY" min="1900" max="2199" value="">
+<label for="p">Phone</label><input id="p" name="questions.phone" type="tel" value="">
+<script>
+  const p = document.getElementById('p');
+  p.addEventListener('input', () => { const d = p.value.replace(/\D/g, ''); if (d.length === 10) p.value = '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6); });
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_number_boxes_take_the_month_or_year_and_a_formatted_phone_counts(tmp_path):
+    """Epic Games (2026-10-19): 'August 2025' into <input type=number placeholder=MM> left it empty; the phone the page
+    reformatted as (281) 832-1205 was reported as failed."""
+    ex = await _race(tmp_path, NUMBER_DATE, "numdate.html")
+    try:
+        snap = await snapshot.take(ex)
+        refs = {i.get("id") or i.get("name") or i.get("label"): i["ref"] for i in snap.items}
+        by_label = {(i.get("label") or "").split(" (")[0] + (i.get("label") or "")[-7:]: i["ref"] for i in snap.items}
+        items = {i["label"]: i["ref"] for i in snap.items}
+        out = await fill.fill_batch(ex, [{"ref": items["Start Date (Month)"], "value": "August 2025"},
+                                         {"ref": items["Start Date (Year)"], "value": "August 2025"},
+                                         {"ref": items["Phone"], "value": "281-832-1205"}])
+        assert all(r.ok for r in out), [r.as_dict() for r in out]
+        vals = await ex.page.evaluate("() => [document.getElementById('m').value, document.getElementById('y').value, document.getElementById('p').value]")
+        assert vals == ["8", "2025", "(281) 832-1205"]
+    finally:
+        await ex.close(close_browser=True)
