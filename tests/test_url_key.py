@@ -28,3 +28,15 @@ def test_same_title_postings_with_their_own_links_are_different_applications(tmp
     # a ledger row without a link (an older manual entry) still matches on company and title
     ledger.record_application(None, "Acme", "Software Engineer Intern", "", "manual")
     assert ledger.already_applied("Acme", "Software Engineer Intern", "https://acme.example/jobs/1")
+
+
+
+def test_different_links_on_one_portal_are_different_postings(tmp_path):
+    from goat import db
+    db.reset_for_tests(tmp_path / "t.db")
+    a = "https://motorolasolutions.wd5.myworkdayjobs.com/Careers/job/Plantation-FL/Android-Platform-Software-Engineering-Intern---Summer-2027_R67362-1"
+    b = "https://motorolasolutions.wd5.myworkdayjobs.com/Careers/job/Plantation-FL/Android-Platform-Software-Engineering-Intern---Summer-2027_R68363"
+    ledger.record_application(None, "Motorola Solutions", "Android Platform Software Engineering Intern", a, "tracker")
+    assert not ledger.already_applied("Motorola Solutions", "Android Platform Software Engineering Intern", b)
+    assert ledger.already_applied("Motorola Solutions", "Android Platform Software Engineering Intern", a + "/apply/applyManually")
+    assert ledger.url_key(a + "/apply/autofillWithResume") == ledger.url_key(a)

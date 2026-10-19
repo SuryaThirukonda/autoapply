@@ -28,9 +28,8 @@ def url_key(url: str) -> str:
     if host.startswith("www."):
         host = host[4:]
     path = (p.path or "").rstrip("/").lower()
-    for tail in ("/apply", "/application"):
-        if path.endswith(tail):
-            path = path[: -len(tail)]
+    # the apply pages of a posting are the posting: Workday's /apply/applyManually, /apply/autofillWithResume
+    path = re.sub(r"/(apply|application)(/[a-z0-9_-]+)?$", "", path)
     ids = []
     for k, vals in sorted(parse_qs(p.query or "").items()):
         if k.lower() in ID_PARAMS and vals and vals[0].strip():
@@ -54,6 +53,10 @@ def loose_title(title: str) -> str:
     t = _LOOSE_DROP.sub(" ", t)
     t = t.replace("engineering", "engineer").replace("internship", "intern")
     return " ".join(re.findall(r"[a-z0-9+#]+", t))
+
+
+def _host(key: str) -> str:
+    return (key or "").split("/", 1)[0].split("?", 1)[0]
 
 
 def already_applied(company: str, title: str, url: str) -> bool:
@@ -80,6 +83,9 @@ def already_applied(company: str, title: str, url: str) -> bool:
         other_ids = set(re.findall(r"\d{7,}", row["url"] or ""))
         if job_ids and other_ids and not (job_ids & other_ids):
             continue          # both links name their posting, and the ids differ: another posting of this company
+        other = url_key(row["url"] or "")
+        if uk and other and other != uk and _host(other) == _host(uk):
+            continue          # one portal names them by different links (Workday R68363 vs R67362): different postings
         if (exact_c and row["key"] == exact_c) or (lt and loose_title(row["title"]) == lt):
             return True
     return False
