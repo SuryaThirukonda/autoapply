@@ -229,3 +229,12 @@ def test_the_outline_says_when_it_shows_only_the_start_of_a_long_answer():
     assert "the box holds all 452 characters" in out
     snap2 = _snap([{"ref": "e39", "tag": "textarea", "label": "Short", "value": "fine"}])
     assert "the box holds all" not in snapmod.render(snap2)
+
+
+
+def test_a_no_results_message_is_never_a_decision_value():
+    from goat.browser import fill
+    assert fill.NO_RESULTS.match("No results were found.") and fill.NO_RESULTS.match("No matches") and fill.NO_RESULTS.match("no options")
+    assert not fill.NO_RESULTS.match("No, I am not a protected veteran")
+    snap = _snap([{"ref": "e186", "tag": "dropdown", "label": "Veteran Status", "value": "I am not a protected veteran"}])
+    assert readback.diff([_dec("Veteran Status", "No results were found.", "e186")], snap, 1) == []

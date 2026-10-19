@@ -14,7 +14,7 @@ from .browser import fill, js
 from .browser.snapshot import Snapshot
 
 SKIP_SOURCES = ("cleared", "judgment")
-SKIP_VALUES = ("(set)",)
+SKIP_VALUES = ("(set)", "No results were found.", "No results found", "No results", "No matches found", "No options")
 _DATE_PARTS = re.compile(r"month=(\d{1,2})(?:\s+day=\d{1,2})?\s+year=(\d{4})", re.I)
 _DATEISH_LABEL = re.compile(r"\b(date|month|year|day)\b", re.I)
 

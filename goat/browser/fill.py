@@ -540,7 +540,23 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
     r = await _choose(ex, ref, wants, type_to_filter=type_to_filter)
     if autosaves(ex):
         await ex.wait_saves()
+    if r.ok and NO_RESULTS.match(r.readback or ""):
+        # the list's empty-search message is not the field's value (Oracle's Veteran Status read back "No results were
+        # found." over a correct pick, and the gate blocked every submit, American Express 2026-10-19): read the field
+        try:
+            await ex.page.keyboard.press("Escape")
+            info = await ex.read_ref(ref)
+            shown = str(info.get("shown") or info.get("value") or "").strip()
+        except Exception:
+            shown = ""
+        if shown and not NO_RESULTS.match(shown):
+            r = FieldResult(r.ref, _chip_matches(shown, wants) or best_option([{"text": shown}], wants) is not None, shown, r.error)
+        else:
+            r = FieldResult(r.ref, False, "", "the picker showed 'no results' and the field holds nothing: choose again with a shorter wording")
     return r
+
+
+NO_RESULTS = re.compile(r"^\s*(no (results|matches|matching (results|options|items))|no options|no items)( were| was)?( found)?\.?\s*$", re.I)
 
 
 async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bool = True) -> FieldResult:
