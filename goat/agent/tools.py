@@ -3,6 +3,7 @@ lives here as deterministic code; the model only requests it. Secrets never pass
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import logging
@@ -139,6 +140,9 @@ class RunContext:
     creds_mode: str = ""           # the last credentials mode filled (login / login_universal / create / set_password)
     reset_needed: bool = False     # a Sign In with the universal password failed on this tenant
     reset_link_tried: bool = False # open_password_reset_link was called this run
+    reset_not_received: bool = False  # ...and no reset email came
+    create_tried: bool = False     # credentials mode 'create' was used this run
+    account_exists: bool = False   # a Create Account click said the account already exists
     consent_page_key: str = ""
     resolved: dict = field(default_factory=dict)   # norm(question) -> resolver outcome this run
     control_failures: dict = field(default_factory=dict)   # ref -> failed choose / set_date calls this run
@@ -240,6 +244,13 @@ RESET_STEPS = ("sign-in with the universal password failed on this tenant: do th
                "fill the email box from answer_key identity.email, click the send button, call open_password_reset_link, snapshot, call credentials "
                "mode 'set_password' with the new-password ref (confirm box via confirm_password_ref, email_ref ''), click the save button, then "
                "credentials mode 'login_universal' and click Sign In.")
+# No reset email came (Ryan, Assurant, Nasdaq, 2026-10-18): Workday only mails a reset for an account that exists, so
+# the tenant most likely has none for this email. PASSWORD_BIT is the sign-up password too (Surya).
+CREATE_STEPS = ("no reset email came, so this tenant most likely has no account for this email: create one. Go back to the sign-in page, "
+                "click 'Create Account' (or 'Sign Up'), call credentials mode 'create' (email_ref = the email box, password_ref = the "
+                "password box, confirm_password_ref = the verify-password box), tick the terms box if there is one, click Create Account, "
+                "then call open_verification_link if the portal asks you to verify the email. Park credentials_unknown only if the "
+                "portal says the account already exists.")
 
 
 def is_affiliation_question(question: str, options: list[str] | None) -> bool:
@@ -394,7 +405,9 @@ class ToolDispatcher:
             try:
                 # No tool may hang the run: a page blocked by a dialog or a stuck network wait once held the single
                 # worker for 12+ minutes (Persona AI, 2026-10-18). Waiting tools keep their own longer limits.
-                out, img = await asyncio.wait_for(fn(**args), timeout=self.tool_timeout_s(name))
+                waits = getattr(self.ctx.budget, "waiting", None) if name in self.WAITING_TOOLS else None
+                with (waits() if waits else contextlib.nullcontext()):
+                    out, img = await asyncio.wait_for(fn(**args), timeout=self.tool_timeout_s(name))
             except asyncio.TimeoutError:
                 self.ctx.consecutive_failures += 1
                 db.event(self.ctx.job_id, f"tool:{name}:timeout", {"args": args, "timeout_s": self.tool_timeout_s(name)})
@@ -741,9 +754,14 @@ class ToolDispatcher:
                 out["next"] = RESET_STEPS
             elif self.ctx.creds_mode == "create" and ACCOUNT_EXISTS.search(text):
                 self.ctx.reset_needed = True
+                self.ctx.account_exists = True
                 db.event(self.ctx.job_id, "creds:account_exists", {"host": self.ctx.portal_host})
                 out["account"] = "exists"
-                out["next"] = "the account already exists on this tenant: go to Sign In, call credentials login_universal and click Sign In; if that fails, " + RESET_STEPS
+                if self.ctx.reset_not_received:
+                    out["next"] = ("the account exists, the universal password fails and no reset email came: park credentials_unknown "
+                                   "(Surya resets it by hand)")
+                else:
+                    out["next"] = "the account already exists on this tenant: go to Sign In, call credentials login_universal and click Sign In; if that fails, " + RESET_STEPS
         return out, None
 
     JS_RAIL_STEP = r"""(name) => {
@@ -1127,6 +1145,8 @@ class ToolDispatcher:
                 and self.ctx.control_failures.get("creds:login_failed", 0) >= 1:
             # The same password would fail again (Assurant, GE Vernova, 2026-10-18): the reset flow first.
             return {"error": RESET_STEPS}, None
+        if mode == "create":
+            self.ctx.create_tried = True
         ex = self.ctx.ex
         host = self.ctx.portal_host
         email = SETTINGS.creds.application_email
@@ -1210,7 +1230,11 @@ class ToolDispatcher:
                     "next": "snapshot, then credentials mode 'set_password' with the new-password and confirm refs (email_ref ''), click the save button, then sign in with login_universal"}, None
         if status == "host_mismatch":
             raise Parked("host_mismatch: the reset link pointed at another host", "hold")
-        return {"status": status, "hint": "no reset email yet; if the page offers to resend, click it once and call again, else park credentials_unknown"}, None
+        self.ctx.reset_not_received = True
+        db.event(self.ctx.job_id, "creds:reset_not_received", {"host": self.ctx.portal_host, "status": status})
+        if self.ctx.create_tried or self.ctx.account_exists:
+            return {"status": status, "hint": "no reset email came and the account exists: park credentials_unknown"}, None
+        return {"status": status, "next": CREATE_STEPS}, None
 
     async def t_open_verification_link(self, timeout_s: float | None = None):
         if self.ctx.mail is None:
@@ -1379,6 +1403,12 @@ class ToolDispatcher:
             return {"error": "not parked: self-identification fields are settled by their self_id.* keys (choose with the key; the chain ends with "
                              "his own answers for forms without a decline option). Whatever the picker shows after that is correct. Move on: "
                              "finish the other sections (Work Experience via go_to_step('My Experience') if the Review shows No Response) and submit."}, None
+        if low.startswith("credentials") and self.ctx.reset_not_received and not self.ctx.create_tried \
+                and not self.ctx.account_exists and self.ctx.control_failures.get("creds:create_bounce", 0) < 1:
+            # The reset email never came: the account most likely does not exist here. Create it before giving up.
+            self.ctx.control_failures["creds:create_bounce"] = 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "create not tried"})
+            return {"error": "not parked: " + CREATE_STEPS}, None
         if low.startswith("credentials") and self.ctx.mail is not None and not self.ctx.reset_link_tried \
                 and self.ctx.control_failures.get("creds:bounce", 0) < 2:
             # One application password everywhere: a credentials park is allowed only after the reset flow was

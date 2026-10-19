@@ -129,6 +129,29 @@ def judge_summary(verdict: dict | None) -> dict | None:
             "unsupported": [str(u)[:160] for u in (verdict.get("unsupported") or [])[:6]]}
 
 
+async def run_page_bounded(coro, budget, *, margin_s: float | None = None, min_s: float = 60.0, poll_s: float = 15.0):
+    """Backstop for anything the per-tool cap does not cover (a model request that never returns): a page run may use
+    what is left of the wall budget plus a margin, and at least `min_s` plus the margin. Time spent waiting on Surya or
+    an email is not budget time (Budget.waiting), so the deadline moves with it. Raises asyncio.TimeoutError."""
+    margin = PAGE_HANG_MARGIN_S if margin_s is None else margin_s
+    task = asyncio.ensure_future(coro)
+    floor = time.monotonic() + min_s + margin
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=poll_s)
+            if done:
+                return task.result()
+            if budget.remaining_s() + margin <= 0 and time.monotonic() >= floor:
+                raise asyncio.TimeoutError()
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 - the cancelled page run's own error is not this one's
+                pass
+
+
 def is_draft_hold(reason: str) -> bool:
     """A hold on a finished draft: shadow mode, or a verified auto-submit that wants Surya's OK."""
     return str(reason or "").startswith(("shadow_mode", "review_needed"))
@@ -405,7 +428,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             # Backstop for anything the per-tool cap does not cover (a model request that never returns): the page
             # run may take at most what is left of the wall budget plus a margin.
             try:
-                res: LoopResult = await asyncio.wait_for(loop.run_page(history, note), timeout=max(60.0, budget.remaining_s()) + PAGE_HANG_MARGIN_S)
+                res: LoopResult = await run_page_bounded(loop.run_page(history, note), budget)
             except asyncio.TimeoutError:
                 raise BudgetExceeded(f"budget_spent: a step hung past the wall budget ({budget.wall_s}s)")
             if res.outcome == "page_done":

@@ -152,3 +152,46 @@ async def test_an_unreachable_mailbox_never_breaks_a_park(store):
     with pytest.raises(Parked) as e:
         await d.t_park("credentials_unknown: verification email never arrived")
     assert e.value.reason.startswith("credentials_unknown")
+
+
+@pytest.mark.asyncio
+async def test_no_reset_email_means_create_the_account_before_a_credentials_park(store):
+    """Ryan (2026-10-18): sign-in failed, no reset email came (Workday mails one only for an existing account), and the
+    run parked credentials_unknown. Now the harness sends it to Create Account first."""
+    job = _job()
+    d, ctx = _with_ex(job, SignInEx("Wrong email address or password"))
+    ctx.mail = SimpleNamespace(fetch_password_reset_link=lambda portal, host, after: SimpleNamespace(status="not_received", url=None))
+    ctx.verify_link_tried = True
+    out, _ = await d.t_open_password_reset_link()
+    assert out["status"] == "not_received" and "Create Account" in out["next"] and ctx.reset_not_received
+    assert db.connect().execute("SELECT COUNT(*) FROM events WHERE kind='creds:reset_not_received'").fetchone()[0] == 1
+    out, _ = await d.t_park("credentials_unknown: no reset email")
+    assert "Create Account" in out["error"] and "credentials mode 'create'" in out["error"]
+    # the account turned out to exist: now the park stands
+    ctx.creds_mode = "create"
+    ctx.ex = SignInEx("An account with this email already exists.")
+    out, _ = await d.t_click("e1", "Create Account")
+    assert out["account"] == "exists" and "park credentials_unknown" in out["next"] and ctx.account_exists
+    with pytest.raises(Parked) as e:
+        await d.t_park("credentials_unknown: account exists, password unknown, no reset email")
+    assert e.value.reason.startswith("credentials_unknown")
+
+
+@pytest.mark.asyncio
+async def test_a_create_attempt_also_lets_the_credentials_park_stand(store):
+    job = _job()
+    d, ctx = _with_ex(job, SignInEx("Something else"))
+    calls = []
+    ctx.creds = SimpleNamespace(fill_credentials=lambda *a: calls.append(a) or "filled_universal", fill_confirm_password=lambda *a: "filled_universal")
+    ctx.mail = object()
+    ctx.verify_link_tried = True
+    ctx.reset_link_tried = ctx.reset_not_received = True
+    await d.t_credentials("create", "e1", "e2", "e3")
+    assert ctx.create_tried
+    with pytest.raises(Parked):
+        await d.t_park("credentials_unknown: create did not go through")
+
+
+def test_workday_hints_send_a_missing_reset_email_to_create_account():
+    h = for_portal("workday").hints
+    assert "no reset email" in h and "Create Account" in h and "not_received twice" not in h
