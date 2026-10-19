@@ -1664,7 +1664,13 @@ class ToolDispatcher:
             ctx.submitted = res.as_dict()
             return {"status": "submitted", "signal": res.signal, "note": "done; the worker records the ledger"}, None
         if res.status == "failed":
-            ctx.budget.failed_submit()   # may raise BudgetExceeded
+            code_why = [w for w in (res.why or []) if re.search(r"(security|verification|access|one[- ]time) code", str(w), re.I)]
+            if code_why:
+                # this click made the portal email a fresh code: enter_email_code waits for that one and never takes an
+                # older code (Coinbase got its stale 09:31 code at 10:08 and the portal rejected it, 2026-10-19)
+                ctx.code_requested_at = db.now() - 30
+            if len(code_why) < len(res.why or []) or not res.why:
+                ctx.budget.failed_submit()   # may raise BudgetExceeded; a click that only asks for the emailed code is a step, not a failure
             with db.tx() as con:
                 con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), ctx.job_id))
             return {"status": "failed", "why": res.why, "note": "do not click again; fix a named blocker then call submit once more, or park"}, None
