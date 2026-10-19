@@ -19,6 +19,9 @@ GENERIC_FIELD_MAP: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"^(first (name )?(and|&) last name|first and last name|name \(first and last\)|full legal name)\b", re.I), "identity.legal_name", "text"),
     (re.compile(r"^(legal )?first ?name\b|^given name", re.I), "identity.first_name", "text"),
     (re.compile(r"^(legal )?last ?name\b|^surname|^family name", re.I), "identity.last_name", "text"),
+    # a preferred name box that wants both names takes the full name (Sierra's "Preferred First & Last Name" got
+    # only "Surya", 2026-10-19)
+    (re.compile(r"^preferred (first (name )?(and|&) last name|full name|name \(first and last\))\b", re.I), "identity.legal_name", "text"),
     (re.compile(r"^preferred (first )?name", re.I), "identity.preferred_name", "text"),
     (re.compile(r"^(full|legal) name$|^name$", re.I), "identity.legal_name", "text"),
     (re.compile(r"^e-?mail( address)?\b", re.I), "identity.email", "text"),

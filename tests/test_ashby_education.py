@@ -100,3 +100,15 @@ def test_a_multi_line_school_option_matches_on_its_name_line():
     assert fill.best_option(opts, ["Texas A&M University"])["first"] == "Texas A&M University"
     # one-line options are unchanged: two starting with the want stay ambiguous
     assert fill.best_option([{"text": "Texas A&M University System"}, {"text": "Texas A&M University Galveston"}], ["Texas A&M University"]) is None
+
+
+def test_a_preferred_first_and_last_name_box_takes_the_full_name():
+    from goat.adapters import GENERIC_FIELD_MAP
+
+    def key(label):
+        return next((k for rx, k, _ in GENERIC_FIELD_MAP if rx.search(label)), None)
+
+    assert key("Preferred First & Last Name") == "identity.legal_name"
+    assert key("Preferred Full Name") == "identity.legal_name"
+    assert key("Preferred First Name") == "identity.preferred_name"
+    assert key("Preferred Name") == "identity.preferred_name"
