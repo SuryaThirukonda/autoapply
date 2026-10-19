@@ -13,3 +13,18 @@ def test_embed_links_and_gh_jid_pages_keep_their_posting_id():
     # path-identified postings are unchanged
     assert ledger.url_key("https://jobs.lever.co/hermeus/5b08e2df/apply") == "jobs.lever.co/hermeus/5b08e2df"
     assert ledger.url_key("https://www.example.com/careers/") == "example.com/careers"
+
+
+
+def test_same_title_postings_with_their_own_links_are_different_applications(tmp_path):
+    from goat import db
+    db.reset_for_tests(tmp_path / "t.db")
+    springs = "https://ngc.wd1.myworkdayjobs.com/Northrop_Grumman_External_Site/job/United-States-Colorado-Colorado-Springs/XMLNAME-2027-Software-Engineering-Intern---Colorado-Springs_R10256259"
+    aurora = "https://ngc.wd1.myworkdayjobs.com/Northrop_Grumman_External_Site/job/United-States-Colorado-Aurora/XMLNAME-2027-Software-Engineer-Intern_R10251234"
+    ledger.record_application(None, "Northrop Grumman", "Software Engineer Intern", springs, "goat")
+    assert ledger.already_applied("Northrop Grumman", "Software Engineer Intern", springs)
+    assert ledger.already_applied("Northrop Grumman", "Software Engineer Intern", springs + "/apply/applyManually")   # same posting id
+    assert not ledger.already_applied("Northrop Grumman", "Software Engineer Intern", aurora)
+    # a ledger row without a link (an older manual entry) still matches on company and title
+    ledger.record_application(None, "Acme", "Software Engineer Intern", "", "manual")
+    assert ledger.already_applied("Acme", "Software Engineer Intern", "https://acme.example/jobs/1")

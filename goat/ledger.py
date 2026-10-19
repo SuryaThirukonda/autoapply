@@ -57,22 +57,30 @@ def loose_title(title: str) -> str:
 
 
 def already_applied(company: str, title: str, url: str) -> bool:
+    """The same posting is in the ledger: its link, its posting id, or the same company and title unless both links
+    carry posting ids that differ. Two postings of one company that share a title but name different ids are
+    different applications: Northrop Grumman's Aurora and Colorado Springs "Software Engineer
+    Intern" postings were one key, so after one was submitted the other's gate said "already applied" (2026-10-19)."""
     con = db.connect()
-    for k in applied_keys(company, title, url):
-        if con.execute("SELECT 1 FROM applied_keys WHERE key=?", (k,)).fetchone():
-            return True
+    uk = url_key(url)
+    if uk and con.execute("SELECT 1 FROM applied_keys WHERE key=?", ("u:" + uk,)).fetchone():
+        return True
     ck = norm(company)
     if not ck:
         return False
     job_ids = set(re.findall(r"\d{7,}", url or ""))
     lt = loose_title(title)
-    for row in con.execute("SELECT company, title, url FROM applied_keys"):
+    exact_c = f"c:{ck}|{norm(title)}" if norm(title) else None
+    for row in con.execute("SELECT key, company, title, url FROM applied_keys"):
         if norm(row["company"]) != ck:
             continue
         hay = f"{row['title'] or ''} {row['url'] or ''}"
         if any(j in hay for j in job_ids):
             return True
-        if lt and loose_title(row["title"]) == lt:
+        other_ids = set(re.findall(r"\d{7,}", row["url"] or ""))
+        if job_ids and other_ids and not (job_ids & other_ids):
+            continue          # both links name their posting, and the ids differ: another posting of this company
+        if (exact_c and row["key"] == exact_c) or (lt and loose_title(row["title"]) == lt):
             return True
     return False
 
