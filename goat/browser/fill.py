@@ -445,7 +445,38 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
     return None
 
 
+_MONTH_YEAR = re.compile(r"^(?:(?P<mon>[A-Za-z]{3,9})\.?,?\s+(?P<y1>(?:19|20)\d{2})|(?P<mm>\d{1,2})[/-](?:\d{1,2}[/-])?(?P<y2>(?:19|20)\d{2})"
+                         r"|(?P<y3>(?:19|20)\d{2})-(?P<mm2>\d{1,2})(?:-\d{1,2})?)$")
+_MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+                "November", "December"]
+
+
+def date_wants(wants: list[str]) -> list[str]:
+    """For each want that is a month and year ('August 2025', '08/2025', '2025-08'): its month name, the month's
+    three-letter form and the year, for pickers that list months or years alone (Epic Games' 'Start Date (Month)',
+    2026-10-19). Only date-shaped wants count: 'Marketing' is not March."""
+    extra: list[str] = []
+    for w in wants:
+        m = _MONTH_YEAR.match((w or "").strip())
+        if not m:
+            continue
+        num = 0
+        if m.group("mon"):
+            mon = m.group("mon").lower()
+            num = next((i + 1 for i, n in enumerate(_MONTH_NAMES) if n.lower().startswith(mon[:3]) and n.lower().startswith(mon)), 0)
+        else:
+            num = int(m.group("mm") or m.group("mm2") or 0)
+        year = m.group("y1") or m.group("y2") or m.group("y3")
+        if not 1 <= num <= 12:
+            continue
+        for x in (_MONTH_NAMES[num - 1], _MONTH_NAMES[num - 1][:3], year):
+            if x and x not in wants and x not in extra:
+                extra.append(x)
+    return extra
+
+
 async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bool = True) -> FieldResult:
+    wants = list(wants) + date_wants(list(wants))
     r = await _choose(ex, ref, wants, type_to_filter=type_to_filter)
     if autosaves(ex):
         await ex.wait_saves()
@@ -540,10 +571,12 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
                     filtered = [o for o in (filtered if isinstance(filtered, list) else []) if _key(o) not in baseline_keys]
                     if filtered:
                         break
-                if not filtered and not shown_now:
+                if not filtered or best_option(filtered, wants) is None:
                     # A search that matches the whole query as one substring finds nothing for a long name (Sierra's
                     # curated Ashby list has "Texas A&M": "Texas A&M University" returns No results, "Texas" finds it,
                     # 2026-10-19): retry with the first two words, then the first word, and match against every want.
+                    # Also when the list opened on its first page of entries (Epic Games' school search shows the
+                    # first 100 schools, A to Z, until a query returns matches, 2026-10-19).
                     words = re.findall(r"\S+", want)
                     for short in [" ".join(words[:2]), words[0] if words else ""]:
                         if not short or short == want or len(short) < 4:

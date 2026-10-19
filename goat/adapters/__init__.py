@@ -451,7 +451,24 @@ class Ashby(Adapter):
     portal = "ashby"
     hints = ("Ashby: short single-page forms; fields are virtualized so take a fresh snapshot after scrolling. Uploading the résumé "
              "can trigger 'Autofill from resume': read the form back afterwards and correct anything that differs from the stored answers. "
-             "Location is 'Sugar Land, TX'.")
+             "Location is 'Sugar Land, TX'. 'Education History' (School, Field of Study, End Date, 'Still Student?') is filled by the "
+             "harness when the page opens: his school, his major, 'Still Student?' ticked and the End Date left empty (he is a current "
+             "student; never pick an end month or year there). Leave that block as it is.")
+
+    async def prefill(self, ex, snap: Snapshot, job: dict, page_no: int) -> PrefillResult:
+        res = await super().prefill(ex, snap, job, page_no)
+        from .ashby_education import fill_education
+        try:
+            rep = await fill_education(ex, job, page_no)
+        except Exception as e:  # noqa: BLE001 - a failed helper leaves the block to the agent
+            rep = {"set": 0, "failed": 1, "kept": 0, "errors": [f"{type(e).__name__}: {str(e)[:160]}"]}
+        if rep is not None:
+            from .. import db
+            db.event(job["id"], "adapter:education", rep)
+            res.set += rep.get("set", 0)
+            res.failed += rep.get("failed", 0)
+            (res.details if res.details is not None else []).append({"label": "Education History", "ok": not rep.get("failed"), **rep})
+        return res
 
     def apply_url(self, listing_url: str) -> str:
         u = listing_url.rstrip("/")

@@ -703,6 +703,12 @@ class ToolDispatcher:
             # fallback ("Asian (...)" next to "Decline to self-identify") is never tried.
             db.event(self.ctx.job_id, "answer:self_id_guard", {"key": answer_key, "dropped": [str(o)[:60] for o in options][:6], "label": label[:80]})
             options = []
+        snap_item = (self.ctx.last_snapshot.find(ref) if self.ctx.last_snapshot else None) or {}
+        if answer_key and (snap_item.get("type") or "").lower() in ("checkbox", "radio"):
+            # A box of a radio / checkbox group is no picker (Epic Games' Gender Identity boxes, 2026-10-19: choose
+            # reported "the picker for this field did not open"): tick it as fill_batch does, with the answer's
+            # chain, the self-ID guard and the decision format the read-back expects.
+            return await self.t_fill_batch([{"ref": ref, "answer_key": answer_key, "value": None, "source": source, "label": label}])
         wants = list(options or [])
         src = "adapter"
         if answer_key:
@@ -714,12 +720,20 @@ class ToolDispatcher:
             variants = answers.get(answer_key + "_variants", self.ctx.job.get("company", ""), self.ctx.portal)
             if variants and variants.has_value:
                 wants += [w.strip() for w in str(variants.answer).split(";") if w.strip() and w.strip() not in wants]
+            if answer_key.endswith("_variants"):
+                # The variants are the portal spellings tried AFTER the answer itself: picked by the variants key,
+                # Epic Games' school search got only "Texas A & M University"-style wordings, all unknown to it,
+                # and never "Texas A&M University" (2026-10-19).
+                base = answers.get(answer_key[: -len("_variants")], self.ctx.job.get("company", ""), self.ctx.portal)
+                if base and base.has_value:
+                    head = [w.strip() for w in str(base.answer).split(";") if w.strip()]
+                    wants = head + [w for w in wants if w not in head]
         elif not wants:
             return {"error": "give options or an answer_key"}, None
         r = await fill.choose(self.ctx.ex, ref, wants)
         self.ctx.budget.step()
         if r.ok:
-            records.record_decision(self.ctx.job_id, self.ctx.page_no, label, r.readback, src if answer_key is None else src, ref)
+            records.record_decision(self.ctx.job_id, self.ctx.page_no, label, r.readback, src if answer_key is None else src, r.ref or ref)
             self.ctx.control_failures.pop(ref, None)
             out = r.as_dict()
             first = next((w for w in wants if w), "")

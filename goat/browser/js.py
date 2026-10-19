@@ -578,6 +578,10 @@ JS_FILL_BATCH = r"""
         if (!res.ok && kept > 0 && kept < sent && String(f.value).startsWith(el.value || '')) {
           res.error = 'the box kept only ' + kept + ' of ' + sent + ' characters (a length cap); shorten the text to fit and fill it again';
         }
+        if (!res.ok && !res.error && (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete')
+            || /react-select|select__input/i.test((el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : '')))) {
+          res.error = 'this box is a dropdown that keeps only a picked option: use choose with the answer_key (a month-year answer also offers its month name and year)';
+        }
       } else if (el.getAttribute('contenteditable') === 'true') {
         el.focus(); document.execCommand('selectAll', false, null); document.execCommand('insertText', false, String(f.value));
         res.readback = txt(el).slice(0, 300); res.ok = res.readback.replace(/\s+/g, ' ') === String(f.value).replace(/\s+/g, ' ').trim();
