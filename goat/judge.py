@@ -70,7 +70,9 @@ FACT_CHECK_INSTRUCTIONS = (
     "date, award, eligibility or authorization, availability or hours, location, a commitment, a relationship or "
     "affiliation. An answer derived from a stated fact is supported when it follows from it (a U.S. citizen is not on "
     "OPT; 55 hours a week is within a stated 60-hour maximum; No to 'have you worked for X' when the profile never "
-    "names X). The profile's silence supports a No only about working for, or being related to someone at, a named "
+    "names X). The profile's silence supports a No about working for, being related to someone at, being a member of or "
+    "affiliated with a named organization, or planning to attend a listed conference (his standing default No, "
+    "American Express 2026-10-19); otherwise the profile's silence supports a No only about working for, or being related to someone at, a named "
     "organization; it never supports an answer about family or relatives abroad, foreign contacts or travel, citizenship, "
     "legal, criminal, financial, medical or security-clearance history, or an amount of experience: those need an explicit "
     "statement in the profile or the evidence, else they are unsupported. "
@@ -203,6 +205,12 @@ class Judge:
         return out
 
 
+def _on_page(value, page: str) -> bool:
+    from .answers import norm
+    v = norm(str(value or ""))[:60]
+    return bool(v) and v in norm(page or "")
+
+
 def resume_text(resume_file: str | None = None) -> str:
     """The text of the résumé attached to the application (the .txt beside the PDF in the résumé folder), raw."""
     from .config import SETTINGS
@@ -236,7 +244,11 @@ async def judge_page(job: dict, ctx, ex, *, shot: str = "shadow", fact_check: bo
         kwargs = {}
         if fact_check:
             kwargs = {"profile": profile.text(),
-                      "unconfirmed": records.unconfirmed_answers(job_id, job.get("company") or "", job.get("ats") or ""),
+                      # an archived decision (an earlier attempt of this draft) counts only while its value is still on
+                      # the page: American Express' old 'Expected graduation term = July - September 2028' field was gone
+                      # from the form and still failed every check (2026-10-19)
+                      "unconfirmed": [u for u in records.unconfirmed_answers(job_id, job.get("company") or "", job.get("ats") or "")
+                                      if not u.get("archived") or _on_page(u.get("value"), outline + "\n" + text)],
                       "posting": str(getattr(ctx, "posting_text", "") or ""),
                       "resume": resume_text(getattr(ctx, "resume_file", None))}
         verdict = await Judge(client=getattr(getattr(ctx, "classifier", None), "client", None)).judge(
