@@ -99,3 +99,16 @@ async def test_an_eager_park_on_a_clean_final_page_is_still_sent_to_submit(store
         assert "the code gate PASSES" in out["error"]
     finally:
         await ex.close(close_browser=True)
+
+
+def test_a_workday_review_page_saying_he_is_not_fluent_in_english_is_blocked(store):
+    """American Family (2026-10-18): the proficiency dropdowns were set, the fluency box was not."""
+    job = _job()
+    snap = _snap([{"ref": "e1", "tag": "button", "label": "Submit", "submitish": True}])
+    snap.headings = ["Review"]
+    text = "Languages\nLanguage\nEnglish\nI am fluent in this language\nNo\nOverall\n5 - Fluent\nSubmit"
+    g = run_gate(job=job, snapshot=snap, page_text=text, expected_resume=None, free_text_answers=[], portal="workday", page_no=1)
+    assert g.result == "blocked" and "experience.fluent_in_english" in g.reasons[0]
+    ok = run_gate(job=job, snapshot=snap, page_text=text.replace("language\nNo", "language\nYes"), expected_resume=None,
+                  free_text_answers=[], portal="workday", page_no=1)
+    assert not any("fluent" in r for r in ok.reasons)

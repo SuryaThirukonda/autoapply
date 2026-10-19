@@ -126,6 +126,10 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         if gaps:
             return GateResult("blocked", [f"the Review page shows '{g}: No Response': call go_to_step('My Experience'), then fill_sections, "
                                           "then Save and Continue forward to Review" for g in gaps])
+        # English is his language: the Languages section's fluency box must be ticked (American Family, 2026-10-18).
+        if re.search(r"I am fluent in this language\W{0,3}\s*No\b", page_text, re.I):
+            return GateResult("blocked", ["the Review page shows 'I am fluent in this language: No' for English: call go_to_step('My Experience'), "
+                                          "tick 'I am fluent in this language' (answer_key experience.fluent_in_english), then Save and Continue forward to Review"])
         from .adapters.workday_sections import review_gaps
         missing = review_gaps(page_text, job.get("company", ""))
         if missing:

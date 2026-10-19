@@ -490,6 +490,8 @@ class Workday(Adapter):
              "My Experience: the harness fills Work Experience (every experience.work.N entry with its full description), Websites and Skills itself when the page "
              "opens, and again whenever you call fill_sections; read its report, then do only what it lists as failed plus Education (school prompt, "
              "degree, field of study, dates) and the résumé. Never add a work entry by hand while fill_sections has not been called on this page. "
+             "Languages (when the section is there): English, tick 'I am fluent in this language' (answer_key experience.fluent_in_english), and each "
+             "proficiency dropdown from experience.english_proficiency; the Review page must not show 'I am fluent in this language: No'. "
              "A resumed application opens at its last step: go_to_step('My Experience'), call fill_sections, then Save and Continue forward to Review. "
              "Date fields (graduation, employment dates) are three spinbuttons that ignore ordinary typing: always use "
              "`set_date` (graduation = education.graduation_mmddyyyy, i.e. 05/15/2028). Revio IS a current role: tick "
