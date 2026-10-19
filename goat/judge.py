@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 import logging
 import time
@@ -158,7 +159,8 @@ class Judge:
 
     async def judge(self, job_id: int, decisions: list[dict], screenshot_png: bytes | None, page_text: str,
                     gate: dict | None = None, outline: str = "", *, profile: str = "",
-                    unconfirmed: list[dict] | None = None, posting: str = "", resume: str = "") -> dict | None:
+                    unconfirmed: list[dict] | None = None, posting: str = "", resume: str = "",
+                    correction: str = "") -> dict | None:
         t0 = time.monotonic()
         try:
             model = assert_allowed(self.model)
@@ -181,6 +183,8 @@ class Judge:
                                                "résumé contains rest on it)\n" + (resume or "(not available)")[:12000]},
                 {"type": "input_text", "text": "UNCONFIRMED ANSWERS\n" + self._unconfirmed_text(unconfirmed)},
             ]
+        if correction:
+            content.append({"type": "input_text", "text": "CORRECTION\n" + correction[:1500]})
         if screenshot_png:
             content.append({"type": "input_image", "image_url": "data:image/png;base64," + base64.b64encode(screenshot_png).decode(), "detail": "auto"})
         try:
@@ -205,6 +209,24 @@ class Judge:
             con.execute("INSERT INTO judgements(job_id, verdict, bucket, notes, model, ts) VALUES(?,?,?,?,?,?)",
                         (job_id, out["verdict"], out["bucket"], notes[:2000], model, db.now()))
         return out
+
+
+# "the review page shows “Anywhere in the United States.”": a value the judge says is on the page
+_SHOWN = re.compile(r"\b(shows?|showing|displays?|displaying|reads?|holds?|contains?|lists?|says?|has|is set to|still has)\b"
+                    r"[^“\"\n]{0,40}[“\"]([^”\"\n]{2,160})[”\"]", re.I)
+
+
+def phantom_claims(notes: str | None, page: str) -> list[str]:
+    """Quoted values the judge's notes say the page shows that the page outline and text do not contain."""
+    from .answers import norm
+    pn = norm(page or "")
+    out = []
+    for m in _SHOWN.finditer(notes or ""):
+        v = m.group(2).strip()
+        nv = norm(v)
+        if nv and len(nv) >= 3 and nv not in pn and v not in out:
+            out.append(v)
+    return out
 
 
 def _on_page(value, page: str) -> bool:
@@ -253,8 +275,22 @@ async def judge_page(job: dict, ctx, ex, *, shot: str = "shadow", fact_check: bo
                                       if not u.get("archived") or _on_page(u.get("value"), outline + "\n" + text)],
                       "posting": str(getattr(ctx, "posting_text", "") or ""),
                       "resume": resume_text(getattr(ctx, "resume_file", None))}
-        verdict = await Judge(client=getattr(getattr(ctx, "classifier", None), "client", None)).judge(
-            job_id, records.decisions(job_id), png, text, getattr(ctx, "gate_result", None), outline=outline, **kwargs)
+        judge = Judge(client=getattr(getattr(ctx, "classifier", None), "client", None))
+        decisions = records.decisions(job_id)
+        verdict = await judge.judge(job_id, decisions, png, text, getattr(ctx, "gate_result", None), outline=outline, **kwargs)
+        # A failing verdict that says the page shows a value the page does not contain is asked once more: Northrop
+        # Grumman's Review page showed "Aurora, CO" and the judge failed it for showing "Anywhere in the United
+        # States" (2026-10-19)
+        ghost = phantom_claims(verdict.get("notes") if verdict and verdict.get("verdict") != "pass" else "", outline + "\n" + text)
+        if ghost:
+            db.event(job_id, "judge:phantom", {"claims": ghost[:4]})
+            again = await judge.judge(job_id, decisions, png, text, getattr(ctx, "gate_result", None), outline=outline,
+                                      correction=("Your previous verdict said the page shows " + "; ".join(repr(g) for g in ghost[:4])
+                                                  + ", but neither the FINAL PAGE OUTLINE nor the FINAL PAGE TEXT contains that. Judge "
+                                                  "only what the outline, the page text and the screenshot show now; the decision log "
+                                                  "says what was intended, the page says what is there."), **kwargs)
+            if again is not None:
+                verdict = again
     except Exception as e:  # noqa: BLE001 - the judge is evidence, never a crash
         db.event(job_id, "judge:error", {"error": str(e)[:300]})
         return None

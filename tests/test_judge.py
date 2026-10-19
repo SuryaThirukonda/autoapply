@@ -146,3 +146,17 @@ async def test_judge_sees_the_outline_with_box_values_and_long_log_values(tmp_pa
     texts = [c["text"] for c in fake.calls[0]["input"][0]["content"] if c.get("type") == "input_text"]
     assert any(t.startswith("FINAL PAGE OUTLINE") and 'value="a@x.com"' in t for t in texts)
     assert any("x" * 300 in t for t in texts)
+
+
+
+def test_a_value_the_judge_says_is_shown_but_is_not_on_the_page_is_a_phantom():
+    """Northrop Grumman (2026-10-19): the Review page showed 'Aurora, CO'; the judge failed it for showing
+    'Anywhere in the United States'."""
+    from goat.judge import phantom_claims
+    page = ("Are you willing to relocate?* Yes Which available location(s) on the posting are you open to relocating to? "
+            "Aurora, CO Country United States of America")
+    notes = "The intended relocation location is Aurora, CO, but the review page shows \u201cAnywhere in the United States.\u201d"
+    assert phantom_claims(notes, page) == ["Anywhere in the United States."]
+    assert phantom_claims("The page shows \u201cAurora, CO\u201d where the posting lists Palmdale.", page) == []
+    assert phantom_claims('Willing to relocate shows "Yes" as intended.', page) == []
+    assert phantom_claims("", page) == [] and phantom_claims(None, page) == []
