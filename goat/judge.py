@@ -62,8 +62,10 @@ JUDGE_INSTRUCTIONS = (
     "and understood', a policy to follow, a willingness to make a disclosure a law or policy requires such as SEC Rule "
     "206(4)-5 political contributions (TIAA, 2026-10-19), an e-signature with his name and date) are delegated: Surya authorized the "
     "agent to accept them on his behalf, so a ticked acknowledgment is the intended value, never a defect (Waymo, "
-    "2026-10-19). An SMS / text-message opt-in is ticked (his choice); marketing email, job-alert and talent-community "
-    "opt-ins stay unticked."
+    "2026-10-19). An SMS / text-message opt-in is ticked (his choice); marketing email, newsletter and job-alert "
+    "opt-ins stay unticked. Letting the company keep his profile or data and consider him for other or future openings "
+    "(a talent pool, 'further processing for other job opportunities') is a Yes: his own questionnaire answer "
+    "(2026-10-18)."
 )
 
 FACT_CHECK_INSTRUCTIONS = (

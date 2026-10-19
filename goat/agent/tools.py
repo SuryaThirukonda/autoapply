@@ -386,12 +386,12 @@ def default_no_choice(question: str, options: list[str] | None) -> str | None:
 def consent_question_key(question: str) -> str | None:
     """Consent / acknowledgement / certification questions Surya answers yes to on every form (his rule,
     2026-10-15), mapped to the standing key that authorizes it. Marketing opt-ins map to the No key."""
-    from ..adapters import COMPLIANCE_DISCLOSURE, CONSENT, MARKETING, PROCESSING, SMS, consent_key, talent_pool_opt_in
+    from ..adapters import COMPLIANCE_DISCLOSURE, CONSENT, MARKETING, PROCESSING, SMS, consent_key, future_roles_consent
     q = question or ""
     if COMPLIANCE_DISCLOSURE.search(q):
         return "consent.compliance_disclosure"
-    if talent_pool_opt_in(q) and not SMS.search(q):
-        return "consent.marketing_email"          # his standing No to talent-pool and job-alert opt-ins (Aptiv, 2026-10-19)
+    if future_roles_consent(q):
+        return "consent.keep_profile_future_roles"   # his questionnaire Yes (2026-10-18); newsletters stay No
     asks_consent = re.search(r"\b(do|will|would) you (agree|accept|acknowledge|consent|certify|authori[sz]e|understand|confirm)\b", q, re.I)
     if SMS.search(q) and (asks_consent or CONSENT.search(q) or re.search(r"\b(receive|opt in|opt-in)\b", q, re.I)):
         return "consent.sms"

@@ -73,25 +73,27 @@ COMPLIANCE_DISCLOSURE = re.compile(
     re.I | re.S)
 
 
-# Keeping his data for OTHER or FUTURE openings is a talent-pool opt-in, which he declines, even when it is worded as a
-# consent to processing ("Do you consent for your data to be further processed for other job opportunities at Aptiv?",
-# 2026-10-19). A box that also names this application is the application's own consent.
-TALENT_POOL = re.compile(
+# Keeping his profile or data for OTHER or FUTURE openings is a Yes: his questionnaire (2026-10-18) answers "May the
+# company keep his profile and consider him for future openings? Yes (a plain marketing / newsletter opt-in is still
+# No)" (consent.keep_profile_future_roles). Aptiv's "Do you consent for your data to be further processed for other job
+# opportunities?" (2026-10-19) is that question. Newsletters, job alerts and marketing stay No (MARKETING).
+FUTURE_ROLES = re.compile(
     r"(\bfor (other|future|additional|new|further) (job |career |employment )?(opportunit|openings?|positions?|roles?|vacanc)|"
-    r"talent (pool|community|network|database)|kept on file for|future (job )?consideration)", re.I)
-THIS_APPLICATION = re.compile(r"\b(this|the current|my current) (application|position|role|job|vacancy|opening|requisition)\b", re.I)
+    r"talent (pool|database)|kept on file for|future (job )?consideration|keep (my|your|his) (profile|information|data|resume|résumé|cv))",
+    re.I)
+NEWSLETTER = re.compile(r"(newsletter|job alerts?|marketing|promotion|subscribe|text messag|\bsms\b|e-?mails? about)", re.I)
 
 
-def talent_pool_opt_in(label: str) -> bool:
-    return bool(TALENT_POOL.search(label or "")) and not THIS_APPLICATION.search(label or "")
+def future_roles_consent(label: str) -> bool:
+    return bool(FUTURE_ROLES.search(label or "")) and not NEWSLETTER.search(label or "")
 
 
 def consent_key(label: str) -> str | None:
     """The standing answer key that authorizes ticking this consent, or None to leave it alone."""
     if SMS.search(label):
         return "consent.sms"
-    if talent_pool_opt_in(label):
-        return None                       # a talent-pool opt-in: left unticked (his standing No)
+    if future_roles_consent(label):
+        return "consent.keep_profile_future_roles"
     if COMPLIANCE_DISCLOSURE.search(label):
         return "consent.compliance_disclosure"
     if re.search(r"(authori[sz]ed to work|work authori[sz]ation|eligib(le|ility) to work|without restrictions?|sponsorship|legally (able|permitted))", label, re.I):
@@ -425,8 +427,8 @@ async def _consents_impl(self, ex, snap: Snapshot, job: dict, page_no: int, res:
     mk = answers.get("consent.marketing_email", company, self.portal)
     if mk and mk.has_value and answers.norm(str(mk.answer)).split(" ")[0] in ("no", "false", "decline"):
         unticks = [i for i in snap.items if i.get("type") == "checkbox" and i.get("checked") and not i.get("disabled")
-                   and ((MARKETING.search(i.get("label") or "") and not PROCESSING.search(i.get("label") or ""))
-                        or talent_pool_opt_in(i.get("label") or ""))
+                   and MARKETING.search(i.get("label") or "") and not PROCESSING.search(i.get("label") or "")
+                   and not future_roles_consent(i.get("label") or "")
                    and not SMS.search(i.get("label") or "")]
         if unticks:
             out = await fill.fill_batch(ex, [{"ref": i["ref"], "value": "false"} for i in unticks])

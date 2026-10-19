@@ -199,15 +199,13 @@ def test_information_related_to_a_topic_is_no_relative_question():
 
 
 
-def test_processing_for_other_openings_is_a_talent_pool_opt_in():
+def test_processing_for_other_openings_is_his_keep_profile_yes():
     """Aptiv (2026-10-19): 'Do you consent for your data to be further processed for other job opportunities at Aptiv?'
-    was answered Yes by the consent rule."""
+    is his questionnaire's consent.keep_profile_future_roles = Yes; newsletters and job alerts stay No."""
     from goat.adapters import consent_key
     from goat.agent.tools import consent_question_key
     q = "Do you consent for your data to be further processed for other job opportunities at Aptiv?"
-    assert consent_question_key(q) == "consent.marketing_email"
-    assert consent_key(q) is None
-    assert consent_question_key("I accept the processing of my personal data for this application") != "consent.marketing_email"
+    assert consent_question_key(q) == "consent.keep_profile_future_roles"
+    assert consent_key(q) == "consent.keep_profile_future_roles"
+    assert consent_question_key("Send me job alerts for future opportunities") == "consent.marketing_email"
     assert consent_key("I accept to the processing of my Personal Data in accordance with the Privacy Notice") == "consent.privacy_notice"
-    assert consent_question_key("I consent to the processing of my data for this position and for future job opportunities") \
-        != "consent.marketing_email"                    # names this application: the application's own consent
