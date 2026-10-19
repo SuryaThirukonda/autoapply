@@ -154,6 +154,14 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
             return True
         lw = _nw(label)
         return any(dl and (dl <= lw or (lw and lw <= dl)) for dl in dec_labels)
+    # A value that equals one of his stored answers is sourced by that answer (a résumé autofill or a pick whose
+    # read-back came up empty: Ashby's school autocomplete, 2026-10-18), recorded here the way prefill does.
+    from .adapters import _standing_values
+    try:
+        standing = _standing_values()
+    except Exception:
+        standing = {}
+    from . import answers as _answers
     for it in snapshot.items:
         if it.get("tag") not in ("input", "textarea", "select", "dropdown", "richtext", "toggle") or it.get("type") in ("file", "password", "hidden", "submit", "button"):
             continue
@@ -165,6 +173,11 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         if not str(val).strip():
             continue
         if not _sourced(it.get("ref", ""), it.get("label", "")):
+            key = standing.get(_answers.norm(str(val)))
+            if key and it.get("type") not in ("checkbox", "radio") and it.get("tag") != "toggle":
+                records.record_decision(job["id"], page_no, it.get("label") or "", str(val)[:300], f"standing:{key}", it.get("ref", ""))
+                dec_refs.add(it.get("ref", ""))
+                continue
             reasons.append(f"value on page with no sourced decision this attempt: [{it.get('ref')}] {(it.get('label') or '')[:60]} = {str(val)[:40]!r} (re-set it from its answer_key with choose/fill_batch, or clear it)")
     for g in snapshot.groups:
         for o in g.get("options", []):

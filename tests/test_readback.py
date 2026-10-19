@@ -143,3 +143,20 @@ async def test_worker_readback_after_page_emits_one_event(tmp_path):
     assert mism == ["field Email [e4] shows 'b@x.com' but decision was 'a@x.com'"]
     rows = db.connect().execute("SELECT detail FROM events WHERE job_id=1 AND kind='gate:readback'").fetchall()
     assert len(rows) == 1 and "b@x.com" in rows[0][0]
+
+
+def test_a_page_value_equal_to_a_stored_answer_is_sourced_at_gate_time(tmp_path):
+    """Ashby's résumé autofill / an autocomplete pick with an empty read-back: the value equals the stored
+    answer, so the gate records the decision itself instead of blocking on it (2026-10-18)."""
+    from goat import answers
+    from goat.gate import run_gate
+    db.reset_for_tests(tmp_path / "t.db")
+    answers.save_answer("education.school", "Texas A&M University", answer_type="text", source="questionnaire")
+    snap = _snap([{"ref": "e13", "tag": "input", "type": "text", "label": "College/University", "value": "Texas A&M University"},
+                  {"ref": "e14", "tag": "input", "type": "text", "label": "Nickname", "value": "Goat"}])
+    job = {"id": 1, "company": "X", "title": "Intern", "url": "https://x.example/job", "listing_id": "l1"}
+    g = run_gate(job=job, snapshot=snap, page_text="Apply", expected_resume=None, free_text_answers=[], portal="ashby", page_no=1)
+    assert not any("College/University" in r for r in g.reasons)
+    assert any("Nickname" in r and "no sourced decision" in r for r in g.reasons)
+    decs = records.decisions(1)
+    assert [(d["field_label"], d["value"], d["source"]) for d in decs] == [("College/University", "Texas A&M University", "standing:education.school")]

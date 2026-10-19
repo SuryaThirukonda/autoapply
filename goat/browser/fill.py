@@ -472,6 +472,15 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
             await asyncio.sleep(0.6)
             after = await ex.read_ref(ref)
             shown = (after.get("value") or after.get("shown") or "")
+            if not shown.strip():
+                # Ashby's autocomplete clears its input once a row is picked and shows the pick elsewhere: the
+                # outline's reading of the control (what the gate will see) is the truth (2026-10-18).
+                try:
+                    from . import snapshot as _snapmod
+                    item = (await _snapmod.take(ex)).refs.get(ref) or {}
+                    shown = str(item.get("shown") or item.get("value") or "")
+                except Exception:
+                    pass
             # Workday multi-select trees ("How Did You Hear About Us?") count their picks and list them after the count.
             if re.search(r"\b[1-9]\d* items? selected\b", shown, re.I):
                 if _norm(pick["text"]) in _norm(shown):
