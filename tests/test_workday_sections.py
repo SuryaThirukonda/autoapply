@@ -100,3 +100,10 @@ def test_cplusplus_never_becomes_c():
     assert pick_skill("C++", ["C", "C (Programming Language)"]) is None
     assert pick_skill("C#", ["C", "C# (Programming Language)"]) == "C# (Programming Language)"
     assert not fill._chip_matches("C", ["C++"]) and fill._chip_matches("C++ (Programming Language)", ["C++"])
+
+
+def test_a_programming_language_chip_counts_as_the_skill():
+    from goat.browser import fill
+    assert fill._chip_matches("C++ Programming Language", ["C++"])
+    assert fill._chip_matches("Java Programming Language", ["Java"])
+    assert not fill._chip_matches("C Programming Language", ["C++"])

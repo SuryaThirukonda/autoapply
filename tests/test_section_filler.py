@@ -235,3 +235,28 @@ async def test_the_skills_search_box_is_left_empty_and_closed(stored):
         assert await ex.page.evaluate("() => document.querySelectorAll('[data-automation-id=\"selectedItem\"]').length") == 1
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_an_entry_whose_company_was_typed_over_gets_his_company_back(stored):
+    """T-Mobile (2026-10-19): the model typed 'Aggie Data Science Club' over work entry 5's 'Southwest Airlines'. The
+    filler finds that block by its job title and puts the stored company back instead of adding a sixth entry."""
+    ex = await _open(FIX / "workday" / "sections.html")
+    try:
+        f = _filler("workday", ex)
+        await snapshot.take(ex)
+        await f.run()
+        await ex.page.evaluate("""() => {
+          const el = Array.from(document.querySelectorAll('input')).find(i => i.value === 'Southwest Airlines');
+          const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          set.call(el, 'Aggie Data Science Club'); el.dispatchEvent(new Event('input', {bubbles: true}));
+          el.dispatchEvent(new Event('change', {bubbles: true}));
+        }""")
+        f2 = _filler("workday", ex)
+        rep = await f2.run()
+        vals = _vals((await f2.scan())["entries"])
+        assert set(vals) == {e["company"] for e in ENTRIES}, vals.keys()
+        assert len(_work((await f2.scan())["entries"])) == 5
+        assert "Southwest Airlines" in rep.updated and rep.added == [a for a in rep.added if a.startswith(("http", "skill"))]
+    finally:
+        await ex.close(close_browser=True)

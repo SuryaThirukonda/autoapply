@@ -172,6 +172,7 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
             reasons.append(f"resume not shown on page: expected {expected_resume}")
 
     # 5b. every value on the page has a sourced decision from THIS attempt (by ref, else by label words).
+    from . import readback
     def _nw(s: str) -> set:
         return {w for w in re.findall(r"[a-z0-9]+", (s or "").lower()) if len(w) > 2}
     dec_refs = {d["ref"] for d in decs if d.get("ref")}
@@ -203,8 +204,15 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
             val = "pressed" if it.get("pressed") else ""
         if not str(val).strip():
             continue
+        # A placeholder is not a value: "--" (IXL's office picker) or a select showing its own question as the
+        # selection ("What University do you currently attend?", 2026-10-18).
+        if re.fullmatch(r"[\W_]+", str(val)) or (it.get("tag") in ("select", "dropdown") or it.get("combo")) and \
+                _answers.norm(str(val)) == _answers.norm(it.get("label") or "") and it.get("type") not in ("checkbox", "radio"):
+            continue
         if not _sourced(it.get("ref", ""), it.get("label", "")):
             key = standing.get(_answers.norm(str(val)))
+            if not key and any(readback.dial_code_matches(cv, str(val)) for cv, ck in standing.items() if ck == "identity.country"):
+                key = "identity.country"      # a phone country picker showing "+1" for his United States (Epic Games)
             if key and it.get("type") not in ("checkbox", "radio") and it.get("tag") != "toggle":
                 records.record_decision(job["id"], page_no, it.get("label") or "", str(val)[:300], f"standing:{key}", it.get("ref", ""))
                 dec_refs.add(it.get("ref", ""))
@@ -216,7 +224,6 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
                 reasons.append(f"checked option with no sourced decision this attempt: [{o.get('ref')}] {(g.get('label') or '')[:50]} / {(o.get('label') or '')[:30]} (re-set it with fill_batch using the group's answer_key from lookup_answer, or clear it with value false source 'clear')")
 
     # 5c. read-back: every decision made on a control still on this page must be what the control shows now.
-    from . import readback
     reasons += readback.diff(decs, snapshot, page_no)
     for u in (getattr(snapshot, "unsaved", None) or [])[:6]:
         reasons.append(f"the form shows {u.get('shown', '')!r} for '{(u.get('title') or '')[:80]}' but has not stored it (it would be "

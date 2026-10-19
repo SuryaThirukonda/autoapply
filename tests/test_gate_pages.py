@@ -181,3 +181,25 @@ async def test_a_captcha_the_page_does_not_show_does_not_end_the_run(store, tmp_
         assert "not parked" in out["error"] and out.get("blockers")
     finally:
         await ex.close(close_browser=True)
+
+
+
+def test_a_placeholder_value_is_not_an_unsourced_value(tmp_path):
+    """IXL's office picker shows '--' and a Greenhouse select showed its own question as the selection (2026-10-18):
+    neither is a value the run has to source."""
+    from goat import db, gate
+    from goat.browser.snapshot import Snapshot
+    db.reset_for_tests(tmp_path / "t.db")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('l1','Acme','Intern','https://x.example/job','greenhouse')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,priority) VALUES(1,'l1','filling','no_account',0)")
+    job = dict(db.connect().execute("SELECT j.*, l.company, l.title, l.url, l.ats FROM jobs j JOIN listings l ON l.id=j.listing_id WHERE j.id=1").fetchone())
+    snap = Snapshot(url="https://x.example/job", title="t", headings=["Apply"], items=[
+        {"ref": "e18", "tag": "select", "label": "Which IXL office would you prefer?", "value": "--"},
+        {"ref": "e25", "tag": "dropdown", "label": "What University do you currently attend?", "shown": "What University do you currently attend?"},
+        {"ref": "e30", "tag": "input", "type": "text", "label": "Nickname", "value": "Sur"}], groups=[], errors={}, challenge={})
+    for i in snap.items:
+        snap.refs[i["ref"]] = i
+    reasons = [r for r in gate.run_gate(job=job, snapshot=snap, page_text="", expected_resume=None, free_text_answers=[], portal="greenhouse", page_no=1).reasons if "no sourced decision" in r]
+    assert any("Nickname" in r for r in reasons)
+    assert not any("IXL office" in r or "University" in r for r in reasons), reasons

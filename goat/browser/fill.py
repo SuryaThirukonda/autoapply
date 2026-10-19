@@ -264,6 +264,9 @@ def _chip_matches(chip: str, wants: list[str]) -> bool:
             return True
         if re.fullmatch(re.escape(w.strip().lower()) + r"\s*(\(.*\))?", (chip or "").strip().lower()):
             return True
+        # "C++ Programming Language" for C++ (T-Mobile's Skills, 2026-10-19): the wanted name plus that qualifier unbracketed
+        if re.fullmatch(re.escape(w.strip().lower()) + r"\s+programming language", (chip or "").strip().lower()):
+            return True
         # "AWS Certified Cloud Practitioner - Amazon Web Services (AWS)": the wanted name plus an issuer after a dash
         if re.fullmatch(re.escape(w.strip().lower()) + r"\s*[-–—:]\s+.+", (chip or "").strip().lower()):
             return True

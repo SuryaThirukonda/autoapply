@@ -893,3 +893,22 @@ async def test_workday_review_with_no_work_experience_is_blocked(tmp_path):
         assert g.result == "blocked" and "Work Experience: No Response" in g.reasons[0] and "go_to_step" in g.reasons[0]
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_work_entry_field_never_takes_a_resume_literal(store):
+    """T-Mobile (2026-10-19): the model typed 'Aggie Data Science Club' with source 'resume' over the stored company
+    'Southwest Airlines' of work entry 5, and Workday then kept only that entry."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher(_job())
+    s = Snapshot(url="u", title="t", headings=["My Experience", "Work Experience"], items=[
+        {"ref": "e87", "tag": "input", "type": "text", "label": "Company*", "value": "Southwest Airlines"},
+        {"ref": "e88", "tag": "input", "type": "text", "label": "Job Title*", "value": "Data Analyst"}], groups=[], errors={}, challenge={})
+    for i in s.items:
+        s.refs[i["ref"]] = i
+    ctx.last_snapshot = s
+    out, _ = await d.t_fill_batch([{"ref": "e87", "value": "Aggie Data Science Club", "source": "resume", "label": "Company"},
+                                   {"ref": "e88", "value": "Data Analyst at the club", "source": "resume", "label": "Title"}])
+    res = {r["ref"]: r for r in out["results"]}
+    assert res["e87"]["status"] == "failed" and "experience.work.N.company" in res["e87"]["error"]
+    assert res["e88"]["status"] == "failed"          # the control's own label says Job Title

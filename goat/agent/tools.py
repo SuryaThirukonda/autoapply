@@ -212,6 +212,10 @@ AFFIRM_LABEL = re.compile(r"^(yes\b|i (agree|consent|accept|acknowledge|certify|
 
 # Yes/no questions about where Surya works or worked, industries, affiliations and relationships.
 # Surya, 2026-10-15: "answer is almost always no (that's default if it stalls)".
+# A work-entry field: its value is Surya's stored entry (experience.work.N.*), never a résumé or generated literal.
+WORK_ENTRY_FIELD = re.compile(r"^\s*(current |most recent |previous )?(company( name)?|employer( name)?|organi[sz]ation( name)?|"
+                              r"job title|position title)\s*[*:]?\s*$", re.I)
+
 AFFILIATION = re.compile(
     r"(employed (by|with|at)\b|\bwork(ed|ing)? (for|at)\b|\baffiliat|relationships? (with|to)\b|\brelated to\b|\brelatives?\b|family member|"
     r"household member|immediate family|\bspouse\b|board member|\bofficers?\b|\bdirectors?\b|government official|public official|"
@@ -583,6 +587,17 @@ class ToolDispatcher:
                         f["label"] = f"{item.get('group')[:80]} / {item.get('label') or ''}"
             if is_choice and not f.get("answer_key") and (f.get("source") or "").lower() == "generated":
                 results.append({"ref": f["ref"], "status": "failed", "error": "choices (radio/checkbox/select) need an answer_key: call lookup_answer, or ask_user if none fits"})
+                continue
+            if not f.get("answer_key") and (f.get("source") or "").lower() in ("resume", "generated") and (
+                    WORK_ENTRY_FIELD.match(str(f.get("label") or "")) or WORK_ENTRY_FIELD.match(str((item or {}).get("label") or ""))):
+                # T-Mobile (2026-10-19): asked by a mistaken judge note to "fix" work entry 5's company, the model typed
+                # "Aggie Data Science Club" (source 'resume') over Surya's stored "Southwest Airlines", and Workday kept
+                # only that entry on Save. Work entries come from his stored experience.work.N.* keys alone.
+                results.append({"ref": f["ref"], "status": "failed", "error": (
+                    "a work-entry field (company, employer, job title) holds Surya's stored entry: use the "
+                    "experience.work.N.company / experience.work.N.title answer_key, or fill_sections for a Work Experience "
+                    "section. A résumé or generated literal never replaces his entries; if a check calls the stored "
+                    "entry wrong, leave it as it is.")})
                 continue
             val, src, err = self._resolve_value(f.get("answer_key"), f.get("value"), f.get("source"), f.get("label", ""))
             if err:

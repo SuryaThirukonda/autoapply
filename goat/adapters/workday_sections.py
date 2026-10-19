@@ -286,6 +286,10 @@ class WorkdaySections:
         matched: set[str] = set()
         for ent in stored:
             comp = _field_value(existing, ent["company"])
+            if comp is None:
+                # His entry with another company typed over his (T-Mobile, 2026-10-19: "Aggie Data Science Club" over
+                # work entry 5's "Southwest Airlines"): the same job title finds it, and his stored company goes back in.
+                comp = _title_match(existing, ent, matched, stored)
             if comp is not None:
                 tag = f'{comp["kind"]}-{comp["idx"]}'
                 matched.add(tag)
@@ -607,6 +611,24 @@ def _is_blank_work(entry: dict) -> bool:
     c = _field(entry, "companyName", "company", "employer")
     t = _field(entry, "jobTitle", "title")
     return bool(c or t) and not ((c and c["value"].strip()) or (t and t["value"].strip()))
+
+
+def _title_match(entries: list[dict], ent: dict, matched: set[str], stored: list[dict]) -> dict | None:
+    """An unmatched block with this entry's exact job title and a company that is none of his stored ones."""
+    want = answers.norm(ent.get("title") or "")
+    if not want:
+        return None
+    for e in entries:
+        if f'{e["kind"]}-{e["idx"]}' in matched:
+            continue
+        t = _field(e, "jobTitle", "title")
+        c = _field(e, "companyName", "company", "employer")
+        if not (t and c and c["value"].strip()) or answers.norm(t["value"]) != want:
+            continue
+        if any(_same_company(c["value"], s["company"]) for s in stored):
+            continue
+        return e
+    return None
 
 
 def _field_value(entries: list[dict], company: str) -> dict | None:

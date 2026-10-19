@@ -177,3 +177,35 @@ def test_a_ref_reused_for_another_field_is_not_compared():
     assert readback._same_field("Authorized to work", "Are you legally authorized to work in the U.S.?")
     assert readback._same_field("Work authorization", "Are you authorized to work?")
     assert not readback._same_field("GPA", "School or University* (selected items; choose on this control adds another)")
+
+
+def test_a_checkbox_decision_worded_as_its_own_label_means_ticked():
+    """T-Mobile and Axiom Space (2026-10-19): a choose routed to a checkbox records the option's wording, and the
+    read-back compared that wording with 'checked' and blocked Save and Continue."""
+    lab = "No, I do not have a disability and have not had one in the past"
+    snap = _snap([{"ref": "e52", "tag": "input", "type": "checkbox", "label": lab, "checked": True},
+                  {"ref": "e46", "tag": "input", "type": "checkbox", "label": "Yes, I have read and consent to the terms and conditions*", "checked": True},
+                  {"ref": "e47", "tag": "input", "type": "checkbox", "label": "I have a disability", "checked": False}])
+    assert readback.diff([_dec("Disability", lab, "e52")], snap, 1) == []
+    assert readback.diff([_dec("Consent", "Yes, I have read and consent to the terms and conditions*", "e46")], snap, 1) == []
+    assert readback.diff([_dec("Disability", "No", "e47")], snap, 1) == []
+    snap.refs["e52"]["checked"] = False
+    assert readback.diff([_dec("Disability", lab, "e52")], snap, 1) != []
+
+
+def test_a_phone_country_picker_showing_the_dialing_code_matches_the_country():
+    """Epic Games (2026-10-19): Greenhouse's Country* box beside Phone shows '+1' after United States is chosen."""
+    snap = _snap([{"ref": "e73", "tag": "dropdown", "combo": True, "label": "Country*", "value": "+1"}])
+    assert readback.diff([_dec("Country", "United States", "e73")], snap, 1) == []
+    assert readback.dial_code_matches("United States of America", "🇺🇸 +1")
+    assert not readback.dial_code_matches("India", "+1")
+    assert not readback.dial_code_matches("United States", "1")
+    snap.refs["e73"]["value"] = "+44"
+    assert readback.diff([_dec("Country", "United States", "e73")], snap, 1) != []
+
+
+def test_a_multiselect_decision_matches_any_of_its_chips():
+    snap = _snap([{"ref": "e24", "tag": "input", "type": "text", "combo": True, "label": "Type to Add Skills",
+                   "value": "FastAPI; RESTful APIs; Python", "selected_items": 3}])
+    assert readback.diff([_dec("Skills", "RESTful APIs", "e24")], snap, 1) == []
+    assert readback.diff([_dec("Skills", "Go", "e24")], snap, 1) != []

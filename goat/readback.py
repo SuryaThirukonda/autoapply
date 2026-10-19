@@ -41,6 +41,37 @@ def _truthy_checked(value: str) -> bool:
     return str(value or "").strip().lower() in ("checked", "pressed", "true", "yes", "on", "1")
 
 
+# A phone-number country picker shows the dialing code of the country picked: Greenhouse's "Country*" box beside
+# Phone reads "+1" once United States is chosen (Epic Games, 2026-10-19).
+_DIAL_CODES = {
+    "1": ("united states", "united states of america", "usa", "us", "u s", "u s a", "america", "canada"),
+    "44": ("united kingdom", "uk", "great britain", "england"),
+    "91": ("india",),
+}
+
+
+def dial_code_matches(decision: str, page: str) -> bool:
+    """`page` is a bare dialing code ("+1", with or without a flag in front) of the country `decision` names."""
+    m = re.fullmatch(r"[^\w+]*\+\s*(\d{1,4})\s*", str(page or ""))
+    if not m:
+        return False
+    nd = answers.norm(decision)
+    return bool(nd) and any(nd == n or nd.startswith(n + " ") for n in _DIAL_CODES.get(m.group(1), ()))
+
+
+def _expect_checked(value: str, item: dict) -> str:
+    """A checkbox or radio decision recorded as the option's own wording ("No, I do not have a disability and have
+    not had one in the past", "Yes, I have read and consent to the terms") means that option is ticked: T-Mobile and
+    Axiom Space were blocked with "shows 'checked' but decision was '<its label>'" (2026-10-19)."""
+    v = str(value or "")
+    if _truthy_checked(v) or answers.norm(v) in ("", "unchecked", "false", "off", "0", "no"):
+        return v
+    lab = str(item.get("label") or "")
+    if lab and (answers.norm(lab) == answers.norm(v) or values_equal(v, lab, "choice")):
+        return "checked"
+    return v
+
+
 def values_equal(decision: str, page: str, kind: str, label: str = "") -> bool:
     """kind: text | choice | checkbox | toggle | date. `label` is the control's label, which a choose
     read-back often prefixes ("Degree* Bachelors")."""
@@ -191,6 +222,13 @@ def diff(decisions: list[dict], snap: Snapshot, page_no: int = 0) -> list[str]:
         kind = _kind_for(item, str(val))
         page_value = _page_value(item)
         label = (item.get("label") or d.get("field_label") or "")
+        if kind == "checkbox":
+            val = _expect_checked(str(val), item)
+        if kind != "checkbox" and dial_code_matches(str(val), page_value):
+            continue
+        if item.get("selected_items") and "; " in page_value and any(
+                values_equal(str(val), chip, kind, label) for chip in page_value.split("; ")):
+            continue          # a multi-select keeps every pick as a chip: the decision is one of them
         if not values_equal(str(val), page_value, kind, label):
             out.append(f"field {label[:60]} [{item.get('ref', key)}] shows {page_value[:60]!r} but decision was {str(val)[:60]!r}")
     return out
