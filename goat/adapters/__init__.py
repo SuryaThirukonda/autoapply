@@ -557,7 +557,13 @@ class Oracle(Adapter):
     lane = "account"
     hints = ("Oracle Recruiting Cloud: an account or an emailed access code is required; use credentials / enter_email_code. "
              "Sessions time out after 30 idle minutes. Oracle uses role=alert for status chatter such as 'The form Address form loaded'; "
-             "the harness already ignores that. Fill the Address block completely: a missing home address blocked a submit before.")
+             "the harness already ignores that. Fill the Address block completely: a missing home address blocked a submit before. "
+             "One long page (CSX, 2026-10-19): Yes/No and band questions are toggle buttons (fill_batch with the answer_key: GPA band "
+             "education.gpa_range, travel share availability.travel_max_percent); 'How did you hear' is a list where LinkedIn may be "
+             "missing: pick 'Other' and type 'LinkedIn' in its 'Specify Other' box; 'ADD EXPERIENCE' opens one block per role "
+             "(experience.work.N title, company, dates) and 'ADD EDUCATION' one for Texas A&M University (major, graduation May 2028); "
+             "Veteran Status is a dropdown (self_id.veteran_status); the Full Name signature takes his legal name. Work through every "
+             "section top to bottom before calling submit; never hand the form back while a stored answer covers what is left.")
 
 
 class ICIMS(Adapter):

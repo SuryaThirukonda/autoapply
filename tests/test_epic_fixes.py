@@ -343,3 +343,23 @@ async def test_a_needs_you_park_that_lists_work_gets_the_gate_first(store, tmp_p
         assert "not parked" in out["error"] and out.get("blockers")
     finally:
         await ex.close(close_browser=True)
+
+
+NUM_MONTHS = """<!doctype html><html><body style="margin:20px">
+<label for="sm">Start Date (Month)</label>
+<select id="sm"><option value="">Select</option>""" + "".join(f"<option>{i:02d}</option>" for i in range(1, 13)) + """</select>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_numeric_month_list_takes_the_month_number(tmp_path):
+    """Epic Games (2026-10-19): 'Start Date (Month)' lists 01-12; 'August 2025' found no option."""
+    ex = await _race(tmp_path, NUM_MONTHS, "nummonths.html")
+    try:
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if i.get("tag") == "select")
+        r = await fill.choose(ex, ref, ["August 2025"])
+        assert r.ok, r.error
+        assert await ex.page.evaluate("() => document.getElementById('sm').value") == "08"
+    finally:
+        await ex.close(close_browser=True)

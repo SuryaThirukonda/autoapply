@@ -1379,7 +1379,13 @@ class ToolDispatcher:
         with db.tx() as con:
             con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.AWAITING_CODE, db.now(), self.ctx.job_id))
         after_ts = self.ctx.code_requested_at or (db.now() - 180)
-        handle = await asyncio.to_thread(self.ctx.mail.fetch_code, self.ctx.portal, self.ctx.portal_host, after_ts)
+        fetch = self.ctx.mail.fetch_code
+        try:
+            import inspect
+            kw = {"company": self.ctx.job.get("company", "")} if "company" in inspect.signature(fetch).parameters else {}
+        except (TypeError, ValueError):
+            kw = {}
+        handle = await asyncio.to_thread(fetch, self.ctx.portal, self.ctx.portal_host, after_ts, **kw)
         if handle is None:
             with db.tx() as con:
                 con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))

@@ -408,3 +408,17 @@ def test_a_rate_limited_403_is_retried_and_a_poll_survives_a_gmail_hiccup(monkey
     import pytest as _pytest
     with _pytest.raises(g.MailUnavailable):     # never listed once: say so instead of "not received"
         g._poll_newest(Down(), "q", "workday", "x.wd1.myworkdayjobs.com", 0, 12, 5, fake_sleep)
+
+
+def test_an_oracle_code_from_the_employers_own_domain_is_found():
+    """2026-10-19: American Express's Oracle access code came from careers@recruitment.americanexpress.com; goat only
+    searched oraclecloud.com / oracle.com, waited out the code and held the job."""
+    from goat.mail import gmail as g
+    assert g.company_sender_tokens("American Express") == ["americanexpress"]
+    assert g.company_sender_tokens("CSX Corporation") == ["csx"]
+    q = g.build_code_query("oracle", "egug.fa.us2.oraclecloud.com", 0, g.company_sender_tokens("American Express"))
+    assert "americanexpress" in q
+    frm = "Amex Careers <careers@recruitment.americanexpress.com>"
+    assert not g.sender_allowed(frm, "oracle", "egug.fa.us2.oraclecloud.com")
+    assert g.sender_allowed(frm, "oracle", "egug.fa.us2.oraclecloud.com", ["americanexpress"])
+    assert not g.sender_allowed("Promo <deals@americanexpressoffers.example>", "oracle", "egug.fa.us2.oraclecloud.com", ["americanexpress"])

@@ -181,12 +181,26 @@ def tenant_mismatch(from_header: str, portal_host: str) -> bool:
     return local != ph.split(".")[0]
 
 
-def sender_allowed(from_header: str, portal: str | None, portal_host: str) -> bool:
+def company_sender_tokens(company: str) -> list[str]:
+    """The employer's name as it appears in its own mail domain: 'American Express' -> 'americanexpress'
+    (careers@recruitment.americanexpress.com sent Amex's Oracle access code, 2026-10-19)."""
+    sq = re.sub(r"[^a-z0-9]", "", (company or "").lower())
+    for suffix in ("incorporated", "corporation", "company", "group", "inc", "corp", "llc", "ltd", "co"):
+        if sq.endswith(suffix) and len(sq) - len(suffix) >= 3:
+            sq = sq[: -len(suffix)]
+            break
+    return [sq] if len(sq) >= 3 else []
+
+
+def sender_allowed(from_header: str, portal: str | None, portal_host: str, extra: tuple[str, ...] | list[str] = ()) -> bool:
     """Known portal: From must be one of the portal's sender domains/addresses. Unknown portal:
-    From domain must share the portal host's registrable domain."""
+    From domain must share the portal host's registrable domain. `extra`: the employer's own mail domain
+    names (company_sender_tokens), for tenants that mail from the company rather than the portal."""
     addr, domain = _from_domain(from_header)
     if not domain:
         return False
+    if extra and any(t and t in domain.split(".") for t in extra):
+        return True
     spec = PORTALS.get((portal or "").lower())
     if spec is None:
         rd = registrable_domain(portal_host)
@@ -516,14 +530,15 @@ def _quote(term: str) -> str:
     return f'"{term}"' if " " in term else term
 
 
-def build_code_query(portal: str, portal_host: str, after_ts: int) -> str:
+def build_code_query(portal: str, portal_host: str, after_ts: int, extra_senders: tuple[str, ...] | list[str] = ()) -> str:
     spec = PORTALS.get((portal or "").lower())
     if spec:
-        senders = spec["senders"]
+        senders = list(spec["senders"])
         hints = spec["subject_hints"]
     else:
         senders = [registrable_domain(portal_host)]
         hints = ["code", "Verify", "verification", "Confirm"]
+    senders += [t for t in extra_senders if t and t not in senders]
     q = f"from:({' OR '.join(senders)}) after:{int(after_ts)} newer_than:1d"
     if hints:
         q += " (" + " OR ".join(f"subject:{_quote(h)}" for h in hints) + ")"
@@ -541,6 +556,7 @@ def _poll_newest(
     sleep: Callable[[float], None],
     accept: Callable[[Message], bool] | None = None,
     allow_reset: bool = False,
+    extra_senders: tuple[str, ...] | list[str] = (),
 ) -> Message | None:
     """List/get every poll_s until a message passes the filters or timeout_s elapses.
     Returns the NEWEST acceptable message. Always makes at least one pass. `accept` is an extra
@@ -577,7 +593,7 @@ def _poll_newest(
                 ok = (
                     m.ts >= int(after_ts)
                     and not is_forbidden(m.subject, m.snippet, allow_reset=allow_reset)
-                    and sender_allowed(m.from_header, portal, portal_host)
+                    and sender_allowed(m.from_header, portal, portal_host, extra_senders)
                     and (accept is None or accept(m))
                 )
                 if not ok:
@@ -639,13 +655,16 @@ def fetch_code(
     poll_s: float | None = None,
     client: MailClient | None = None,
     _sleep: Callable[[float], None] = time.sleep,
+    company: str = "",
 ) -> CodeHandle | None:
-    """Wait for the newest matching code email and return a CodeHandle, or None on timeout."""
+    """Wait for the newest matching code email and return a CodeHandle, or None on timeout. `company`: the
+    employer, whose own mail domain may send the code (Oracle tenants: Amex mails from recruitment.americanexpress.com)."""
     client = client or default_client()
     timeout_s = SETTINGS.budgets.code_wait_s if timeout_s is None else timeout_s
     poll_s = SETTINGS.mail.poll_interval_s if poll_s is None else poll_s
-    query = build_code_query(portal, portal_host, after_ts)
-    msg = _poll_newest(client, query, portal, portal_host, after_ts, timeout_s, poll_s, _sleep)
+    extra = company_sender_tokens(company)
+    query = build_code_query(portal, portal_host, after_ts, extra)
+    msg = _poll_newest(client, query, portal, portal_host, after_ts, timeout_s, poll_s, _sleep, extra_senders=extra)
     if msg is None:
         log.info("mail: no code email for portal=%s host=%s within %ss", portal, portal_host, timeout_s)
         return None

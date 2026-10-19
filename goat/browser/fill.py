@@ -480,8 +480,29 @@ def date_wants(wants: list[str]) -> list[str]:
     return extra
 
 
+def month_numbers(wants: list[str]) -> list[str]:
+    """'08' and '8' for each month-year want: only for a field labelled as a month (a Day list would take '8' too)."""
+    out: list[str] = []
+    for w in date_wants(list(wants)):
+        if w in _MONTH_NAMES:
+            n = _MONTH_NAMES.index(w) + 1
+            for x in (f"{n:02d}", str(n)):
+                if x not in out:
+                    out.append(x)
+    return out
+
+
 async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bool = True) -> FieldResult:
-    wants = list(wants) + date_wants(list(wants))
+    extra = date_wants(list(wants))
+    if extra:
+        # Epic Games' 'Start Date (Month)' lists 01-12, not names (2026-10-19)
+        try:
+            info = await ex.read_ref(ref)
+            if re.search(r"\bmonth\b", str(info.get("label") or ""), re.I):
+                extra += [x for x in month_numbers(list(wants)) if x not in extra]
+        except Exception:
+            pass
+    wants = list(wants) + [x for x in extra if x not in wants]
     r = await _choose(ex, ref, wants, type_to_filter=type_to_filter)
     if autosaves(ex):
         await ex.wait_saves()
