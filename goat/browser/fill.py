@@ -401,6 +401,7 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
     baseline = await ex.eval(js.JS_LIST_OPTIONS)
     baseline_keys = {_key(o) for o in (baseline if isinstance(baseline, list) else [])}
     open_now = False
+    toggled = False
     last_err = "the picker did not open"
     for attempt, want in enumerate(wants[:6] or [""]):
         if not open_now:
@@ -444,6 +445,24 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
         options = await ex.eval(js.JS_LIST_OPTIONS)
         options = options if isinstance(options, list) else []
         new_opts = [o for o in options if _key(o) not in baseline_keys]
+        if not new_opts and not toggled:
+            # Some comboboxes open only from their own button (Ashby's "Open university dropdown", Sierra 2026-10-18):
+            # click it once and read the list it shows for the text already typed.
+            toggled = True
+            tog = await ex.eval(js.JS_OPEN_TOGGLE, ref)
+            if isinstance(tog, dict) and tog.get("ok"):
+                try:
+                    await ex.click_xy(int(tog["x"]), int(tog["y"]))
+                except ClickRefused:
+                    tog = None
+                for _ in range(10 if tog else 0):
+                    await asyncio.sleep(0.4)
+                    opts2 = await ex.eval(js.JS_LIST_OPTIONS)
+                    new_opts = [o for o in (opts2 if isinstance(opts2, list) else []) if _key(o) not in baseline_keys]
+                    if new_opts:
+                        break
+                if new_opts:
+                    options = new_opts
         if not new_opts:
             # Options may be on screen, but if none of them are NEW they belong to some other control
             # (a phone-country prompt, a menu left open). Never match this field against those.

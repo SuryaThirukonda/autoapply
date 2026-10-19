@@ -794,3 +794,29 @@ JS_KEEPALIVE_DIALOG = r"""
 JS_PAGE_TEXT = r"""
 (maxChars) => (document.body ? document.body.innerText : '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').slice(0, maxChars)
 """
+
+
+# The separate open button beside a combobox input (Ashby's university search on Sierra, 2026-10-18: clicking or typing
+# into the input opens nothing; the "Open university dropdown" button beside it does). Returns its centre, or ok=false.
+JS_OPEN_TOGGLE = r"""(ref) => {
+  const el = document.querySelector('[data-goat-ref="' + ref + '"]');
+  if (!el) return {ok: false};
+  const TOGGLE = /(open|toggle|show|expand)\b.{0,30}\b(dropdown|menu|list|options|select)|\bdropdown\b|show options|chevron|caret/i;
+  const text = (x) => [x.getAttribute('aria-label') || '', x.getAttribute('title') || '',
+                       (typeof x.className === 'string' ? x.className : (x.className && x.className.baseVal) || '')].join(' ');
+  let box = el.parentElement;
+  for (let i = 0; i < 4 && box; i++, box = box.parentElement) {
+    // a container that holds another field is wider than this control: its buttons belong to someone else
+    const others = Array.from(box.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]'))
+      .filter(x => x !== el && !el.contains(x) && !x.contains(el));
+    if (others.length) break;
+    const b = Array.from(box.querySelectorAll('button, [role="button"]')).find(x => x !== el && !x.contains(el) && TOGGLE.test(text(x)));
+    if (b) {
+      b.scrollIntoView({block: 'center', inline: 'nearest'});
+      const r = b.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return {ok: true, x: r.left + r.width / 2, y: r.top + r.height / 2, label: (b.getAttribute('aria-label') || '').slice(0, 80)};
+    }
+    if (box.matches && box.matches('form, fieldset')) break;
+  }
+  return {ok: false};
+}"""

@@ -60,6 +60,12 @@ def values_equal(decision: str, page: str, kind: str, label: str = "") -> bool:
     nd, np_ = answers.norm(d), answers.norm(p)
     if nd == np_:
         return True
+    # a number box normalizes what was typed ("4.0" shows as "4" on Sierra's GPA field, 2026-10-18)
+    try:
+        if float(d.strip()) == float(p.strip()):
+            return True
+    except ValueError:
+        pass
     if not nd or not np_:
         return False
     # a choose read-back echoes the field label in front of the value ("Degree* Bachelors")

@@ -160,3 +160,38 @@ async def test_the_fill_script_never_clicks_a_radio_for_a_false_value(tmp_path):
         assert await ex.page.evaluate("() => document.getElementById('py').checked") is False
     finally:
         await ex.close(close_browser=True)
+
+
+HARVEY = """<!doctype html><html><body style="margin:20px">
+<fieldset><legend>Will you now or will you in the future require employment visa sponsorship?</legend>
+  <label><input type="radio" name="sp" id="sy"> Yes, I will require Harvey to sponsor my employment</label>
+  <label><input type="radio" name="sp" id="sn"> No, I do not require sponsorship to work in the country where this role is located</label></fieldset>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_no_option_written_as_a_sentence_takes_a_stored_no(store, tmp_path):
+    """Harvey (2026-10-18): 'No, I do not require sponsorship ...' was refused as not-a-No (the pattern wanted 'no ')."""
+    job = _job()
+    answers.save_answer("work_authorization.requires_sponsorship_future", "No", answer_type="text", source="questionnaire")
+    page = tmp_path / "harvey.html"
+    page.write_text(HARVEY, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        opts = {o["label"].strip()[:3]: o["ref"] for g in snap.groups for o in g["options"]}
+        key = "work_authorization.requires_sponsorship_future"
+        out, _ = await d.t_fill_batch([{"ref": opts["Yes"], "answer_key": key, "value": None, "source": None, "label": "Sponsorship"}])
+        assert out["results"][0]["status"] == "failed" and "tick the No option" in out["results"][0]["error"]
+        out, _ = await d.t_fill_batch([{"ref": opts["No,"], "answer_key": key, "value": None, "source": None, "label": "Sponsorship"}])
+        assert out["results"][0]["status"] == "set", out
+        assert await ex.page.evaluate("() => document.getElementById('sn').checked") is True
+        assert await ex.page.evaluate("() => document.getElementById('sy').checked") is False
+    finally:
+        await ex.close(close_browser=True)

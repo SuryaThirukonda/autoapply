@@ -203,7 +203,8 @@ def _in_resume(value: str) -> bool:
     return bool(toks) and all(t in text for t in toks)
 
 
-NEGATED = re.compile(r"^(not |no |none|i do not|i am not|unwilling|unable|never|decline|prefer not)", re.I)
+# "No, I do not require sponsorship" is a No option: "no" is a whole word here, whatever punctuation follows (Harvey, 2026-10-18)
+NEGATED = re.compile(r"^(not\b|no\b|none\b|i do not|i don['\u2019]t|i am not|i['\u2019]m not|unwilling|unable|never|decline|prefer not)", re.I)
 AFFIRMATIVE = {"yes", "true", "checked", "on", "y"}
 # an option label that says yes in its own words ("Yes, I am authorized", "I agree", "I am a U.S. citizen")
 AFFIRM_LABEL = re.compile(r"^(yes\b|i (agree|consent|accept|acknowledge|certify|confirm|understand)\b|i am (authori[sz]ed|eligible|a )|i have\b|i will\b|agree\b|accept\b)", re.I)
