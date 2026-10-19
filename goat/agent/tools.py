@@ -453,6 +453,10 @@ class ToolDispatcher:
 
     def tool_timeout_s(self, name: str) -> float:
         attr = self.WAITING_TOOLS.get(name)
+        if name == "enter_email_code":
+            # the mail wait, then (no email) Surya typing the code on the website or in Telegram
+            from ..human.questions import CODE_MIN_WAIT_S
+            return float(SETTINGS.budgets.code_wait_s) + max(float(SETTINGS.budgets.answer_wait_s), CODE_MIN_WAIT_S) + 180.0
         if attr:
             return float(getattr(SETTINGS.budgets, attr, 900)) + 120.0
         return self.SLOW_TOOLS.get(name, self.TOOL_TIMEOUT_S)
@@ -1536,9 +1540,23 @@ class ToolDispatcher:
             # code is refused by the page, and the model then asks the portal for a new one
             handle = await asyncio.to_thread(fetch, self.ctx.portal, self.ctx.portal_host, db.now() - 3600, **kw)
         if handle is None:
+            # No email found: Surya types the code on the website or in Telegram (his request, 2026-10-19).
+            code = await self._ask_surya_for_code()
+            if code:
+                ok = await fill.type_code_into(self.ctx.ex, code_refs, code)
+                with db.tx() as con:
+                    con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))
+                self.ctx.budget.step()
+                for r in (code_refs or [None]):
+                    records.record_decision(self.ctx.job_id, self.ctx.page_no, "emailed verification code", "(set)",
+                                            "user:verification_code", r or "")
+                db.event(self.ctx.job_id, "code:entered_from_surya", {"boxes": len(code_refs or [])})
+                return {"status": "entered" if ok else "entered_unverified", "via": "Surya typed it on the website / Telegram",
+                        "next": "take a snapshot, then call submit once more"}, None
             with db.tx() as con:
                 con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))
-            return {"status": "not_received", "hint": "request a new code once if the page offers it, then call again; otherwise park with 'code_not_received'"}, None
+            return {"status": "not_received", "hint": "Surya did not send it either. Request a new code once if the page offers it, "
+                                                      "then call again; otherwise park with 'code_not_received'"}, None
         ex = self.ctx.ex
         loop = asyncio.get_event_loop()
         ok_box = {"ok": False}
@@ -1556,6 +1574,25 @@ class ToolDispatcher:
             records.record_decision(self.ctx.job_id, self.ctx.page_no, "emailed verification code", "(set)",
                                     "policy:may_enter_emailed_verification_code", r or "")
         return {"status": status if ok_box["ok"] else "entered_unverified", "message_id": getattr(handle, "message_id", None)}, None
+
+    async def _ask_surya_for_code(self) -> str | None:
+        """Post a code question (website card + Telegram) and wait for the code he types. The code is used once: the
+        question row keeps '(used)' afterwards and nothing is saved as an answer."""
+        from ..human.questions import BROKER as broker
+        key = f"code.{self.ctx.job_id}.{db.now()}"
+        company = self.ctx.job.get("company") or "the portal"
+        question = (f"Verification code needed: {company} ({self.ctx.portal_host}) emailed you a code, and the agent could not "
+                    "find that email. Type the code here and the agent enters it into the form.")
+        await broker.ask(self.ctx.job_id, [{"key": key, "question": question, "field_type": "code", "options": []}])
+        db.event(self.ctx.job_id, "code:asked_surya", {"key": key, "host": self.ctx.portal_host})
+        try:
+            got = await broker.await_answers(self.ctx.job_id, [key])
+        except Parked:
+            db.event(self.ctx.job_id, "code:not_given", {"key": key})
+            return None
+        code = (got or {}).get(key)
+        broker.mark_code_used(self.ctx.job_id, key)
+        return code or None
 
     async def t_open_password_reset_link(self):
         if self.ctx.mail is None:

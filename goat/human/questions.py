@@ -33,6 +33,17 @@ _AS_IS = re.compile(r"^(done|all set|already (done|filled|set|entered|selected|a
 AS_IS = "AS_IS"
 
 
+# A one-time code Surya types on the website or in Telegram when the agent cannot find the email (his request,
+# 2026-10-19). It is entered once and never stored as an answer.
+CODE_PREFIX = "code."
+CODE_MIN_WAIT_S = 600
+USED = "(used)"
+
+
+def is_code_question(key: str | None, field_type: str | None = None) -> bool:
+    return str(key or "").startswith(CODE_PREFIX) or str(field_type or "").lower() == "code"
+
+
 def _answer_type(field_type: str | None, options: list[str] | None) -> str:
     ft = (field_type or "").lower()
     if ft in ("checkbox", "checkboxes", "multi_select", "multiselect", "multi_choice"):
@@ -225,12 +236,14 @@ class QuestionBroker:
                     reused += 1
                     continue
                 options = q.get("options") or None
+                # a code needs time to be read from the inbox and typed, even while Surya is otherwise away
+                q_wait = max(wait_s, CODE_MIN_WAIT_S) if is_code_question(key, q.get("field_type")) else wait_s
                 cur = con.execute(
                     "INSERT INTO pending_questions(job_id,key,question,options,field_type,asked_at,deadline_at)"
                     " VALUES(?,?,?,?,?,?,?)",
                     (job_id, key, q.get("question") or key,
                      json.dumps(list(options)) if options else None,
-                     q.get("field_type"), now, now + wait_s))
+                     q.get("field_type"), now, now + q_wait))
                 new_rows.append((int(cur.lastrowid), q))
         if not new_rows:
             if reused:
@@ -343,6 +356,13 @@ class QuestionBroker:
             found: dict[str, str] = {}
             missing: list[str] = []
             for k in keys:
+                if is_code_question(k):
+                    code = self.code_answer(job_id, k)
+                    if code:
+                        found[k] = code
+                    else:
+                        missing.append(k)
+                    continue
                 a = answers.get(k, company, ats)
                 if a is not None and a.has_value:
                     found[k] = str(a.answer)
@@ -370,9 +390,30 @@ class QuestionBroker:
             ev.clear()
 
     # ------------------------------------------------------------------ replies
+    @staticmethod
+    def code_answer(job_id: int, key: str) -> str | None:
+        """The code Surya typed for this question (letters and digits only), or None."""
+        r = db.connect().execute("SELECT answer FROM pending_questions WHERE job_id=? AND key=? AND answered_at IS NOT NULL "
+                                 "AND answer IS NOT NULL ORDER BY id DESC LIMIT 1", (job_id, key)).fetchone()
+        if not r or not r["answer"] or r["answer"] in (USED, AS_IS):
+            return None
+        code = re.sub(r"[^A-Za-z0-9]", "", str(r["answer"]))
+        return code or None
+
+    @staticmethod
+    def mark_code_used(job_id: int, key: str) -> None:
+        """The code was typed: keep no copy of it (the row syncs to the website)."""
+        with db.tx() as con:
+            con.execute("UPDATE pending_questions SET answer=? WHERE job_id=? AND key=? AND answered_at IS NOT NULL", (USED, job_id, key))
+
     def _save_row(self, con, row, text: str, source_ref: str, source: str = "telegram",
                   scope: str = "global", scope_value: str = "") -> tuple[str, str, int]:
         d = _row_dict(row)
+        if is_code_question(d.get("key"), d.get("field_type")):
+            # a one-time code: kept on the question row for the waiting run, never saved as an answer
+            value = (text or "").strip()
+            con.execute("UPDATE pending_questions SET answered_at=?, answer=? WHERE id=?", (db.now(), value, d["id"]))
+            return d["key"], value, 0
         options = d.get("options")
         value = _normalize_choice(text, options, d.get("question") or "")
         atype = _answer_type(d.get("field_type"), options)
