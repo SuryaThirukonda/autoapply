@@ -137,9 +137,9 @@ async def mail_reconciler(stop: asyncio.Event) -> None:
 async def main(run_worker: bool = True, run_scraper: bool = True) -> None:
     setup_logging()
     db.connect()
-    log.info("goat starting; config hash %s; mode=%s live_portals=%s db=%s", SETTINGS.config_hash(), SETTINGS.mode,
-             SETTINGS.live_portals, SETTINGS.db_path)
-    db.event(None, "supervisor:start", {"config_hash": SETTINGS.config_hash(), "mode": SETTINGS.mode})
+    log.info("goat starting; config hash %s; mode=%s live_portals=%s auto_submit=%s skip_ats=%s db=%s", SETTINGS.config_hash(), SETTINGS.mode,
+             SETTINGS.live_portals, SETTINGS.auto_submit, SETTINGS.skip_ats, SETTINGS.db_path)
+    db.event(None, "supervisor:start", {"config_hash": SETTINGS.config_hash(), "mode": SETTINGS.mode, "auto_submit": SETTINGS.auto_submit})
     keep_awake(True)
     stop = asyncio.Event()
 
