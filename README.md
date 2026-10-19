@@ -40,7 +40,8 @@ once `goat gmail-auth` has run. Total model cost for the listing: about $0.05.
 
 **Review rule:** everything else stays in shadow mode (`GOAT_MODE=shadow`, `LIVE_PORTALS` empty). Each job's
 draft is in the dashboard job drawer and `records/<job>/decisions.md`; Surya reviews drafts before any portal
-is switched live. Answers the agent still needs: [docs/QUESTIONNAIRE.md](docs/QUESTIONNAIRE.md).
+is switched live. A reviewed draft is submitted with `python -m goat release <job>` (or the chat's `release`, or the website's
+Release button); nothing else leaves shadow mode. Answers the agent still needs: [docs/QUESTIONNAIRE.md](docs/QUESTIONNAIRE.md).
 
 ## What you need to add before testing (all in `.env`)
 

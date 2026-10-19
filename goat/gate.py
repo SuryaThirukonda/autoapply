@@ -183,4 +183,5 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
 
     if reasons:
         return GateResult("blocked", reasons)
-    return GateResult("pass_live" if SETTINGS.portal_is_live(portal) else "pass_shadow", [])
+    # Live for a portal Surya switched live, or for the one job he released by id (`goat release N`).
+    return GateResult("pass_live" if (SETTINGS.portal_is_live(portal) or bool(job.get("cleared_live"))) else "pass_shadow", [])

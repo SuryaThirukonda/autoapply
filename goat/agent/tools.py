@@ -1120,7 +1120,7 @@ class ToolDispatcher:
         gate = run_gate(job=ctx.job, snapshot=snap, page_text=page_text, expected_resume=ctx.resume_file,
                         free_text_answers=[f["answer"] for f in ctx.free_text], portal=ctx.portal, page_no=ctx.page_no)
         ctx.gate_result = gate.as_dict()
-        db.event(ctx.job_id, f"gate:{gate.result}", gate.as_dict())
+        db.event(ctx.job_id, f"gate:{gate.result}", {**gate.as_dict(), "cleared_live": bool(ctx.job.get("cleared_live"))})
         with db.tx() as con:
             con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.GATED, db.now(), ctx.job_id))
         if gate.result == "captcha_present":

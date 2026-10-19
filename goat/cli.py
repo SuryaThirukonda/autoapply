@@ -28,11 +28,11 @@ def cmd_status(_a) -> None:
 
 def cmd_list(a) -> None:
     con = db.connect()
-    rows = con.execute("SELECT j.id, j.status, j.lane, j.priority, j.attempts, j.hold_reason, l.company, l.title, l.ats FROM jobs j "
+    rows = con.execute("SELECT j.id, j.status, j.lane, j.priority, j.attempts, j.hold_reason, j.cleared_live, l.company, l.title, l.ats FROM jobs j "
                        "JOIN listings l ON l.id=j.listing_id WHERE (?='' OR j.status=?) ORDER BY j.priority DESC, j.updated_at DESC LIMIT ?",
                        (a.status or "", a.status or "", a.limit)).fetchall()
     for r in rows:
-        print(f"#{r['id']:<5} {r['status']:<14} {r['lane'] or '':<13} p={r['priority']:<4} a={r['attempts']} {r['ats']:<10} {r['company'][:28]:<28} {r['title'][:50]:<50} {(r['hold_reason'] or '')[:60]}")
+        print(f"#{r['id']:<5} {r['status']:<14} {r['lane'] or '':<13} p={r['priority']:<4} a={r['attempts']} {r['ats']:<10} {r['company'][:28]:<28} {r['title'][:50]:<50} {(r['hold_reason'] or '')[:60]}{' LIVE' if r['cleared_live'] else ''}")
 
 
 def cmd_show(a) -> None:
@@ -125,6 +125,12 @@ def cmd_proposals(a) -> None:
         print("no proposals")
     for r in rows:
         print(f"{r['id']:>4} {r['kind']:<6} {r['status']:<9} {r['title'][:110]}")
+
+
+def cmd_release(a) -> None:
+    """Clear ONE reviewed draft for a real submission (or stand it down with --undo)."""
+    from .cloud import job_action
+    _print(job_action([a.job], "unrelease" if a.undo else "release", "operator"))
 
 
 def cmd_requeue(a) -> None:
@@ -334,6 +340,7 @@ def main(argv=None) -> None:
     s = sub.add_parser("list"); s.add_argument("--status", default=""); s.add_argument("--limit", type=int, default=40); s.set_defaults(fn=cmd_list)
     s = sub.add_parser("show"); s.add_argument("job", type=int); s.add_argument("--events", type=int, default=30); s.set_defaults(fn=cmd_show)
     s = sub.add_parser("requeue"); s.add_argument("job", type=int); s.set_defaults(fn=cmd_requeue)
+    s = sub.add_parser("release"); s.add_argument("job", type=int); s.add_argument("--undo", action="store_true"); s.set_defaults(fn=cmd_release)
     s = sub.add_parser("hold"); s.add_argument("job", type=int); s.add_argument("--reason", required=True); s.set_defaults(fn=cmd_hold)
     s = sub.add_parser("dead"); s.add_argument("job", type=int); s.add_argument("--reason", default="operator"); s.set_defaults(fn=cmd_dead)
     sub.add_parser("seed").set_defaults(fn=cmd_seed)

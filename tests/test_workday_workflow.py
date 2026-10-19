@@ -143,13 +143,16 @@ async def test_workday_workflow_shadow_then_live(seeded, monkeypatch):
         assert ctx.gate_result["result"] == "pass_shadow", ctx.gate_result
         assert await ex.eval("() => window.__submits") == 0
 
-        # Live for workday: the real submit path clicks once and gets a positive signal.
-        monkeypatch.setattr(SETTINGS, "mode", "live")
-        monkeypatch.setattr(SETTINGS, "live_portals", ["workday"])
+        # Released by Surya for this one job (goat release N): still shadow mode globally, yet the real submit
+        # path clicks once and gets a positive signal.
+        ctx.job["cleared_live"] = 1
         r = await _call(d, "submit", button_label=None)
         assert r["status"] == "submitted", r
         assert "confirmation" in r["signal"] or "url_changed" in r["signal"]
         assert await ex.eval("() => window.__submits") == 1
+        assert ctx.gate_result["result"] == "pass_live"
+        live_ev = db.connect().execute("SELECT detail FROM events WHERE kind='gate:pass_live' ORDER BY n DESC LIMIT 1").fetchone()[0]
+        assert '"cleared_live": true' in live_ev
 
         decs = records.decisions(job["id"])
         labels = {d_["field_label"].rstrip(" *") for d_ in decs}

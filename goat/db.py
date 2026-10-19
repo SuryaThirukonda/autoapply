@@ -176,6 +176,7 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
 # missing tables, so an existing database gets each column here, once, additively.
 COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
     ("decisions", "tier", "TEXT"),            # confirmed | inferred | sensitive (2026-10-18, confidence tiers)
+    ("jobs", "cleared_live", "INTEGER DEFAULT 0"),   # Surya released this one draft for a real submission (goat release N)
 ]
 
 

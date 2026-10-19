@@ -365,6 +365,10 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
 
         loop = AgentLoop(ctx)
         note = adapter.opening_note(job.get("attempts", 0) + 1)
+        if job.get("cleared_live"):
+            note += ("\nThis job was RELEASED by Surya for a LIVE submission after he reviewed its shadow draft: the gate passes live. "
+                     "Call snapshot; the saved draft usually reopens at its Review page: call submit there. If the gate names blockers, "
+                     "re-set those fields from their answer_keys and call submit again.")
         if shadow_override is True:
             note += "\nThis is a SHADOW run: fill everything and call submit; the gate stops before the click."
         pages = 0

@@ -474,6 +474,10 @@ def action(job_id: int, name: str, body: dict) -> dict:
         elif name == "dead":
             con.execute("UPDATE jobs SET status=?, hold_reason=?, updated_at=?, finished_at=? WHERE id=?",
                         (states.DEAD, str(body.get("reason") or "operator"), db.now(), db.now(), job_id))
+        elif name in ("release", "unrelease"):
+            from .cloud import job_action
+            out = job_action([job_id], name, "dashboard")
+            return {"ok": bool(out.get("ok")), **({"error": out.get("message")} if not out.get("ok") else {})}
         else:
             return {"ok": False, "error": "unknown action"}
     db.event(job_id, f"job:{name}", {"by": "dashboard", **body})
@@ -565,7 +569,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(n) or b"{}")
             except json.JSONDecodeError:
                 body = {}
-        m = re.match(r"^/api/job/(\d+)/(requeue|hold|dead)$", u.path)
+        m = re.match(r"^/api/job/(\d+)/(requeue|hold|dead|release|unrelease)$", u.path)
         if m:
             return self._json(action(int(m.group(1)), m.group(2), body))
         m = re.match(r"^/api/question/(\d+)/(answer|hold)$", u.path)

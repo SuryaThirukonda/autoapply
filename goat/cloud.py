@@ -671,20 +671,39 @@ ORDER_BASE = 1_000
 
 
 def job_action(job_ids: list[int], action: str, by: str) -> dict:
-    """requeue | hold | dead | skip | queue | pin | unpin, for jobs that are not running right now."""
-    if action not in ("requeue", "retry", "hold", "dead", "skip", "queue", "pin", "unpin"):
+    """requeue | hold | dead | skip | queue | pin | unpin | release | unrelease, for jobs that are not running right now.
+    release: Surya cleared this one draft for a real submission; it re-runs at once and the gate treats it as live
+    whatever GOAT_MODE says. Refused for a listing already in the ledger."""
+    if action not in ("requeue", "retry", "hold", "dead", "skip", "queue", "pin", "unpin", "release", "unrelease"):
         return {"ok": False, "message": f"unknown action {action}"}
+    from . import ledger
     changed, refused = [], []
     now = db.now()
     with db.tx() as con:
         for jid in job_ids:
-            row = con.execute("SELECT status, priority FROM jobs WHERE id=?", (jid,)).fetchone()
+            row = con.execute("SELECT j.status, j.priority, l.company, l.title, l.url FROM jobs j JOIN listings l ON l.id=j.listing_id WHERE j.id=?", (jid,)).fetchone()
             if row is None:
                 refused.append({"job_id": jid, "why": "no such job"})
                 continue
             st = row["status"]
+            if action == "unrelease":
+                con.execute("UPDATE jobs SET cleared_live=0, updated_at=? WHERE id=?", (now, jid))
+                changed.append(jid)
+                continue
             if st in ACTIVE:
                 refused.append({"job_id": jid, "why": "running now: use Stop or Skip on the Now page"})
+                continue
+            if action == "release":
+                if st in (states.SUBMITTED, states.CONFIRMED):
+                    refused.append({"job_id": jid, "why": f"already {st}"})
+                    continue
+                if ledger.already_applied(row["company"] or "", row["title"] or "", row["url"] or ""):
+                    refused.append({"job_id": jid, "why": "already in the ledger (applied before)"})
+                    continue
+                con.execute("UPDATE jobs SET status=?, hold_reason=NULL, blocked_on_question_key=NULL, attempts=0, failed_submits=0, "
+                            "steps_used=0, wall_ms_used=0, priority=MAX(priority, 0)+5000, finished_at=NULL, cleared_live=1, updated_at=? WHERE id=?",
+                            (states.QUEUED, now, jid))
+                changed.append(jid)
                 continue
             if action in ("requeue", "retry", "queue"):
                 if st in (states.SUBMITTED, states.CONFIRMED):
@@ -711,8 +730,9 @@ def job_action(job_ids: list[int], action: str, by: str) -> dict:
             elif action == "unpin":
                 con.execute("UPDATE jobs SET priority=0, updated_at=? WHERE id=?", (now, jid))
             changed.append(jid)
+    kind = {"requeue": "requeued", "retry": "requeued", "queue": "requeued", "release": "released", "unrelease": "unreleased"}.get(action, action)
     for jid in changed:
-        db.event(jid, f"job:{'requeued' if action in ('requeue', 'retry', 'queue') else action}", {"by": by, "action": action})
+        db.event(jid, f"job:{kind}", {"by": by, "action": action})
     out: dict[str, Any] = {"ok": bool(changed) or not refused, "changed": changed, "refused": refused}
     if refused and not changed:
         out["message"] = refused[0]["why"]

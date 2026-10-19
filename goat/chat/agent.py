@@ -39,8 +39,8 @@ TOOLS: list[dict] = [
     {"type": "function", "name": "job_detail", "strict": True, "description": "One job: status, reason, attempts, posting URL, open questions, its last 15 notable events and the fields it decided.",
      "parameters": {"type": "object", "properties": {"job_id": {"type": "integer"}}, "required": ["job_id"], "additionalProperties": False}},
     {"type": "function", "name": "job_action", "strict": True,
-     "description": "run_now (queue it first in line), requeue, hold, skip (close it), for jobs that are not running right now.",
-     "parameters": {"type": "object", "properties": {"job_ids": {"type": "array", "items": {"type": "integer"}}, "action": {"type": "string", "enum": ["run_now", "requeue", "hold", "skip"]}},
+     "description": "run_now (queue it first in line), requeue, hold, skip (close it), release (Surya cleared this reviewed draft for a REAL submission: it re-runs at once and submits even in shadow mode; only on his explicit word), unrelease (stand it down), for jobs that are not running right now.",
+     "parameters": {"type": "object", "properties": {"job_ids": {"type": "array", "items": {"type": "integer"}}, "action": {"type": "string", "enum": ["run_now", "requeue", "hold", "skip", "release", "unrelease"]}},
                     "required": ["job_ids", "action"], "additionalProperties": False}},
     {"type": "function", "name": "worker", "strict": True, "description": "pause / resume the worker, stop_now (hold the running job) or skip_current (close it).",
      "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["pause", "resume", "stop_now", "skip_current"]}}, "required": ["action"], "additionalProperties": False}},
@@ -76,7 +76,7 @@ TOOLS: list[dict] = [
      "parameters": {"type": "object", "properties": {"job_id": {"type": ["integer", "null"]}, "limit": {"type": "integer"}}, "required": ["job_id", "limit"], "additionalProperties": False}},
 ]
 
-NOTABLE = ("job:claimed", "job:hold", "job:ready_for_you", "job:submitted", "job:confirmed", "job:error", "job:budget", "job:dead", "job:requeued",
+NOTABLE = ("job:claimed", "job:hold", "job:ready_for_you", "job:submitted", "job:confirmed", "job:error", "job:budget", "job:dead", "job:requeued", "job:released",
            "question:asked", "question:answered", "question:timeout", "answer:derived", "answer:auto_affiliation", "gate:blocked", "gate:pass_shadow",
            "gate:pass_live", "park:bounced", "browser:down", "browser:up", "supervisor:start", "supervisor:stop", "worker:paused", "worker:resumed",
            "listing:added", "chat:message", "chat:reply")
@@ -264,9 +264,9 @@ class ChatAgent:
     # ------------------------------------------------------------------ tools: acting
     def t_job_action(self, job_ids: list[int], action: str) -> dict:
         from ..cloud import job_action
-        act = {"run_now": "requeue", "requeue": "requeue", "hold": "hold", "skip": "skip"}[action]
+        act = {"run_now": "requeue", "requeue": "requeue", "hold": "hold", "skip": "skip", "release": "release", "unrelease": "unrelease"}[action]
         out = job_action([int(x) for x in job_ids], act, "telegram chat")
-        if action == "run_now" and out.get("ok", True):
+        if action in ("run_now", "release") and out.get("ok", True):
             with db.tx() as con:
                 for jid in job_ids:
                     con.execute("UPDATE jobs SET priority=5000, updated_at=? WHERE id=? AND status=?", (db.now(), int(jid), states.QUEUED))
