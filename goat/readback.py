@@ -113,7 +113,27 @@ def values_equal(decision: str, page: str, kind: str, label: str = "") -> bool:
     # a typed value the box truncated at its cap, or a long text the outline cut off
     if len(np_) >= 40 and (nd.startswith(np_) or np_.startswith(nd)):
         return True
+    # a state picker shows the code for the stored name ("TX" for "Texas", onsemi's Oracle address, 2026-10-19)
+    if _STATE_CODES.get(nd) == np_ or _STATE_CODES.get(np_) == nd:
+        return True
+    # a decision that holds his whole preference chain matches the one entry the portal shows
+    if ";" in d:
+        parts = [x.strip() for x in d.split(";") if x.strip()]
+        if len(parts) > 1 and any(values_equal(x, p, kind, label) for x in parts):
+            return True
     return False
+
+
+_STATES = {"alabama": "al", "alaska": "ak", "arizona": "az", "arkansas": "ar", "california": "ca", "colorado": "co",
+           "connecticut": "ct", "delaware": "de", "district of columbia": "dc", "florida": "fl", "georgia": "ga", "hawaii": "hi",
+           "idaho": "id", "illinois": "il", "indiana": "in", "iowa": "ia", "kansas": "ks", "kentucky": "ky", "louisiana": "la",
+           "maine": "me", "maryland": "md", "massachusetts": "ma", "michigan": "mi", "minnesota": "mn", "mississippi": "ms",
+           "missouri": "mo", "montana": "mt", "nebraska": "ne", "nevada": "nv", "new hampshire": "nh", "new jersey": "nj",
+           "new mexico": "nm", "new york": "ny", "north carolina": "nc", "north dakota": "nd", "ohio": "oh", "oklahoma": "ok",
+           "oregon": "or", "pennsylvania": "pa", "rhode island": "ri", "south carolina": "sc", "south dakota": "sd",
+           "tennessee": "tn", "texas": "tx", "utah": "ut", "vermont": "vt", "virginia": "va", "washington": "wa",
+           "west virginia": "wv", "wisconsin": "wi", "wyoming": "wy", "puerto rico": "pr"}
+_STATE_CODES = {**_STATES, **{v: k for k, v in _STATES.items()}}
 
 
 def _kind_for(item: dict, decision_value: str) -> str:

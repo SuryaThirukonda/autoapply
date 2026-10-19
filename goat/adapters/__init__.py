@@ -396,6 +396,22 @@ async def _consents_impl(self, ex, snap: Snapshot, job: dict, page_no: int, res:
         if len(yes) == 1 and (len(opts) <= 3):
             ticks.append((yes[0]["ref"], f"{glabel[:90]} / {(yes[0].get('label') or '')[:30]}", key))
             done.add(yes[0]["ref"])
+    # A marketing / job-alert opt-in left ticked (a default, or an earlier attempt) is unticked: his standing No
+    # (onsemi's 'I agree to receive updates about new job opportunities.' stayed ticked on Oracle, 2026-10-19).
+    mk = answers.get("consent.marketing_email", company, self.portal)
+    if mk and mk.has_value and answers.norm(str(mk.answer)).split(" ")[0] in ("no", "false", "decline"):
+        unticks = [i for i in snap.items if i.get("type") == "checkbox" and i.get("checked") and not i.get("disabled")
+                   and MARKETING.search(i.get("label") or "") and not PROCESSING.search(i.get("label") or "")
+                   and not SMS.search(i.get("label") or "")]
+        if unticks:
+            out = await fill.fill_batch(ex, [{"ref": i["ref"], "value": "false"} for i in unticks])
+            for i, r in zip(unticks, out):
+                if r.ok:
+                    res.set += 1
+                    records.record_decision(job["id"], page_no, (i.get("label") or "")[:120], "unchecked",
+                                            "standing:consent.marketing_email", i["ref"])
+                res.details.append({"label": (i.get("label") or "")[:120], "ok": r.ok, "consent": "consent.marketing_email",
+                                    "unticked": True, "error": r.error if not r.ok else ""})
     if ticks:
         out = await fill.fill_batch(ex, [{"ref": r, "value": "true"} for r, _, _ in ticks])
         by = {r.ref: r for r in out}

@@ -238,3 +238,15 @@ def test_a_no_results_message_is_never_a_decision_value():
     assert not fill.NO_RESULTS.match("No, I am not a protected veteran")
     snap = _snap([{"ref": "e186", "tag": "dropdown", "label": "Veteran Status", "value": "I am not a protected veteran"}])
     assert readback.diff([_dec("Veteran Status", "No results were found.", "e186")], snap, 1) == []
+
+
+
+def test_a_state_code_and_a_preference_chain_read_back_as_equal():
+    """onsemi (2026-10-19): Oracle's State showed 'TX' for 'Texas', and Veteran Status showed the one option the
+    portal offers for a decision that held his whole chain."""
+    from goat.readback import values_equal
+    assert values_equal("Texas", "TX", "choice") and values_equal("TX", "Texas", "text")
+    assert not values_equal("Texas", "CA", "choice")
+    chain = "I am not a protected veteran; I am not a veteran; Not a protected veteran"
+    assert values_equal(chain, "I am not a veteran", "choice")
+    assert not values_equal(chain, "I am a protected veteran", "choice")

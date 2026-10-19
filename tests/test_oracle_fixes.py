@@ -60,3 +60,33 @@ async def test_an_aria_hidden_layout_mirror_is_not_a_field():
         assert len(boxes) == 1 and boxes[0].get("label") == "Responsibilities", boxes
     finally:
         await ex.close()
+
+
+OPT_IN = """<html><body>
+<label><input type="checkbox" id="alerts" checked> I agree to receive updates about new job opportunities.</label>
+<label><input type="checkbox" id="privacy"> I have read and agree to the privacy policy.</label>
+</body></html>"""
+
+
+async def test_a_ticked_marketing_opt_in_is_unticked_by_the_consent_pass(tmp_path):
+    """onsemi (2026-10-19): Oracle's job-alert box stayed ticked and the gate wanted a decision for it."""
+    from goat import answers, db
+    from goat.adapters import for_portal
+    db.reset_for_tests(tmp_path / "t.db")
+    answers.save_answer("consent.marketing_email", "No", source="seed")
+    answers.save_answer("consent.privacy_notice", "Yes", source="seed")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('L1','onsemi','Intern','https://x.oraclecloud.com/a','oracle')")
+        jid = con.execute("INSERT INTO jobs(listing_id,status,lane,created_at,updated_at) VALUES('L1','filling','account',1,1)").lastrowid
+    job = {"id": jid, "listing_id": "L1", "company": "onsemi", "title": "Intern", "ats": "oracle", "url": "https://x.oraclecloud.com/a"}
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(OPT_IN)
+        snap = await snapshot.take(ex)
+        res = await for_portal("oracle").prefill(ex, snap, job, 1)
+        assert await ex.page.evaluate("() => document.getElementById('alerts').checked") is False, res.details
+        assert await ex.page.evaluate("() => document.getElementById('privacy').checked") is True, res.details
+    finally:
+        await ex.close()
