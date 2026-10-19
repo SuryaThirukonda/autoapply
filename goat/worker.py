@@ -94,8 +94,12 @@ async def after_hold(job: dict, ctx, ex, reason: str) -> dict | None:
         png = await ex.screenshot_png()
         records.save_screenshot(job_id, png, "shadow")
         text = await ex.page_text(20000)
+        try:
+            outline = snapmod.render(await snapmod.take(ex))
+        except Exception:
+            outline = ""
         verdict = await Judge(client=getattr(getattr(ctx, "classifier", None), "client", None)).judge(
-            job_id, records.decisions(job_id), png, text, getattr(ctx, "gate_result", None))
+            job_id, records.decisions(job_id), png, text, getattr(ctx, "gate_result", None), outline=outline)
     except Exception as e:  # noqa: BLE001 - the hold is already recorded; the judge is extra evidence
         db.event(job_id, "judge:error", {"error": str(e)[:300]})
     if verdict:

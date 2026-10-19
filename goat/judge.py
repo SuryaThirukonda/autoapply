@@ -44,7 +44,8 @@ JUDGE_INSTRUCTIONS = (
     "attempt of the same draft that the portal saved (the run resumed at its review page): treat it as the current "
     "intent. The log's format is never a defect by itself. 'pass' only when nothing is missing or wrong on the page. "
     "Put the single most important problem in `bucket` and name the fields. Never invent values; judge only what the "
-    "log and page show."
+    "log, outline, page text and screenshot show. A value typed inside a box appears in the OUTLINE (value=\"…\"), "
+    "not in the page text, so a box is blank only when the outline shows it empty."
 )
 
 
@@ -94,7 +95,7 @@ class Judge:
     def _log_text(decisions: list[dict], job_id: int | None = None) -> str:
         lines = []
         for d in decisions[-150:]:
-            lines.append(f"- page {d.get('page')}: {str(d.get('field_label') or '')[:80]} = {str(d.get('value') or '')[:120]!r} (source {d.get('source')})")
+            lines.append(f"- page {d.get('page')}: {str(d.get('field_label') or '')[:80]} = {str(d.get('value') or '')[:600]!r} (source {d.get('source')})")
         if lines:
             return "\n".join(lines)
         # A resumed draft (Workday reopens at Review) records nothing new: the previous attempt's archive is the intent.
@@ -105,7 +106,7 @@ class Judge:
 
 
     async def judge(self, job_id: int, decisions: list[dict], screenshot_png: bytes | None, page_text: str,
-                    gate: dict | None = None) -> dict | None:
+                    gate: dict | None = None, outline: str = "") -> dict | None:
         t0 = time.monotonic()
         try:
             model = assert_allowed(self.model)
@@ -114,6 +115,8 @@ class Judge:
             return None
         content = [
             {"type": "input_text", "text": "DECISION LOG\n" + self._log_text(decisions, job_id)},
+            {"type": "input_text", "text": "FINAL PAGE OUTLINE (every control with the value it holds now; the page text below does not show "
+                                           "what is typed inside boxes)\n" + (outline or "(none)")[:16000]},
             {"type": "input_text", "text": "FINAL PAGE TEXT\n" + (page_text or "")[:12000]},
             {"type": "input_text", "text": "CODE GATE RESULT\n" + json.dumps(gate or {})[:1500]},
         ]

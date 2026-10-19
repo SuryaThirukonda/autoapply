@@ -91,7 +91,7 @@ async def test_worker_after_hold_judges_shadow_drafts_and_nothing_else(tmp_path,
         def __init__(self, client=None, model=None):
             pass
 
-        async def judge(self, job_id, decisions, png, text, gate=None):
+        async def judge(self, job_id, decisions, png, text, gate=None, outline=""):
             calls.append((job_id, len(decisions), bool(png), gate))
             return {"verdict": "pass", "bucket": "none", "notes": "all good", "fields": []}
 
@@ -135,3 +135,14 @@ async def test_a_resumed_draft_is_judged_from_the_archived_decisions(tmp_path, m
     log = next(c["text"] for c in fake.calls[0]["input"][0]["content"] if c.get("text", "").startswith("DECISION LOG"))
     assert "archived" in log and "Phone | 281" in log and "a@x.com" not in log
     assert "checked" in judge.JUDGE_INSTRUCTIONS and "archived" in judge.JUDGE_INSTRUCTIONS
+
+
+@pytest.mark.asyncio
+async def test_judge_sees_the_outline_with_box_values_and_long_log_values(tmp_path):
+    _seed(tmp_path)
+    records.record_decision(1, 1, "Why us", "x" * 300, "generated", "e5")
+    fake = _FakeClient({"verdict": "pass", "bucket": "none", "notes": "ok", "fields": []})
+    await judge.Judge(client=fake).judge(1, records.decisions(1), None, "Apply", outline='[e4] text "Email" value="a@x.com"')
+    texts = [c["text"] for c in fake.calls[0]["input"][0]["content"] if c.get("type") == "input_text"]
+    assert any(t.startswith("FINAL PAGE OUTLINE") and 'value="a@x.com"' in t for t in texts)
+    assert any("x" * 300 in t for t in texts)

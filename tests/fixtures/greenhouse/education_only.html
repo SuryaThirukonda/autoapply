@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body style="margin:20px">
+<form>
+<div class="field"><label for="first_name">First Name*</label><input id="first_name"></div>
+<h3>Education</h3>
+<div id="education"></div>
+<button type="button" id="add-edu">Add another</button>
+<div class="field"><label for="why">Why us?</label><textarea id="why"></textarea></div>
+</form>
+<script>
+  let n = 0;
+  function edu(i) {
+    const d = document.createElement('div');
+    d.innerHTML = `<label for="school-${i}">School</label><input id="school-${i}"><label for="degree-${i}">Degree</label><input id="degree-${i}">`;
+    document.getElementById('education').appendChild(d);
+  }
+  document.getElementById('add-edu').addEventListener('click', () => edu(n++));
+  edu(n++);
+</script></body></html>

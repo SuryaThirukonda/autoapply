@@ -638,7 +638,11 @@ class ToolDispatcher:
     async def t_fill_sections(self):
         from ..adapters.workday_sections import WorkdaySections
         if self.ctx.portal == "greenhouse":
-            from ..adapters.greenhouse_sections import GreenhouseSections
+            from ..adapters.greenhouse_sections import GreenhouseSections, is_employment_page
+            snap = await snapmod.take(self.ctx.ex)
+            if not is_employment_page(snap):
+                return {"added": [], "updated": [], "present": [], "failed": [], "skipped": ["no Employment section (Company name / Title blocks) on this page"],
+                        "note": "this form has no employment section; nothing to add"}, None
             rep = await GreenhouseSections(self.ctx.ex, self.ctx.job, self.ctx.page_no).run()
         else:
             rep = await WorkdaySections(self.ctx.ex, self.ctx.job, self.ctx.page_no).run()

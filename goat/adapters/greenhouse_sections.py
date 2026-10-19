@@ -56,11 +56,24 @@ JS_GH_SECTIONS = r"""
       if (del) { e.delete = mkref(del); break; }
     }
   }
+  // The employment section's Add button: the "Add another" that FOLLOWS the last employment block (Education has
+  // its own "Add another"; Tenstorrent's got five blank school entries from it, 2026-10-18), or one whose own text
+  // or nearest preceding heading names employment / experience when no block exists yet.
   const sections = [];
+  const companyInputs = Array.from(document.querySelectorAll('input[id^="company-name-"]'));
+  const lastBlock = companyInputs.length ? companyInputs[companyInputs.length - 1] : null;
+  const headingBefore = (b) => { let n = b; while (n) { let p = n.previousElementSibling; while (p) { const h = p.matches('h1,h2,h3,h4,legend,[role=heading]') ? p : p.querySelector('h1,h2,h3,h4,legend,[role=heading]'); if (h) return norm(h.textContent); p = p.previousElementSibling; } n = n.parentElement; } return ''; };
   for (const b of document.querySelectorAll('button, a[role="button"]')) {
     const t = norm(b.textContent) || norm(b.getAttribute('aria-label') || '');
-    if (vis(b) && /^add (another|employment|experience|position|job|work)( (employment|experience|position|job))?$/i.test(t) && Object.keys(entries).length >= 0)
-      sections.push({ heading: 'Work Experience', ref: mkref(b), label: t });
+    if (!vis(b) || !/^add (another|employment|experience|position|job|work)( (employment|experience|position|job))?$/i.test(t)) continue;
+    let ok = /employment|experience|position|job|work/i.test(t);
+    if (!ok && lastBlock && (lastBlock.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+      // the first "Add another" after the last employment block, with no other block's control in between
+      const between = Array.from(document.querySelectorAll('input, select, textarea, button')).filter(x => (lastBlock.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_FOLLOWING) && (x.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
+      ok = !between.some(x => /^(school|degree|discipline|education|start-date|end-date)-?/i.test(x.id || '') && !/^(start|end)-date-(month|year)-\d+$/.test(x.id || ''));
+    }
+    if (!ok && !lastBlock) ok = /employment|experience|work history/i.test(headingBefore(b));
+    if (ok) sections.push({ heading: 'Work Experience', ref: mkref(b), label: t });
   }
   return { sections, entries: Object.values(entries), has_skills: false, text_head: '' };
 }

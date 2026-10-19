@@ -41,9 +41,10 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
-AFFIRM_OPT = re.compile(r"^(yes\b|i (agree|consent|accept|authori[sz]e|acknowledge|understand|certify|confirm)\b|agree\b|accept\b)", re.I)
+AFFIRM_OPT = re.compile(r"^(yes\b|i (agree|consent|accept|authori[sz]e|acknowledge|understand|certify|confirm)\b|agree\b|accept\b|"
+                        r"i am (authori[sz]ed|eligible|legally|able|permitted|a (u\.?s\.? )?citizen)\b|i have (work )?authori[sz]ation\b)", re.I)
 NEG_OPT = re.compile(r"^(no\b|i do not\b|i don'?t\b|please do not\b|do not\b|don'?t\b|i decline\b|decline\b|not\b|never\b|"
-                     r"i have never\b|i have not\b|i am not\b|i'?m not\b|none\b)", re.I)
+                     r"i have never\b|i have not\b|i am not\b|i'?m not\b|none\b|i (will not|won'?t) (require|need)\b)", re.I)
 
 
 def _squash(s: str) -> str:
@@ -301,7 +302,7 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
         exact = [o for o in options if _norm(o["text"]) == w]
         if exact:
             return exact[0]
-        starts = [o for o in options if _norm(o["text"]).startswith(w)]
+        starts = [o for o in options if _norm(o["text"]) == w or _norm(o["text"]).startswith(w + " ")]
         if len(starts) == 1:
             return starts[0]
         if len(starts) > 1:
@@ -311,7 +312,8 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
             if len(bare) == 1:
                 return bare[0]
             continue
-        has = [o for o in options if w in _norm(o["text"])]
+        # whole words only: 'no' must never match 'unknown', 'none' or 'not applicable'
+        has = [o for o in options if re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", _norm(o["text"]))]
         if len(has) == 1:
             return has[0]
         # "Bachelor's" vs "Bachelors", "E-mail" vs "Email": equal once spaces and punctuation are gone.
@@ -403,6 +405,14 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
                 await _select_all_text(ex)     # replace, never append to, text left in the search box
                 await ex.type_text(want[:40], real_keys=True, delay_ms=20)
                 await asyncio.sleep(1.2)
+                filtered = await ex.eval(js.JS_LIST_OPTIONS)
+                filtered = [o for o in (filtered if isinstance(filtered, list) else []) if _key(o) not in baseline_keys]
+                if not filtered and shown_now:
+                    # The typed wording filtered a react-select down to nothing (Lyft's 'Work Authorization' lists
+                    # sentences, the want was 'Yes'): clear it so the whole list is back for the yes/no mapping.
+                    await _select_all_text(ex)
+                    await ex.page.keyboard.press("Backspace")
+                    await asyncio.sleep(0.6)
         options = await ex.eval(js.JS_LIST_OPTIONS)
         options = options if isinstance(options, list) else []
         new_opts = [o for o in options if _key(o) not in baseline_keys]

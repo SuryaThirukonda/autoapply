@@ -153,3 +153,19 @@ def test_greenhouse_gate_blocks_until_every_stored_company_is_in_the_section(sto
     assert g.result == "blocked" and any("Southwest Airlines" in r and "fill_sections" in r for r in g.reasons)
     g = run_gate(job=job, snapshot=snap([e["company"] for e in ENTRIES]), page_text="Apply", expected_resume=None, free_text_answers=[], portal="greenhouse")
     assert not any("Employment section" in r for r in g.reasons)
+
+
+@pytest.mark.asyncio
+async def test_greenhouse_education_only_form_gets_no_blank_blocks(stored):
+    """Tenstorrent (2026-10-18): the Education section's 'Add another' is not the employment section's."""
+    ex = await _open(FIX / "greenhouse" / "education_only.html")
+    try:
+        snap = await snapshot.take(ex)
+        assert not gh.is_employment_page(snap)
+        f = gh.GreenhouseSections(ex, {"id": 1, "company": "Acme"}, 1)
+        assert (await f.scan())["sections"] == []
+        rep = await f.run()
+        assert rep.added == [] and all("Add button not found" in x for x in rep.failed)
+        assert await ex.page.evaluate("() => document.querySelectorAll('#education > div').length") == 1
+    finally:
+        await ex.close(close_browser=True)
