@@ -748,7 +748,18 @@ class ToolDispatcher:
             return {"error": "give options or an answer_key"}, None
         model_opts = [o for o in (options or []) if o]
         his_wants = [w for w in wants if w not in model_opts or w in stored_wants]
-        r = await fill.choose(self.ctx.ex, ref, wants)
+        if answer_key and not stored_wants:
+            # An empty stored answer settles nothing: Epic Games' Unreal Engine question got "Yes" from the model's own
+            # options under experience.anything_else_default (empty), recorded as sourced (2026-10-19).
+            return {"error": f"{answer_key} has no stored value for this question: lookup_answer it for the right key, or ask_user"}, None
+        r = None
+        if answer_key and his_wants and model_opts:
+            # His answer first, alone: with the model's options mixed in, a stale wrong value that matches one of them
+            # ("Yes" left by an earlier wrong key) was kept although the stored answer is "No" (Epic Games, 2026-10-19).
+            first = await fill.choose(self.ctx.ex, ref, his_wants)
+            r = first if first.ok else None
+        if r is None:
+            r = await fill.choose(self.ctx.ex, ref, wants)
         self.ctx.budget.step()
         if r.ok:
             shown = str(r.readback)

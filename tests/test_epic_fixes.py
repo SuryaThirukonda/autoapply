@@ -363,3 +363,86 @@ async def test_a_numeric_month_list_takes_the_month_number(tmp_path):
         assert await ex.page.evaluate("() => document.getElementById('sm').value") == "08"
     finally:
         await ex.close(close_browser=True)
+
+
+ORACLE_GRID = """<!doctype html><html><body style="margin:20px">
+<label for="g">What is your expected graduation date:</label>
+<input id="g" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="grid" aria-controls="g-listbox" aria-expanded="false">
+<div role="grid" id="g-listbox" style="display:none"></div>
+<script>
+  const Q = ["January - March 2028", "April - June 2028", "July - September 2028", "October - December 2028", "April - June 2027"];
+  const inp = document.getElementById('g'), grid = document.getElementById('g-listbox');
+  function show() {
+    const q = inp.value.trim().toLowerCase(); grid.innerHTML = '';
+    for (const t of Q.filter(x => !q || x.toLowerCase().includes(q))) {
+      const row = document.createElement('div'); row.setAttribute('role', 'row');
+      const cell = document.createElement('div'); cell.setAttribute('role', 'gridcell'); cell.textContent = t;
+      cell.addEventListener('mousedown', e => { e.preventDefault(); inp.value = t; grid.style.display = 'none'; inp.setAttribute('aria-expanded', 'false'); });
+      row.appendChild(cell); grid.appendChild(row);
+    }
+    grid.style.display = 'block'; inp.setAttribute('aria-expanded', 'true');
+  }
+  inp.addEventListener('focus', show); inp.addEventListener('click', show); inp.addEventListener('input', show);
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_an_oracle_grid_select_takes_the_quarter_holding_the_date(tmp_path):
+    """American Express (2026-10-19): Oracle's select lists its options as gridcells ('April - June 2028'); choose saw none
+    and the run held."""
+    ex = await _race(tmp_path, ORACLE_GRID, "grid.html")
+    try:
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if (i.get("label") or "").startswith("What is your expected"))
+        r = await fill.choose(ex, ref, ["May 2028"])
+        assert r.ok, r.error
+        assert await ex.page.evaluate("() => document.getElementById('g').value") == "April - June 2028"
+    finally:
+        await ex.close(close_browser=True)
+
+
+UNREAL = """<!doctype html><html><body style="margin:20px">
+<label for="u">Do you have demonstrated experience using Unreal Engine in projects included on your resume?</label>
+<select id="u"><option>Select</option><option>Yes</option><option>No</option></select>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_his_answer_replaces_a_stale_wrong_option_and_an_empty_key_is_refused(store, tmp_path):
+    """Epic Games (2026-10-19): an empty key let the model's 'Yes' through as sourced; later the right key ('No') kept
+    the stale 'Yes' because the model offered 'Yes' too."""
+    answers.save_answer("q.do_you_have_demonstrated_experience_using_unreal_engine", "No", source="derived")
+    answers.save_answer("experience.anything_else_default", "", answer_type="blank", source="questionnaire")
+    ex = await _race(tmp_path, UNREAL, "unreal.html")
+    try:
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        ref = next(i["ref"] for i in snap.items if i.get("tag") == "select")
+        out, _ = await d.t_choose(ref, "experience.anything_else_default", ["Yes", "No"], "Unreal", None)
+        assert "no stored value" in out["error"]
+        await ex.page.select_option("#u", label="Yes")                  # the stale wrong value
+        out, _ = await d.t_choose(ref, "q.do_you_have_demonstrated_experience_using_unreal_engine", ["Yes", "No"], "Unreal", None)
+        assert out["readback"] == "No"
+        assert await ex.page.evaluate("() => document.getElementById('u').selectedOptions[0].text") == "No"
+    finally:
+        await ex.close(close_browser=True)
+
+
+DISABLED_END = """<!doctype html><html><body style="margin:20px">
+<div><div><label for="ey"><span>End date year*</span></label></div><div><input id="ey" type="text" value="" disabled></div></div>
+<div><div><label for="sy"><span>Start date year*</span></label></div><div><input id="sy" type="text" value=""></div></div>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_star_field_is_not_an_empty_required_field(tmp_path):
+    """FanDuel (2026-10-19): Greenhouse keeps 'End date year*' disabled for a current role; it blocked the submit."""
+    ex = await _race(tmp_path, DISABLED_END, "disabled.html")
+    try:
+        snap = await snapshot.take(ex)
+        empty = " | ".join(str(e) for e in snap.required_empty())
+        assert "sy" in empty and "ey" not in empty.replace("key", ""), empty
+    finally:
+        await ex.close(close_browser=True)

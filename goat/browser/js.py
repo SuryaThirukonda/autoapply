@@ -460,7 +460,8 @@ JS_PAGE_ERRORS = r"""
     }
     let ctl = []; try { ctl = root.querySelectorAll('input, textarea, select'); } catch (e) { ctl = []; }
     for (const el of ctl) {
-      if (el.type === 'hidden' || !vis(el)) continue;
+      // a disabled control cannot be filled: Greenhouse keeps 'End date year*' disabled for a current role (FanDuel, 2026-10-19)
+      if (el.type === 'hidden' || !vis(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
       const req = el.required || el.getAttribute('aria-required') === 'true' || starRequired(el);
       if (!req) continue;
       let empty;
@@ -742,7 +743,8 @@ JS_LIST_OPTIONS = r"""
 () => {
   const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1; };
   const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-  const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], li[role="presentation"] div[role="option"], .select__option, [class*="__option"], [class*="option" i][id*="option" i], ul[role="listbox"] li, [role="listbox"] [role="option"]')).filter(o => !o.closest('[data-automation-id="selectedItemList"]'));
+  // Oracle Candidate Experience selects open a role=grid popup whose options are gridcells (Amex, 2026-10-19)
+  const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], li[role="presentation"] div[role="option"], .select__option, [class*="__option"], [class*="option" i][id*="option" i], ul[role="listbox"] li, [role="listbox"] [role="option"], [role="grid"] [role="gridcell"]')).filter(o => !o.closest('[data-automation-id="selectedItemList"]'));
   const out = [];
   for (const o of opts) {
     if (!vis(o)) continue;
@@ -761,7 +763,7 @@ JS_LIST_OPTIONS = r"""
 JS_SCROLL_OPTION = r"""
 (text) => {
   const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-  const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], .select__option, [class*="__option"], ul[role="listbox"] li'))
+  const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], .select__option, [class*="__option"], ul[role="listbox"] li, [role="grid"] [role="gridcell"]'))
     .filter(o => txt(o).slice(0, 160) === text && o.getBoundingClientRect().width > 1);
   if (!opts.length) return JSON.stringify({ ok: false });
   const inList = opts.filter(o => !o.closest('[data-automation-id="selectedItemList"]'));

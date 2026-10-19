@@ -436,6 +436,25 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
         sq = [o for o in options if _squash(o["text"]) == _squash(want)]
         if len(sq) == 1:
             return sq[0]
+    # A month-year answer against quarter ranges ("April - June 2028" holds May 2028; Oracle graduation dates, 2026-10-19).
+    for want in wants:
+        m = _MONTH_YEAR.match((want or "").strip())
+        if not m:
+            continue
+        mon = (m.group("mon") or "").lower()
+        num = next((i + 1 for i, n in enumerate(_MONTH_NAMES) if mon and n.lower().startswith(mon[:3])), 0) if mon else int(m.group("mm") or m.group("mm2") or 0)
+        year = m.group("y1") or m.group("y2") or m.group("y3")
+        hits = []
+        for o in options:
+            r = re.search(r"([A-Za-z]{3,9})\.?\s*[-–—to]+\s*([A-Za-z]{3,9})\.?,?\s+((?:19|20)\d{2})", o.get("text") or "")
+            if not r or r.group(3) != year:
+                continue
+            a = next((i + 1 for i, n in enumerate(_MONTH_NAMES) if n.lower().startswith(r.group(1).lower()[:3])), 0)
+            b = next((i + 1 for i, n in enumerate(_MONTH_NAMES) if n.lower().startswith(r.group(2).lower()[:3])), 0)
+            if a and b and a <= num <= b:
+                hits.append(o)
+        if len({_norm(h.get("text")) for h in hits}) == 1:
+            return hits[0]
     # A Yes/No answer against consent-style options ("I agree to receive SMS...", "Please do not send...").
     for want in wants:
         w = _norm(want)
