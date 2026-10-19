@@ -288,3 +288,16 @@ async def test_untouched_workday_entries_are_re_added_when_another_one_changes(s
         assert not [u for u in rep3.updated if "re-added" in u]
     finally:
         await ex.close(close_browser=True)
+
+
+
+def test_a_question_mentioning_work_experience_is_no_work_section(stored):
+    """Aptiv (2026-10-19): its My Experience step has only Resume/CV and Websites; 'Which industry best describes your
+    most recent work experience?' made the Review gate demand work entries 2-5."""
+    from goat.adapters.workday_sections import review_gaps
+    text = ("Review\nMy Experience\nResume/CV\nSurya_Thirukonda_Resume_SWE.pdf\nWebsites\nURL\nhttps://github.com/SuryaThirukonda\n"
+            "Which industry best describes your most recent work experience? (Select one)*\nSoftware / SaaS / Cloud / AI\n"
+            "Who is your current or most recent employer?\nRevio")
+    assert not [g for g in review_gaps(text) if g.startswith("work entry")]
+    with_section = text.replace("Websites\n", "Work Experience\nRevio\nWebsites\n")
+    assert [g for g in review_gaps(with_section) if g.startswith("work entry")]

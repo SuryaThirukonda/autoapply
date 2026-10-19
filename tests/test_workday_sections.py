@@ -158,3 +158,4 @@ async def test_an_unoffered_certification_block_is_deleted_and_not_added_again(t
         assert out.get("error", "").startswith("not clicked")
     finally:
         await ex.close(close_browser=True)
+

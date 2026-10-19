@@ -679,7 +679,10 @@ def review_gaps(page_text: str, company: str = "") -> list[str]:
     text = answers.norm(page_text)
     # Only a tenant whose form HAS a work-history section can show the entries (General Motors' My Experience has
     # none, so the check could never be met and the run deadlocked, 2026-10-19).
-    has_work = bool(re.search(r"\b(Work Experience|Work History|Employment History|Professional Experience)\b", page_text or "", re.I))
+    # The section's own header stands on its own line; a question that mentions it ("Which industry best describes
+    # your most recent work experience?") is no section (Aptiv has none and deadlocked on entries 2-5, 2026-10-19).
+    has_work = bool(re.search(r"(?m)^[ \t]*(Work Experience|Work History|Employment History|Professional Experience)[ \t]*$",
+                              (page_text or "").replace("\u200b", "")))
     for ent in (stored_work_entries(company) if has_work else []):
         if _company_key(ent["company"]) not in text:
             gaps.append(f'work entry {ent["n"]} ({ent["company"]})')
