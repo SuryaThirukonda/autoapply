@@ -159,8 +159,25 @@ async def test_a_vague_ready_for_you_park_gets_the_gate_blockers(store, tmp_path
         ctx.last_snapshot = await snapshot.take(ex)
         out, _ = await d.t_park("ready_for_you: resume application fields")
         assert "not parked" in out["error"] and out.get("blockers")
+        ctx.last_snapshot.challenge = {"challenge": True, "kinds": ["hcaptcha"]}    # a real one on the page
         with pytest.raises(Parked) as p:
             await d.t_park("ready_for_you: hCaptcha then Submit")
         assert p.value.state == "ready_for_you"
+    finally:
+        await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_captcha_the_page_does_not_show_does_not_end_the_run(store, tmp_path):
+    """Epic Games (2026-10-19): 'complete the required CAPTCHA/human verification if presented; required fields remain:
+    phone, ...' on a page with no challenge."""
+    job = _job()
+    ex = await _page(tmp_path, MID_FORM.replace('<input id="fn">', '<input id="fn" required aria-required="true">'))
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        ctx.last_snapshot = await snapshot.take(ex)
+        out, _ = await d.t_park("ready_for_you: complete the required CAPTCHA/human verification if presented; required fields remain: phone")
+        assert "not parked" in out["error"] and out.get("blockers")
     finally:
         await ex.close(close_browser=True)

@@ -14,7 +14,9 @@ from .browser.errors import why_blocked
 from .browser.snapshot import Snapshot
 from .config import SETTINGS
 
-ATTESTATION = re.compile(r"(certif|attest|i confirm|acknowledge|true and (complete|accurate|correct)|truthful|under penalty|electronic signature|signature)", re.I)
+# "certify" / "certified that" attest; a "Certification" field (a credential like AWS Cloud Practitioner) does not
+# (Axiom Space's Workday Certification picker was held as an attestation, 2026-10-19)
+ATTESTATION = re.compile(r"(\bcertif(y|ies|ied)\b|attest|i confirm|acknowledge|true and (complete|accurate|correct)|truthful|under penalty|electronic signature|signature)", re.I)
 ALLOWED_ATTESTATION_SOURCES = ("standing:", "policy:", "bank:", "seed:", "standing:consent.")
 
 

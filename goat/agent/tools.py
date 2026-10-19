@@ -767,7 +767,8 @@ class ToolDispatcher:
             # mapping ("Not Applicable" recorded under work_authorization.us_citizen = Yes on Nike, 2026-10-19). It is
             # recorded as judgment so the fact check before an automatic submit looks at it.
             mine = bool(answer_key) and bool(his_wants) and fill.best_option([{"text": shown}], his_wants) is None \
-                and not any(answers.norm(w) and answers.norm(w) in answers.norm(shown) for w in his_wants)
+                and not any(answers.norm(w) and answers.norm(w) in answers.norm(shown) for w in his_wants) \
+                and not fill._chip_matches(shown, his_wants)
             rec_src = f"judgment:{answer_key}" if mine else src
             records.record_decision(self.ctx.job_id, self.ctx.page_no, label, shown, rec_src, r.ref or ref)
             self.ctx.control_failures.pop(ref, None)
@@ -1725,9 +1726,14 @@ class ToolDispatcher:
         # questions his stored answers cover (2026-10-19).
         # A reason that only says what is left to do ("complete the CSX Oracle application fields, including the full home
         # address, work experience, education, remaining questions, and e-signature", 2026-10-19) is never final.
+        # A CAPTCHA counts only when the page has one: Epic Games parked "complete the required CAPTCHA/human
+        # verification if presented; required fields remain: phone, ..." on a form with no challenge (2026-10-19).
+        snap0 = self.ctx.last_snapshot
+        real_challenge = bool(snap0 is not None and (getattr(snap0, "challenge", None) or {}).get("challenge"))
+        stoppers = [m.group(0) for m in self.RFY_REASON.finditer(reason)
+                    if real_challenge or not re.search(r"captcha|human|\bbot\b|challenge|verif", m.group(0), re.I)]
         rfy_soft = low.startswith(("ready_for_you", "needs_you")) and self.ctx.park_attempts < 2 and (
-            not self.RFY_REASON.search(reason)
-            or (self.RFY_GIVE_UP.search(reason) and not re.search(r"captcha|human|\bbot\b|challenge", reason, re.I)))
+            not stoppers or (bool(self.RFY_GIVE_UP.search(reason)) and not real_challenge))
         hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch", "needs_you")) \
             and not rfy_soft
         if not hard and self.ctx.park_attempts < 2:
