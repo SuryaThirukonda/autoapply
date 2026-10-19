@@ -946,3 +946,20 @@ def test_a_phone_extension_box_never_gets_the_phone_number():
     rule = next(r for r in GENERIC_FIELD_MAP if r[1] == "identity.phone")
     assert rule[0].search("Phone Number*") and rule[0].search("Mobile phone") and rule[0].search("Telephone")
     assert not rule[0].search("Phone Extension") and not rule[0].search("Phone Ext.")
+
+
+
+def test_a_notice_acknowledgement_is_answered_by_his_standing_consent():
+    """Penn State (2026-10-19): 'Do you understand the information about security-clearance situations that may cause
+    delays?' with 'Yes, I understand the above information...' / 'No, I do not understand...' is an acknowledgement."""
+    from goat.agent.tools import acknowledgement_key
+    from goat.browser.fill import best_option
+    opts = ["Select One", "Yes, I understand the above information regarding security clearances.",
+            "No, I do not understand. I have questions about the above information, and I can contact the ARL Security Office."]
+    key = acknowledgement_key("Do you understand the information about security-clearance situations that may cause delays?", opts)
+    assert key and key.startswith(("consent.", "compliance."))
+    assert acknowledgement_key("Security clearance delay situations", opts)                    # the model's paraphrase too
+    assert best_option([{"text": o} for o in opts], ["Yes"])["text"].startswith("Yes, I understand")
+    assert acknowledgement_key("Have you worked for Penn State before?", ["Yes", "No"]) is None
+    assert acknowledgement_key("Would you like to join our talent community?", ["Yes, I agree to join", "No"]) is None
+    assert acknowledgement_key("Are you a US citizen?", ["Yes, I am", "No"]) is None

@@ -393,6 +393,22 @@ def consent_question_key(question: str) -> str | None:
     return consent_key(q)
 
 
+# "Yes, I understand the above information regarding security clearances." against "No, I do not understand. I have
+# questions..." (Penn State's clearance notice, 2026-10-19): a choice between understanding a notice and not
+# understanding it is an acknowledgement, which his standing consent answers.
+ACK_OPTION = re.compile(r"^\s*(yes\s*[,.:;!-]?\s*)?i (understand|acknowledge|have read|have reviewed|am aware)\b", re.I)
+
+
+def acknowledgement_key(question: str, options: list[str] | None) -> str | None:
+    """The consent key for a question whose choices are 'I understand / I acknowledge / I have read' (and its
+    negation); None for every other question. Affiliation questions and marketing opt-ins never qualify."""
+    opts = [str(o or "") for o in options or []]
+    yes = next((o for o in opts if ACK_OPTION.match(o)), None)
+    if yes is None or is_affiliation_question(question, opts):
+        return None
+    return consent_question_key(f"{question} | {yes}")
+
+
 def is_free_response(question: str, options: list[str] | None, field_type: str = "") -> bool:
     if options:
         return False
@@ -1318,6 +1334,17 @@ class ToolDispatcher:
                 opts = list(dict.fromkeys(opts + [s for s in seen if s]))
             except Exception as e:
                 log.debug("peek_options failed: %s", e)
+        ack = acknowledgement_key(question, opts)
+        if ack:
+            a = answers.get(ack, company, portal)
+            if a is not None and a.has_value and ack != "consent.marketing_email":
+                pres = self._present(a, via="consent_rule")
+                pres.update({"note": "an acknowledgement of a notice: Surya acknowledges on every form (his standing rule); "
+                                     "pick the choice that says he understands", "choices": opts})
+                db.event(self.ctx.job_id, "answer:acknowledgement", {"key": ack, "question": question[:160]})
+                result = (pres, {"meaning": "acknowledgement of a notice", "choices": opts})
+                self.ctx.resolved[nq] = result
+                return result
         if png is None:
             try:
                 png = await self.ctx.ex.screenshot_png()
