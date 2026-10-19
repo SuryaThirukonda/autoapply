@@ -42,14 +42,19 @@ JS_SECTIONS = r"""
     e.fields[m[3]] = { ref: mkref(el), type, value: type === 'checkbox' ? (el.checked ? 'checked' : '') : (el.value || ''), vis: vis(el), max: el.maxLength > 0 ? el.maxLength : 0 };
   }
   // each block's own Delete button: the nearest ancestor of its first field that holds one and no other block's fields
+  // (every field is a starting point and the climb goes 14 levels: TIAA's certification prompt sits deeper than 8,
+  // 2026-10-19)
   for (const e of Object.values(entries)) {
-    const first = document.querySelector('[data-goat-ref="' + Object.values(e.fields)[0].ref + '"]');
-    let node = first ? first.parentElement : null;
-    for (let i = 0; i < 8 && node; i++, node = node.parentElement) {
-      const others = Array.from(node.querySelectorAll('input, textarea')).some(x => { const m = /^([A-Za-z]+)-(\d+)--/.exec(x.id || ''); return m && (m[1] !== e.kind || parseInt(m[2], 10) !== e.idx); });
-      if (others) break;
-      const del = Array.from(node.querySelectorAll('button')).find(b => /^delete$/i.test(norm(b.textContent)) || /^delete$/i.test(norm(b.getAttribute('aria-label') || '')));
-      if (del) { e.delete = mkref(del); break; }
+    for (const f of Object.values(e.fields)) {
+      if (e.delete) break;
+      const start = document.querySelector('[data-goat-ref="' + f.ref + '"]');
+      let node = start ? start.parentElement : null;
+      for (let i = 0; i < 14 && node; i++, node = node.parentElement) {
+        const others = Array.from(node.querySelectorAll('input, textarea')).some(x => { const m = /^([A-Za-z]+)-(\d+)--/.exec(x.id || ''); return m && (m[1] !== e.kind || parseInt(m[2], 10) !== e.idx); });
+        if (others) break;
+        const del = Array.from(node.querySelectorAll('button')).find(b => /^delete$/i.test(norm(b.textContent)) || /^delete$/i.test(norm(b.getAttribute('aria-label') || '')));
+        if (del) { e.delete = mkref(del); break; }
+      }
     }
   }
   const text = norm(document.body.innerText || '').slice(0, 20000);

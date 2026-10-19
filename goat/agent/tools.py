@@ -900,16 +900,28 @@ class ToolDispatcher:
         blk = next((e for e in certs if any(f.get("ref") == ref for f in e["fields"].values())), None)
         if blk is None and len(certs) == 1:
             blk = certs[0]
-        if blk is None or not await ws._delete_entry(blk):
+        if blk is None:
             return None
+        deleted = await ws._delete_entry(blk)
         host = re.sub(r"^https?://([^/]+).*$", r"\1", self.ctx.ex.url or "").lower()
-        db.event(self.ctx.job_id, "cert:unavailable", {"host": host, "block": f'{blk["kind"]}-{blk["idx"]}'})
+        db.event(self.ctx.job_id, "cert:unavailable", {"host": host, "block": f'{blk["kind"]}-{blk["idx"]}', "deleted": deleted})
         self.ctx.control_failures["cert:unavailable"] = 1
+        if not deleted:
+            return ("this tenant's Certification list does not offer his AWS Certified Cloud Practitioner. Press this "
+                    "certification block's Delete button (certifications are optional) and do not add one again: a Review "
+                    "showing 'Certifications: No Response' is correct. Never pick another certification in its place.")
         return ("this tenant's Certification list does not offer his AWS Certified Cloud Practitioner, so the harness deleted "
                 "that certification block (certifications are optional). Do not add one again: a Review showing "
                 "'Certifications: No Response' is correct. Continue with Save and Continue.")
 
     async def _t_choose(self, ref: str, answer_key: str | None, options: list[str], label: str, source: str | None):
+        if not answer_key and re.search(r"\bcertif|\blicen[cs]e", label or "", re.I) \
+                and not re.search(r"date|issued by|issuer|number|expir|state", label or "", re.I):
+            # TIAA (2026-10-19): with no option for his AWS Certified Cloud Practitioner, the model picked "Cloud Guild:
+            # AWS Cloud Practitioner - TIAA" (an internal course) with source 'resume'.
+            return {"error": "a certification is picked only with answer_key background.certifications_variants (his AWS "
+                             "Certified Cloud Practitioner); another credential is never chosen in its place. If the list "
+                             "does not offer it, delete the certification block (certifications are optional)."}, None
         if answer_key and self.SENSITIVE_KEYS.match(answer_key) and options:
             # Surya's self-identification answers are his stored chain and nothing else; a model-supplied
             # fallback ("Asian (...)" next to "Decline to self-identify") is never tried.

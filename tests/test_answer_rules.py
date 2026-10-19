@@ -1068,3 +1068,12 @@ async def test_a_ranked_chain_presses_the_first_offered_toggle(store, monkeypatc
     answers.save_answer("bank.hear-about", "LinkedIn; Job Board; Agency / Search Firm; Other", answer_type="choice_chain", source="questionnaire")
     await d.t_fill_batch([{"ref": "e20", "answer_key": "bank.hear-about", "value": None, "source": None, "label": g}])
     assert pressed == ["e22"], pressed
+
+
+
+@pytest.mark.asyncio
+async def test_a_certification_is_never_picked_without_his_certification_key(store):
+    """TIAA (2026-10-19): 'Cloud Guild: AWS Cloud Practitioner - TIAA' was picked with source 'resume'."""
+    d, ctx = _dispatcher({"id": 34, "company": "TIAA", "ats": "workday"})
+    out, _ = await d._t_choose("e121", None, ["Cloud Guild: AWS Cloud Practitioner - TIAA"], "Certification", "resume")
+    assert "background.certifications_variants" in out["error"]
