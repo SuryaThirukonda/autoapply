@@ -598,7 +598,10 @@ def review_gaps(page_text: str, company: str = "") -> list[str]:
     """On a Workday Review page: every stored work entry's company and every stored website must appear."""
     gaps = []
     text = answers.norm(page_text)
-    for ent in stored_work_entries(company):
+    # Only a tenant whose form HAS a work-history section can show the entries (General Motors' My Experience has
+    # none, so the check could never be met and the run deadlocked, 2026-10-19).
+    has_work = bool(re.search(r"\b(Work Experience|Work History|Employment History|Professional Experience)\b", page_text or "", re.I))
+    for ent in (stored_work_entries(company) if has_work else []):
         if _company_key(ent["company"]) not in text:
             gaps.append(f'work entry {ent["n"]} ({ent["company"]})')
     if re.search(r"\bWebsites\b", page_text):

@@ -81,3 +81,12 @@ def test_rail_mention_of_review_is_not_the_review_page(tmp_path):
     job = {"id": 1, "company": "X", "title": "Intern", "url": "https://x.wd5.myworkdayjobs.com/job", "listing_id": 1}
     g = run_gate(job=job, snapshot=snap, page_text=text, expected_resume=None, free_text_answers=[], portal="workday")
     assert not any("Review page" in r for r in g.reasons)
+
+
+def test_a_tenant_without_a_work_history_section_is_not_asked_for_entries(monkeypatch):
+    """General Motors (2026-10-19): My Experience has no Work Experience section, so Review can never list the roles."""
+    monkeypatch.setattr(ws, "stored_work_entries", lambda company="": [{"n": 1, "company": "Revio"}, {"n": 2, "company": "DeKalb Capital Management"}])
+    monkeypatch.setattr(ws, "stored_websites", lambda company="": [])
+    review = "Review\nMy Information\nSurya Thirukonda\nMy Experience\nEducation\nTexas A&M University\nResume\nSurya_Thirukonda_Resume_SWE.pdf\n"
+    assert ws.review_gaps(review) == []
+    assert ws.review_gaps(review.replace("My Experience\n", "My Experience\nWork Experience\nRevio\n")) == ["work entry 2 (DeKalb Capital Management)"]
