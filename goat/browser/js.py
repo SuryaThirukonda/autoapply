@@ -855,3 +855,20 @@ JS_OPEN_TOGGLE = r"""(ref) => {
   }
   return {ok: false};
 }"""
+
+
+# The checkboxes / radios that answer the same question as `ref` when the snapshot could not group them (Workday's race
+# checkboxes have no shared name or legend, HCSC 2026-10-19): the nearest container holding two or more of them.
+JS_CHOICE_SIBLINGS = r"""(ref) => {
+""" + _COMMON + r"""
+  const el = findRef(ref);
+  if (!el || !(el.type === 'checkbox' || el.type === 'radio')) return JSON.stringify([]);
+  let box = el.parentElement;
+  for (let i = 0; i < 6 && box; i++, box = box.parentElement) {
+    const peers = Array.from(box.querySelectorAll('input[type="checkbox"], input[type="radio"]'));
+    if (peers.length >= 2) {
+      return JSON.stringify(peers.map(p => ({ ref: p.getAttribute('data-goat-ref') || '', label: labelFor(p) })).filter(p => p.ref));
+    }
+  }
+  return JSON.stringify([]);
+}"""

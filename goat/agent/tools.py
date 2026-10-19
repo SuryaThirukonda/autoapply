@@ -14,7 +14,7 @@ from typing import Any
 
 from .. import answers, db, profile, records, states
 from ..budget import Budget, BudgetExceeded, Parked
-from ..browser import fill, snapshot as snapmod
+from ..browser import fill, js, snapshot as snapmod
 from ..browser.captcha import detect_challenge
 from ..browser.executor import ClickRefused, Executor, NavigationRefused
 from ..browser.submit import submit as do_submit
@@ -590,7 +590,7 @@ class ToolDispatcher:
                 a_chain = answers.get(f["answer_key"], self.ctx.job.get("company", ""), self.ctx.portal)
                 parts0 = [x.strip() for x in str(val).split(";") if x.strip()]
                 if a_chain is not None and a_chain.answer_type == "choice_chain" and answers.norm(parts0[0]) not in SELECT_ALL:
-                    chosen = self._chain_pick(f["ref"], parts0)
+                    chosen = await self._chain_pick(f["ref"], parts0)
                     if chosen is not None and chosen.get("ref") != f["ref"]:
                         results.append({"ref": f["ref"], "status": "failed",
                                         "error": f"the stored answer is an ordered preference: in this question it picks "
@@ -681,6 +681,15 @@ class ToolDispatcher:
                     records.record_decision(self.ctx.job_id, self.ctx.page_no, p["_label"], r.readback, p["_src"], p["ref"])
         self.ctx.budget.step()
         set_n = sum(1 for r in results if r.get("status") == "set")
+        # A field set again after a page's read-back complained is the fix for that complaint: drop it, so a mismatch
+        # recorded under an older page number does not outlive its fix (HCSC, 2026-10-19). The next Next click re-checks.
+        fixed = {r.get("ref") for r in results if r.get("status") in ("set", "kept") and r.get("ref")}
+        for page in list(self.ctx.readback_open):
+            left = [m for m in self.ctx.readback_open[page] if not any(f"[{ref}]" in m for ref in fixed)]
+            if left:
+                self.ctx.readback_open[page] = left
+            else:
+                self.ctx.readback_open.pop(page, None)
         return {"summary": f"{set_n} set, {len(results) - set_n} failed", "results": results}, None
 
     SENSITIVE_KEYS = re.compile(r"^(self_id\.|compliance\.(date_of_birth|criminal|disciplined|debarment)|bank\.(gender|race|ethnic|veteran|disab|transgender|sexual))", re.I)
@@ -738,6 +747,12 @@ class ToolDispatcher:
                              "(or the email / password form), then call `credentials`."}, None
         if item and (item.get("type") in ("radio", "checkbox") or item.get("tag") in ("select", "dropdown", "toggle")):
             return {"error": "that is a choice control; set it with fill_batch (radio/checkbox/toggle, value from an answer_key) or choose (dropdown) so the decision has a source"}, None
+        if re.search(r"forgot (your )?password|reset (your )?password", label, re.I) and not self.ctx.reset_needed \
+                and not re.search(r"^reset password$", label.strip(), re.I) and self.ctx.control_failures.get("creds:forgot_bounce", 0) < 1:
+            # A reset only after a sign-in with the universal password failed in this run (Wawa, 2026-10-19).
+            self.ctx.control_failures["creds:forgot_bounce"] = 1
+            return {"error": "not clicked: sign in first. On the Sign In form call credentials login_universal and click Sign In; "
+                             "the password reset is for when that sign-in fails."}, None
         if label.lower().strip() in self.NEXT_LABELS:
             # Read-back BEFORE leaving the page, while its controls still exist. A mismatch between a decision and what
             # its control shows stops the first click so it can be fixed (it never blocks twice); whatever still differs
@@ -905,15 +920,22 @@ class ToolDispatcher:
         out["note"] = "call snapshot before using any ref on this page"
         return out, None
 
-    def _chain_pick(self, ref: str, parts: list[str]) -> dict | None:
+    async def _chain_pick(self, ref: str, parts: list[str]) -> dict | None:
         """The option an ordered chain picks in the radio / checkbox group holding `ref`: the first chain entry (its
-        bracket note dropped as a second try) that some option's label matches. None when `ref` is in no group or no
-        entry matches."""
+        bracket note dropped as a second try) that some option's label matches. The group comes from the snapshot, else
+        from the page (the options sharing the nearest container). None when no group or no entry matches."""
         snap = self.ctx.last_snapshot
         group = next((g for g in (getattr(snap, "groups", None) or []) if any(o.get("ref") == ref for o in g.get("options", []))), None)
-        if group is None:
+        options = group.get("options", []) if group else []
+        if not options:
+            try:
+                sib = await self.ctx.ex.eval(js.JS_CHOICE_SIBLINGS, ref)
+            except Exception:
+                sib = []
+            options = sib if isinstance(sib, list) else []
+        if len(options) < 2:
             return None
-        opts = [(o, answers.norm(o.get("label") or "")) for o in group.get("options", [])]
+        opts = [(o, answers.norm(o.get("label") or "")) for o in options]
         for part in parts:
             for cand in (answers.norm(part), answers.norm(re.sub(r"\s*\([^)]*\)", "", part))):
                 if not cand:
@@ -1199,6 +1221,17 @@ class ToolDispatcher:
                 and self.ctx.control_failures.get("creds:login_failed", 0) >= 1:
             # The same password would fail again (Assurant, GE Vernova, 2026-10-18): the reset flow first.
             return {"error": RESET_STEPS}, None
+        # The form has to match the mode (Wawa, 2026-10-19): Workday's "Apply Manually" opens Create Account; sign-in
+        # credentials typed there, then a click on its "Sign In" link, left an empty sign-in form and the run went
+        # straight to a password reset without ever signing in.
+        snap = self.ctx.last_snapshot
+        pw_boxes = sum(1 for i in (getattr(snap, "items", None) or []) if (i.get("type") or "").lower() == "password")
+        if mode in ("login", "login_universal") and pw_boxes >= 2:
+            return {"error": "this is the Create Account form (two password boxes). To sign in, click its 'Sign In' link first, take a "
+                             "snapshot, then call credentials login_universal on the sign-in form and click its Sign In button."}, None
+        if mode == "create" and pw_boxes == 1:
+            return {"error": "this is the Sign In form (one password box). Click 'Create Account' first, take a snapshot, then call "
+                             "credentials mode 'create' with the password and verify-password boxes."}, None
         if mode == "create":
             self.ctx.create_tried = True
         ex = self.ctx.ex

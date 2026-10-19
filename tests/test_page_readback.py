@@ -294,3 +294,37 @@ async def test_without_a_decline_option_the_chain_falls_through_to_his_own_answe
         assert out["results"][0]["status"] == "failed"
     finally:
         await ex.close(close_browser=True)
+
+
+WORKDAY_RACE = """<!doctype html><html><body style="margin:20px">
+<div data-automation-id="formField-race"><div>Please identify your race</div>
+  <div><input type="checkbox" id="w1"><label for="w1">American Indian or Alaska Native (United States of America)</label></div>
+  <div><input type="checkbox" id="w2"><label for="w2">Asian (United States of America)</label></div>
+  <div><input type="checkbox" id="w3"><label for="w3">I Do Not Wish to Answer</label></div></div>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_the_chain_rule_finds_ungrouped_workday_checkboxes_on_the_page(store, tmp_path):
+    """HCSC (2026-10-19): Workday's race checkboxes share no name or legend, so the snapshot had no group for them."""
+    job = _job()
+    answers.save_answer("self_id.race_ethnicity", "decline; I do not wish to answer; Asian; Asian (United States of America)",
+                        answer_type="choice_chain", source="questionnaire")
+    ex = await _race(tmp_path, WORKDAY_RACE, "wdrace.html")
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        refs = {i["label"].strip()[:5]: i["ref"] for i in snap.items if i.get("type") == "checkbox"}
+        refs.update({o["label"].strip()[:5]: o["ref"] for g in snap.groups for o in g["options"]})
+        ctx.readback_open = {1: [f"field Asian (United States of America) [{refs['Asian']}] shows '' but decision was 'checked'"]}
+        out, _ = await d.t_fill_batch([{"ref": refs["Asian"], "answer_key": "self_id.race_ethnicity", "value": None, "source": None, "label": "Race"}])
+        assert out["results"][0]["status"] == "failed" and "I Do Not Wish to Answer" in out["results"][0]["error"]
+        out, _ = await d.t_fill_batch([{"ref": refs["I Do "], "answer_key": "self_id.race_ethnicity", "value": None, "source": None, "label": "Race"},
+                                       {"ref": refs["Asian"], "answer_key": None, "value": "false", "source": "clear", "label": "Asian"}])
+        assert all(r["status"] == "set" for r in out["results"]), out
+        assert await ex.page.evaluate("() => [document.getElementById('w2').checked, document.getElementById('w3').checked]") == [False, True]
+        assert ctx.readback_open == {}                       # the fix cleared the stale complaint
+    finally:
+        await ex.close(close_browser=True)

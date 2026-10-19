@@ -195,3 +195,37 @@ async def test_a_create_attempt_also_lets_the_credentials_park_stand(store):
 def test_workday_hints_send_a_missing_reset_email_to_create_account():
     h = for_portal("workday").hints
     assert "no reset email" in h and "Create Account" in h and "not_received twice" not in h
+
+
+def _snap_with(pw_boxes: int):
+    items = [{"ref": "e9", "type": "email", "tag": "input", "label": "Email Address"}]
+    items += [{"ref": f"p{i}", "type": "password", "tag": "input", "label": "Password"} for i in range(pw_boxes)]
+    return SimpleNamespace(items=items, find=lambda ref: {"tag": "button", "label": "Sign In"})
+
+
+@pytest.mark.asyncio
+async def test_credentials_mode_must_match_the_form(store):
+    """Wawa (2026-10-19): sign-in credentials typed into the Create Account form, then a reset without a sign-in."""
+    job = _job()
+    d, ctx = _with_ex(job, SignInEx(""))
+    calls = []
+    ctx.creds = SimpleNamespace(fill_credentials=lambda *a: calls.append(a) or "filled_universal", fill_confirm_password=lambda *a: "filled_universal")
+    ctx.last_snapshot = _snap_with(2)
+    out, _ = await d.t_credentials("login_universal", "e9", "p0", None)
+    assert "Create Account form" in out["error"] and calls == []
+    ctx.last_snapshot = _snap_with(1)
+    out, _ = await d.t_credentials("create", "e9", "p0", "p1")
+    assert "Sign In form" in out["error"] and calls == []
+    out, _ = await d.t_credentials("login_universal", "e9", "p0", None)
+    assert out["status"] == "filled_universal" and len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_forgot_password_waits_for_a_failed_sign_in(store):
+    job = _job()
+    d, ctx = _with_ex(job, SignInEx(""))
+    out, _ = await d.t_click("e14", "Forgot your password?")
+    assert "sign in first" in out["error"]
+    ctx.reset_needed = True                          # the sign-in failed: now the reset is the right move
+    out, _ = await d.t_click("e14", "Forgot your password?")
+    assert "error" not in out
