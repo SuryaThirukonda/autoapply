@@ -207,6 +207,9 @@ class WorkdaySections:
             f = _field(entry, *names)
             if f and ent[key] and answers.norm(f["value"]) != answers.norm(ent[key]):
                 plan.append((f["ref"], ent[key], f"{tag} {fname}", f"experience.work.{n}.{key}"))
+            elif f and ent[key] and f.get("ref"):
+                # already right (a resumed application, Aerospace Corporation 2026-10-19): source it for this attempt
+                self._record(f"{tag} {fname}", f["value"], f"experience.work.{n}.{key}", f["ref"])
         ok_all = True
         self.changed = bool(plan)
         for ref, val, label, key in plan:
@@ -217,6 +220,8 @@ class WorkdaySections:
         cur = _field(entry, "currentlyWorkHere", "current")
         if cur:
             want = bool(ent["current"])
+            if want and cur["value"] == "checked" and cur.get("ref"):
+                self._record(f"{tag} currently work here", "checked", f"experience.work.{n}.current", cur["ref"])
             if (cur["value"] == "checked") != want:
                 self.changed = True
                 if not await self._set(cur["ref"], want, f"{tag} currently work here", f"experience.work.{n}.current"):
@@ -240,6 +245,10 @@ class WorkdaySections:
             yr = _field(entry, f"{which}Date-dateSectionYear")
             parts = fill.parse_date(val)
             if mon and yr and mon["value"].zfill(2) == parts.get("month", "") and yr["value"] == parts.get("year", ""):
+                shown = f'{mon["value"].zfill(2)}/{yr["value"]}'
+                for f in (mon, yr):
+                    if f.get("ref"):
+                        self._record(f"{tag} {which} date", shown, f"experience.work.{n}.{key}", f["ref"])
                 continue
             self.changed = True
             r = await fill.set_date(self.ex, mref, val)
@@ -259,6 +268,8 @@ class WorkdaySections:
                 if not await self._set(desc["ref"], want, f"{tag} role description", f"experience.work.{n}.description"):
                     ok_all = False
                     self.report.failed.append(f"{tag} role description")
+            elif desc.get("ref"):
+                self._record(f"{tag} role description", desc["value"], f"experience.work.{n}.description", desc["ref"])
         return ok_all
 
     async def fill_work(self) -> None:
@@ -485,8 +496,10 @@ class WorkdaySections:
         failures = 0
         for skill in skills:
             chips = (await self._skills_state()).get("chips") or []
-            if any(fill._chip_matches(c, [skill]) for c in chips):
+            have = next((c for c in chips if fill._chip_matches(c, [skill])), None)
+            if have is not None:
                 self.report.present.append(f"skill {skill}")
+                self._record(f"skill {skill}", have, "experience.skills_list", "skills--skills")
                 continue
             if failures >= 2:
                 self.report.skipped.append(f"skill {skill}: stopped after two picker failures")

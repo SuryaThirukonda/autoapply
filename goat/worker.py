@@ -43,7 +43,7 @@ def claim_next() -> dict | None:
                     (states.FILLING, db.now(), db.now(), job["id"]))
         # Decisions belong to one attempt: archive the previous attempt's rows, then start clean. A draft Surya released
         # as filled keeps them while its tab may still hold the form he approved (run_job archives them if it does not).
-        if not keeps_decisions(job):
+        if not keeps_decisions(job) and not resumed_after_restart(con, job):
             archive_decisions(con, int(job["id"]))
         job["attempts"] = job["attempts"]  # attempts before this one
         db.event(job["id"], "job:claimed", {"company": job["company"], "title": job["title"], "ats": job["ats"], "attempt": job["attempts"] + 1})
@@ -53,6 +53,17 @@ def claim_next() -> dict | None:
 def keeps_decisions(job: dict) -> bool:
     """A released draft whose tab is still known: its decisions are the ones Surya approved, so they stay."""
     return bool(job.get("cleared_live")) and bool(job.get("tab_target_id"))
+
+
+def resumed_after_restart(con, job: dict) -> bool:
+    """A job the agent was working on when it restarted (a crash or a reload) and whose tab is still known: the run
+    re-attaches to that tab, which still holds what it filled, so the decisions behind those values stay. Archived,
+    they left Aerospace Corporation's resumed My Experience page 'unsourced' and the gate refused it (2026-10-19)."""
+    if not job.get("tab_target_id"):
+        return False
+    r = con.execute("SELECT kind, detail FROM events WHERE job_id=? AND kind IN ('job:requeued', 'job:claimed', 'job:hold', "
+                    "'job:ready_for_you', 'job:dead', 'job:submitted', 'job:released') ORDER BY n DESC LIMIT 1", (job["id"],)).fetchone()
+    return bool(r and r["kind"] == "job:requeued" and "restart while in flight" in (r["detail"] or ""))
 
 
 def archive_decisions(con, job_id: int) -> int:

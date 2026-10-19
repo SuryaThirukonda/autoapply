@@ -149,3 +149,21 @@ def test_archive_decisions_moves_the_rows_into_the_attempt_file(seeded, monkeypa
         assert worker.archive_decisions(con, jid) == 0
     text = (records.job_dir(jid) / "decisions_attempt1.md").read_text(encoding="utf-8")
     assert "Which Sierra office would you prefer?" in text and "New York" in text and records.decisions(jid) == []
+
+
+def test_a_job_resumed_after_a_restart_keeps_its_decisions(seeded, monkeypatch, tmp_path):
+    """Aerospace Corporation (2026-10-19): a reload requeued it mid-form; the archived decisions left the values on its
+    re-attached My Experience page unsourced and the gate refused the page."""
+    from goat import records, worker
+    monkeypatch.setattr(SETTINGS, "records_dir", tmp_path / "records")
+    jid = _queued_with_decisions(0, "TAB9")
+    db.event(jid, "job:requeued", {"reason": "restart while in flight"})
+    job = worker.claim_next()
+    assert job["id"] == jid
+    assert [d["value"] for d in records.decisions(jid)] == ["New York"]
+    # a requeue for any other reason (or with no tab) archives as before
+    with db.tx() as con:
+        con.execute("UPDATE jobs SET status=? WHERE id=?", (states.QUEUED, jid))
+    db.event(jid, "job:requeued", {"reason": "operator"})
+    job = worker.claim_next()
+    assert job["id"] == jid and records.decisions(jid) == []

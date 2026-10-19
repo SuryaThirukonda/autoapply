@@ -169,3 +169,28 @@ async def test_greenhouse_education_only_form_gets_no_blank_blocks(stored):
         assert await ex.page.evaluate("() => document.querySelectorAll('#education > div').length") == 1
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_page_gets_its_present_entries_sourced_again(stored):
+    """Aerospace Corporation (2026-10-19): after a restart the earlier attempt's decisions were archived and the filled
+    My Experience page it re-attached to held dates, descriptions and current-role boxes with no decision."""
+    ex = await _open(FIX / "workday" / "sections.html")
+    try:
+        f = _filler("workday", ex)
+        await snapshot.take(ex)
+        await f.run()
+        with db.tx() as con:
+            con.execute("DELETE FROM decisions WHERE job_id=1")
+        rep2 = await _filler("workday", ex).run()
+        assert rep2.added == [] and rep2.failed == []
+        recs = records.decisions(1)
+        labels = " | ".join(r["field_label"] for r in recs)
+        assert "start date" in labels and "role description" in labels and "currently work here" in labels
+        refs = {r["ref"] for r in recs}
+        info = await f.scan()
+        rev = next(e for e in _work(info["entries"]) if (e["fields"].get("companyName") or {}).get("value") == "Revio")
+        for name in ("startDate-dateSectionMonth-input", "startDate-dateSectionYear-input", "roleDescription", "currentlyWorkHere"):
+            assert rev["fields"][name]["ref"] in refs, name
+    finally:
+        await ex.close(close_browser=True)
