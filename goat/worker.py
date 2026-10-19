@@ -108,8 +108,9 @@ async def after_hold(job: dict, ctx, ex, reason: str) -> dict | None:
 
 
 async def readback_after_page(ctx, snap, job_id: int, page: int) -> list[str]:
-    """Advisory read-back after a page change: the decisions whose controls are still on screen are compared
-    with the live DOM (no scrolling) and the mismatches logged as gate:readback for the model and the audit."""
+    """Read-back of one page: the decisions made on `page` whose controls are in `snap` are compared with the
+    live DOM (no scrolling) and the mismatches logged as gate:readback. Called on the page itself, before the
+    click that leaves it (t_click), never after the swap."""
     from . import readback
     try:
         decs = records.decisions(job_id)
@@ -398,10 +399,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
                             break
                         await asyncio.sleep(0.5)
                     ctx.last_snapshot = snap
-                    mism = await readback_after_page(ctx, snap, job_id, ctx.page_no - 1)
-                    if mism:
-                        note += (" Read-back on the page you just left found values that differ from the decisions: "
-                                 + "; ".join(mism[:6]) + ". Go back and re-set them before submit, or the gate will refuse.")
+                    # (the page read-back runs in t_click BEFORE leaving a page: after the swap the old controls are gone)
                     pre = await adapter.prefill(ex, snap, client_job, ctx.page_no)
                     if client_job.get("resume_file"):
                         ctx.resume_file = client_job["resume_file"]

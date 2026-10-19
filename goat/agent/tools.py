@@ -358,6 +358,7 @@ class ToolDispatcher:
     def __init__(self, ctx: RunContext):
         self.ctx = ctx
 
+    NEXT_LABELS = ("next", "continue", "save and continue", "save & continue", "save", "proceed")
     TOOL_TIMEOUT_S = 240.0
     # tools that legitimately wait on Surya or on an email: their own deadline plus a margin
     WAITING_TOOLS = {"await_answers": "answer_wait_s", "ask_user": "answer_wait_s", "open_verification_link": "code_wait_s",
@@ -480,6 +481,13 @@ class ToolDispatcher:
         snap = self.ctx.last_snapshot
         for f in fields:
             item = snap.find(f.get("ref", "")) if snap else None
+            # A radio / checkbox option is logged as "question / option", so the log says WHICH option was ticked
+            # ('Were you previously employed at ABA?' = checked could be Yes or No; the judge read it as Yes, 2026-10-18).
+            if item and item.get("type") in ("radio", "checkbox") and item.get("group"):
+                opt = str(item.get("label") or "").strip()
+                lab = str(f.get("label") or item.get("group") or "").strip()
+                if opt and answers.norm(opt) not in answers.norm(lab):
+                    f = {**f, "label": f"{lab[:120]} / {opt[:60]}"}
             if (f.get("source") or "").lower() == "as_is":
                 # Surya set this field himself in Chrome (or answered "I already filled it out"): what the page
                 # shows IS his decision. Record it unchanged so the gate sees a sourced value (2026-10-18).
@@ -651,12 +659,24 @@ class ToolDispatcher:
                              "(or the email / password form), then call `credentials`."}, None
         if item and (item.get("type") in ("radio", "checkbox") or item.get("tag") in ("select", "dropdown", "toggle")):
             return {"error": "that is a choice control; set it with fill_batch (radio/checkbox/toggle, value from an answer_key) or choose (dropdown) so the decision has a source"}, None
+        if label.lower().strip() in self.NEXT_LABELS and self.ctx.control_failures.get(f"readback:{self.ctx.page_no}", 0) < 1:
+            # Read-back BEFORE leaving the page, while its controls still exist: once per page, a mismatch between a
+            # decision and what its control shows stops the click so it can be fixed (it never blocks twice).
+            from ..worker import readback_after_page
+            snap_now = await snapmod.take(self.ctx.ex)
+            self.ctx.last_snapshot = snap_now
+            mism = await readback_after_page(self.ctx, snap_now, self.ctx.job_id, self.ctx.page_no)
+            if mism:
+                self.ctx.control_failures[f"readback:{self.ctx.page_no}"] = 1
+                return {"error": "not clicked: before leaving this page, these fields show something other than what was decided: "
+                                 + "; ".join(mism[:6]) + ". Re-set them from their answer_keys (if the page shows the same answer in its own "
+                                 "wording, it is fine), then click again."}, None
         info = await self.ctx.ex.click_ref(ref)
         await self.ctx.ex.settle(quiet_ms=400)
         note = await self.ctx.ex.follow_new_tab()
         self.ctx.budget.step()
         new_url = self.ctx.ex.url
-        if info.get("tag") in ("button", "a") and label.lower().strip() in ("next", "continue", "save and continue", "save & continue", "save", "proceed"):
+        if info.get("tag") in ("button", "a") and label.lower().strip() in self.NEXT_LABELS:
             self.ctx.page_no += 1
         out = {"clicked": info.get("label") or label, "url": new_url}
         if note:

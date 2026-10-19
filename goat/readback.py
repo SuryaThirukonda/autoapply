@@ -129,8 +129,13 @@ def diff(decisions: list[dict], snap: Snapshot, page_no: int = 0) -> list[str]:
     latest: dict[str, dict] = {}
     for d in decisions:
         ref = d.get("ref") or ""
+        same_page = not page_no or int(d.get("page") or 0) == page_no
+        # Refs are only meaningful on the page they were made on: Workday swaps steps in place and hands the same
+        # e27 to School on page 3 that First Name had on page 1 (ABA, 2026-10-18). Other pages' decisions never pair.
+        if not same_page:
+            continue
         item = snap.refs.get(ref) if ref else None
-        if item is None and page_no and int(d.get("page") or 0) == page_no:
+        if item is None and page_no:
             item = _match_by_label(d, snap)
         if item is None:
             continue
