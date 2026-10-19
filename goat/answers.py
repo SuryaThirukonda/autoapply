@@ -109,6 +109,14 @@ def concrete_value(a: "Answer", *, company: str = "", posting_text: str = "", li
     if cond == "posting_lists_pay":
         hit = posting_pay(posting_text)
         return (when_true, f"the posting lists pay: {hit[:60]}") if hit else (when_false, "the posting lists no pay")
+    if cond == "no_prior_application":
+        # "Have you previously interviewed with X?" (HCSC, 2026-10-19): with no earlier application to X in the ledger the
+        # answer is No; after an earlier application only Surya knows, so it is asked
+        from . import ledger
+        n = ledger.company_application_count(company, exclude_listing=listing_id)
+        if not n:
+            return when_false, f"no earlier application to {company} in the ledger"
+        return None, f"{n} earlier application(s) to {company} in the ledger: whether he interviewed is his to say"
     if cond == "ledger_company":
         from . import ledger
         n = ledger.company_application_count(company, exclude_listing=listing_id)

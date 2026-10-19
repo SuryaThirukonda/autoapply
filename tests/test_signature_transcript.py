@@ -31,3 +31,17 @@ async def test_a_transcript_never_goes_into_a_graduate_slot(store):
     assert "graduate-school slot" in out["error"] and "Undergraduate Transcript" in out["error"]
     out, _ = await d.t_upload_resume("e35", "transcript")
     assert "graduate-school slot" not in str(out.get("error", ""))      # allowed (the test has no transcript file)
+
+
+def test_previously_interviewed_is_no_only_without_an_earlier_application(store):
+    from goat import db
+    answers.save_answer("preferences.interviewed_before", "(ask) / No", answer_type="conditional:no_prior_application",
+                        source="operator", aliases=["have you previously interviewed for employment with"])
+    a = answers.get("preferences.interviewed_before")
+    value, why = answers.concrete_value(a, company="Acme")
+    assert value == "No" and "no earlier application" in why
+    with db.tx() as con:
+        con.execute("INSERT INTO applications(listing_id, canonical_key, company, title, url, origin, submitted_at) "
+                    "VALUES('x1', 'acme|intern', 'Acme', 'Intern', 'https://x.example/1', 'goat', 1)")
+    value, why = answers.concrete_value(a, company="Acme")
+    assert value is None and "his to say" in why
