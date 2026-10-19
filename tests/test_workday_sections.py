@@ -90,3 +90,13 @@ def test_a_tenant_without_a_work_history_section_is_not_asked_for_entries(monkey
     review = "Review\nMy Information\nSurya Thirukonda\nMy Experience\nEducation\nTexas A&M University\nResume\nSurya_Thirukonda_Resume_SWE.pdf\n"
     assert ws.review_gaps(review) == []
     assert ws.review_gaps(review.replace("My Experience\n", "My Experience\nWork Experience\nRevio\n")) == ["work entry 2 (DeKalb Capital Management)"]
+
+
+def test_cplusplus_never_becomes_c():
+    """T-Mobile (2026-10-19): squashing punctuation turned C++ into 'c' and a 'C' chip was taken for it."""
+    from goat.adapters.workday_sections import pick_skill
+    from goat.browser import fill
+    assert pick_skill("C++", ["C", "C (Programming Language)", "C++ (Programming Language)"]) == "C++ (Programming Language)"
+    assert pick_skill("C++", ["C", "C (Programming Language)"]) is None
+    assert pick_skill("C#", ["C", "C# (Programming Language)"]) == "C# (Programming Language)"
+    assert not fill._chip_matches("C", ["C++"]) and fill._chip_matches("C++ (Programming Language)", ["C++"])

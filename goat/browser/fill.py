@@ -245,14 +245,22 @@ async def _remove_wrong_chips(ex: Executor, ref: str, keep="") -> int:
         return 0
 
 
+def lang_safe(s: str) -> str:
+    """'C++' -> 'cplusplus', 'C#' -> 'csharp', 'F#' -> 'fsharp': stripping punctuation must never turn them into 'C'
+    (T-Mobile's Skills got a 'C' chip for C++, 2026-10-19)."""
+    t = (s or "").lower()
+    t = re.sub(r"c\s*\+\s*\+", "cplusplus", t)
+    return re.sub(r"\b([cf])\s*#", r"\1sharp", t)
+
+
 def _chip_matches(chip: str, wants: list[str]) -> bool:
     """A selected chip equals one of the wanted wordings, or is one of them plus a parenthetical qualifier
     ("Python (Programming Language)" for "Python")."""
-    c = _norm(chip)
+    c = _norm(lang_safe(chip))
     for w in wants:
         if not w:
             continue
-        if c == _norm(w) or _squash(chip) == _squash(w):
+        if c == _norm(lang_safe(w)) or _squash(lang_safe(chip)) == _squash(lang_safe(w)):
             return True
         if re.fullmatch(re.escape(w.strip().lower()) + r"\s*(\(.*\))?", (chip or "").strip().lower()):
             return True

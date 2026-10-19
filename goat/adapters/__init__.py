@@ -519,7 +519,9 @@ class Workday(Adapter):
              "A resumed application opens at its last step: go_to_step('My Experience'), call fill_sections, then Save and Continue forward to Review. "
              "Date fields (graduation, employment dates) are three spinbuttons that ignore ordinary typing: always use "
              "`set_date` (graduation = education.graduation_mmddyyyy, i.e. 05/15/2028). Revio IS a current role: tick "
-             "'I currently work here' and leave its end date blank.")
+             "'I currently work here' and leave its end date blank. Certifications are optional: add his AWS Certified Cloud "
+             "Practitioner only when the Certification list offers it; if it does not (Axiom Space, Northrop Grumman list only "
+             "other AWS exams), delete that certification block and move on, never pick another certificate.")
 
     def is_review_page(self, snap: Snapshot) -> bool:
         return any(re.search(r"\breview\b", h, re.I) for h in snap.headings) or "review" in snap.url.lower()

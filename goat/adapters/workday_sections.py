@@ -578,11 +578,11 @@ class WorkdaySections:
 def pick_skill(skill: str, options: list[str]) -> str | None:
     """Exact wording first, then 'Skill (qualifier)', then '... (SKILL)' acronyms, then an unambiguous prefix.
     'SQL' must take 'Structured Query Language (SQL)', never 'SQLCLR'."""
-    w = answers.norm(skill)
+    w = answers.norm(fill.lang_safe(skill))
     if not w:
         return None
     for o in options:
-        if answers.norm(o) == w:
+        if answers.norm(fill.lang_safe(o)) == w:
             return o
     for o in options:
         # only qualifiers that cannot change the meaning: 'ReAct Framework' is not React, so 'framework' is not one
@@ -592,12 +592,12 @@ def pick_skill(skill: str, options: list[str]) -> str | None:
         if re.search(r"\(\s*" + re.escape(skill.strip()) + r"\s*\)", o, re.I):
             return o
     # 'React' -> 'React.js', 'Node' -> 'Node.js': the same thing once punctuation and a trailing js are squashed
-    sq = re.sub(r"[^a-z0-9]", "", skill.lower())
+    sq = re.sub(r"[^a-z0-9]", "", fill.lang_safe(skill))
     for o in options:
-        so = re.sub(r"[^a-z0-9]", "", o.lower())
+        so = re.sub(r"[^a-z0-9]", "", fill.lang_safe(o))
         if so in (sq, sq + "js") or (sq.endswith("js") and so == sq[:-2]):
             return o
-    starts = [o for o in options if answers.norm(o).startswith(w + " ")]
+    starts = [o for o in options if answers.norm(fill.lang_safe(o)).startswith(w + " ")]
     if len(starts) == 1:
         return starts[0]
     return None
