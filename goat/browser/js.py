@@ -178,13 +178,17 @@ JS_SNAPSHOT = r"""
           if (picked.length) { item.value = picked.join('; ').slice(0, 300); item.selected_items = picked.length; }
         }
         const isCombo = role === 'combobox' || el.getAttribute('aria-autocomplete') || el.hasAttribute('aria-expanded') || /react-select|__input/i.test(el.id || el.className || '');
-        if (isCombo && !item.value) {
+        // Oracle's cx-select input holds its own pick; the text around it is the label and error text, never a value
+        // (onsemi's empty Start Date Month read 'Month Year', 2026-10-19)
+        const ownValue = /cx-select-input/.test(String(el.className || ''));
+        if (isCombo && !item.value && !ownValue) {
           let c = el.closest('[class*="__control"], [class*="control"], [class*="Control"], [class*="__value-container"]');
           if (!c || !txt(c)) { c = null; let p = el.parentElement; for (let i = 0; i < 5 && p; i++, p = p.parentElement) { const t = txt(p); if (t && t.length < 240) { c = p; break; } } }
           const shown = c ? txt(c) : '';
           if (shown && !PLACEHOLDER.test(shown)) item.shown = shown.slice(0, 200);
           item.combo = true;
         }
+        if (isCombo && ownValue) item.combo = true;
         // A Workday prompt ("Search", "0 items selected") only keeps an option picked from its list: show it as a
         // combobox so it is worked with choose (Aerospace Corporation's Field of Study, 2026-10-19).
         if (!item.combo && (el.getAttribute('data-uxi-widget-type') === 'selectinput' || el.closest('[data-automation-id="multiSelectContainer"]'))) item.combo = true;
@@ -404,6 +408,7 @@ JS_PAGE_ERRORS = r"""
         if (c.tagName === 'SELECT') { if (c.value && c.selectedOptions.length && txt(c.selectedOptions[0])) return true; continue; }
         if (c.type === 'checkbox' || c.type === 'radio') { if (c.checked) return true; continue; }
         if (String(c.value || '').trim()) return true;
+        if (/cx-select-input/.test(String(c.className || ''))) continue;
         const box = c.closest && c.closest('[class*="__control"], [class*="control"], [class*="Control"], [class*="__value-container"]');
         const shown = box ? txt(box) : '';
         if (shown && !/^(select one|select\.\.\.|select|choose one|choose|search)$/i.test(shown)) return true;
@@ -479,7 +484,7 @@ JS_PAGE_ERRORS = r"""
         }
         if (empty) {
           const isCombo = el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') || el.hasAttribute('aria-expanded') || /react-select|__input/i.test(el.id || el.className || '');
-          if (isCombo) {
+          if (isCombo && !/cx-select-input/.test(String(el.className || ''))) {
             let c = el.closest('[class*="__control"], [class*="control"], [class*="Control"], [class*="__value-container"]');
             if (!c || !txt(c)) { c = null; let p = el.parentElement; for (let i = 0; i < 5 && p; i++, p = p.parentElement) { const t = txt(p); if (t && t.length < 240) { c = p; break; } } }
             const shown = c ? txt(c) : '';
@@ -700,7 +705,7 @@ JS_READ_REF = r"""
   else if ('value' in el) value = (el.value || '').slice(0, 300);
   else value = txt(el).slice(0, 300);
   let shown = '';
-  const c = el.closest('[class*="__control"], [class*="control"], [class*="Control"], [data-automation-id^="formField"], .field, .form-group');
+  const c = /cx-select-input/.test(String(el.className || '')) ? null : el.closest('[class*="__control"], [class*="control"], [class*="Control"], [data-automation-id^="formField"], .field, .form-group');
   if (c) shown = txt(c).slice(0, 300);
   el.scrollIntoView({ block: 'center', inline: 'nearest' });
   let r2 = el.getBoundingClientRect();
@@ -735,7 +740,7 @@ JS_READ_REFS = r"""
       out[ref] = { value: txt(el).slice(0, 300) };
     else if ('value' in el) out[ref] = { value: (el.value || '').slice(0, 300) };
     else out[ref] = { value: txt(el).slice(0, 300) };
-    const c = el.closest('[class*="__control"], [class*="control"], [class*="Control"]');
+    const c = /cx-select-input/.test(String(el.className || '')) ? null : el.closest('[class*="__control"], [class*="control"], [class*="Control"]');
     if (c && tag === 'input' && out[ref].value === '') { const s = txt(c).slice(0, 300); if (s && !PLACEHOLDER.test(s)) out[ref].shown = s; }
   }
   return JSON.stringify(out);

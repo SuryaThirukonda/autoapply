@@ -226,3 +226,19 @@ def test_only_the_newest_decision_on_a_control_is_judged(tmp_path):
     assert any("attestation not from a standing answer" in r for r in reasons())
     records.record_decision(1, 1, "Acknowledge NASA export-control screening", "Yes", "standing:consent.privacy_notice", "e31")
     assert not any("attestation not from a standing answer" in r for r in reasons())
+
+
+
+def test_an_oracle_resume_listed_beside_remove_resume_counts_as_attached(store):
+    """onsemi and Vertiv (2026-10-19): Oracle empties 'Import your profile from resume' after the upload and lists the
+    file under Supporting Documents beside 'Remove Resume'."""
+    job = _job()
+    items = [{"ref": "e3", "tag": "input", "type": "file", "label": "Import your profile from resume", "value": ""},
+             {"ref": "e1", "tag": "button", "label": "Submit", "submitish": True}]
+    text = "Supporting Documents and URLs\nSurya_Thirukonda_Resume_SWE.pdf\nRemove Resume\nUpload Cover Letter\nSubmit"
+    g = run_gate(job=job, snapshot=_snap(items), page_text=text, expected_resume="Surya_Thirukonda_Resume_SWE.pdf",
+                 free_text_answers=[], portal="oracle", page_no=1)
+    assert not any("resume" in r.lower() for r in g.reasons), g.reasons
+    g = run_gate(job=job, snapshot=_snap(items), page_text="Supporting Documents and URLs\nUpload Cover Letter\nSubmit",
+                 expected_resume="Surya_Thirukonda_Resume_SWE.pdf", free_text_answers=[], portal="oracle", page_no=1)
+    assert any("resume not attached" in r for r in g.reasons), g.reasons

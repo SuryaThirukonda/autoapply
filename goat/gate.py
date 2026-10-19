@@ -171,6 +171,10 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
                     and not re.search(r"cover|transcript", " ".join([fi.get("label") or "", fi.get("name") or ""]), re.I)]
     if resume_slots:
         shown = " ".join((fi.get("value") or "") for fi in resume_slots).lower()
+        if not shown and expected_resume and expected_resume.lower() in (page_text or "").lower():
+            # Oracle empties its import input and lists the uploaded file as text beside 'Remove Resume' (onsemi and
+            # Vertiv were held on an attached résumé, 2026-10-19)
+            shown = expected_resume.lower()
         if not shown:
             reasons.append("resume not attached: the Resume/CV slot is empty (call upload_resume on its ref)")
         elif expected_resume and expected_resume.lower() not in shown:
