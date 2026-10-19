@@ -75,6 +75,70 @@ def inferred_decisions(job_id: int, limit: int = 12) -> list[dict]:
     return out
 
 
+def archived_rows(job_id: int) -> list[dict]:
+    """Every decision the worker archived from earlier attempts (decisions_attemptN.md), oldest attempt first;
+    each row carries its attempt number."""
+    try:
+        files = sorted(job_dir(job_id).glob("decisions_attempt*.md"), key=lambda p: int(p.stem.rsplit("attempt", 1)[1]))
+    except Exception:
+        return []
+    out: list[dict] = []
+    for f in files:
+        attempt = int(f.stem.rsplit("attempt", 1)[1])
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("| ") or line.startswith(("| Page", "|---")):
+                continue
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) < 5:
+                continue
+            out.append({"page": cells[0], "field_label": cells[1], "value": "|".join(cells[2:-2]).strip(),
+                        "source": cells[-2], "archived": True, "attempt": attempt})
+    return out
+
+
+def _question_part(label: str) -> str:
+    """'Previously employed? / No' -> 'previously employed?': radio and checkbox decisions name question / option."""
+    return str(label or "").split(" / ", 1)[0].strip().lower()
+
+
+def answer_set(job_id: int) -> list[dict]:
+    """The application's answers as one list: archived attempts first (a resumed draft keeps what an earlier
+    attempt typed), then this attempt's decisions. A later attempt replaces every earlier entry for a question it
+    answered (so an old 'Q / Yes' does not survive a newer 'Q / No'); within one attempt the newest per label wins."""
+    rows = archived_rows(job_id) + [{**d, "archived": False, "attempt": 10 ** 6} for d in decisions(job_id)]
+    by_attempt: dict[int, list[dict]] = {}
+    for r in rows:
+        by_attempt.setdefault(int(r.get("attempt") or 0), []).append(r)
+    latest: dict[str, dict] = {}
+    for att in sorted(by_attempt):
+        batch = [r for r in by_attempt[att] if str(r.get("field_label") or "").strip()]
+        questions = {_question_part(r["field_label"]) for r in batch}
+        for label in [k for k in latest if _question_part(k) in questions]:
+            del latest[label]
+        for r in batch:
+            label = str(r["field_label"]).strip()
+            latest.pop(label, None)
+            latest[label] = r
+    return list(latest.values())
+
+
+def unconfirmed_answers(job_id: int, company: str = "", ats: str = "", limit: int = 30) -> list[dict]:
+    """The answers on this application that Surya never confirmed (see answers.unconfirmed_source), with the
+    evidence the agent had, for the fact check before an automatic submit."""
+    from . import answers
+    out = []
+    for d in answer_set(job_id):
+        val = str(d.get("value") or "")
+        if val in ("", "(set)"):
+            continue
+        unconfirmed, evidence = answers.unconfirmed_source(d.get("source"), company, ats)
+        if not unconfirmed:
+            continue
+        out.append({"label": str(d.get("field_label") or "")[:120], "value": val[:1500], "source": str(d.get("source") or "")[:80],
+                    "evidence": evidence, "archived": bool(d.get("archived"))})
+    return out[:limit]
+
+
 def inferred_text(items: list[dict], max_chars: int = 300) -> str:
     """The tail of a finish message: the inferred decisions and how to confirm or fix them."""
     if not items:

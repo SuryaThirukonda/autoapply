@@ -27,12 +27,15 @@ def claim_next() -> dict | None:
     """Released holds first (priority bump), then newest listings. One claim at a time."""
     lanes = SETTINGS.lanes_enabled or ["no_account"]
     marks = ",".join("?" for _ in lanes)
+    # portals the worker never claims (SKIP_ATS; iCIMS by default: an hCaptcha guards its account creation)
+    skip = [a.lower() for a in (SETTINGS.skip_ats or [])] or ["-"]
+    skip_marks = ",".join("?" for _ in skip)
     with db.tx() as con:
         row = con.execute(
             f"SELECT j.*, l.company, l.title, l.url, l.ats, l.variant FROM jobs j JOIN listings l ON l.id=j.listing_id "
-            f"WHERE j.status=? AND j.attempts < ? AND j.lane IN ({marks}) "
+            f"WHERE j.status=? AND j.attempts < ? AND j.lane IN ({marks}) AND LOWER(COALESCE(l.ats, '')) NOT IN ({skip_marks}) "
             "ORDER BY j.priority DESC, l.date_posted DESC, j.created_at DESC LIMIT 1",
-            (states.QUEUED, SETTINGS.budgets.max_attempts, *lanes)).fetchone()
+            (states.QUEUED, SETTINGS.budgets.max_attempts, *lanes, *skip)).fetchone()
         if not row:
             return None
         job = dict(row)
@@ -79,7 +82,7 @@ def attempt_history(job_id: int, listing_id: str) -> list[str]:
 async def after_hold(job: dict, ctx, ex, reason: str) -> dict | None:
     """What follows a hold: a screenshot and a notification for ordinary holds; for a shadow draft (the gate
     passed, no click) the judge's verdict instead, stored with the job and logged as job:judged."""
-    from .judge import Judge, should_judge
+    from .judge import should_judge
     job_id = job["id"]
     if not should_judge(reason):
         try:
@@ -89,22 +92,8 @@ async def after_hold(job: dict, ctx, ex, reason: str) -> dict | None:
         except Exception:
             pass
         return None
-    verdict = None
-    try:
-        png = await ex.screenshot_png()
-        records.save_screenshot(job_id, png, "shadow")
-        text = await ex.page_text(20000)
-        try:
-            outline = snapmod.render(await snapmod.take(ex))
-        except Exception:
-            outline = ""
-        verdict = await Judge(client=getattr(getattr(ctx, "classifier", None), "client", None)).judge(
-            job_id, records.decisions(job_id), png, text, getattr(ctx, "gate_result", None), outline=outline)
-    except Exception as e:  # noqa: BLE001 - the hold is already recorded; the judge is extra evidence
-        db.event(job_id, "judge:error", {"error": str(e)[:300]})
-    if verdict:
-        db.event(job_id, "job:judged", {"verdict": verdict["verdict"], "bucket": verdict["bucket"], "notes": verdict["notes"][:500], "fields": verdict.get("fields", [])[:12]})
-    return verdict
+    from .judge import judge_page
+    return await judge_page(job, ctx, ex, shot="shadow")
 
 
 async def readback_after_page(ctx, snap, job_id: int, page: int) -> list[str]:
@@ -130,6 +119,39 @@ def set_status(job_id: int, status: str, *, reason: str | None = None, blocked_o
                     "updated_at=?, finished_at=CASE WHEN ? THEN ? ELSE finished_at END WHERE id=?",
                     (status, reason, (blocked_on or [None])[0], tab_target_id, db.now(), int(finished), db.now(), job_id))
     db.event(job_id, f"job:{status}", {"reason": reason, "blocked_on": blocked_on, **(extra or {})})
+
+
+def judge_summary(verdict: dict | None) -> dict | None:
+    """The judge's verdict as a finish event carries it (Telegram shows it under the message)."""
+    if not verdict:
+        return None
+    return {"verdict": verdict.get("verdict"), "bucket": verdict.get("bucket"), "notes": str(verdict.get("notes") or "")[:300],
+            "unsupported": [str(u)[:160] for u in (verdict.get("unsupported") or [])[:6]]}
+
+
+def is_draft_hold(reason: str) -> bool:
+    """A hold on a finished draft: shadow mode, or a verified auto-submit that wants Surya's OK."""
+    return str(reason or "").startswith(("shadow_mode", "review_needed"))
+
+
+async def hold_extra(job: dict, ctx, ex, reason: str) -> dict | None:
+    """What a draft hold's event carries: the unconfirmed answers and the judge's verdict. A review_needed draft
+    was judged by the submit check already (never twice); a shadow draft is judged here."""
+    if not is_draft_hold(reason):
+        return None
+    verdict = getattr(ctx, "verdict", None) if getattr(ctx, "judged", False) else await after_hold(job, ctx, ex, reason)
+    extra = finish_extra(int(job["id"]))
+    if verdict:
+        extra = {**extra, "judge": judge_summary(verdict)}
+    return extra
+
+
+def submitted_extra(job_id: int, ctx) -> dict:
+    """What a submitted event carries; an automatic submit says so, with the verdict that cleared it."""
+    extra = finish_extra(job_id)
+    if getattr(ctx, "auto_submitted", False):
+        extra = {**extra, "auto": True, "judge": judge_summary(getattr(ctx, "verdict", None))}
+    return extra
 
 
 def finish_extra(job_id: int) -> dict:
@@ -306,6 +328,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
     mail, creds = _helpers()
     client_job = {**job, "resume_file": None}
     ctx = RunContext(job=client_job, ex=ex, budget=budget, classifier=Classifier(), mail=mail, creds=creds)
+    ctx.shadow_only = shadow_override is True
     outcome = RunOutcome(states.HOLD, "unknown")
     tab_id = None
     try:
@@ -414,7 +437,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
                 continue
             if res.outcome == "submitted":
                 app_id = ledger.record_application(job["listing_id"], job["company"], job["title"], job["url"], "goat", signal=res.reason)
-                set_status(job_id, states.SUBMITTED, reason=None, finished=True, extra=finish_extra(job_id))
+                set_status(job_id, states.SUBMITTED, reason=None, finished=True, extra=submitted_extra(job_id, ctx))
                 png = await ex.screenshot_png()
                 records.save_screenshot(job_id, png, "submitted")
                 outcome = RunOutcome(states.SUBMITTED, res.reason)
@@ -436,13 +459,10 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             except Exception:
                 pass
         else:
-            shadow = reason.startswith("shadow_mode")
+            shadow = is_draft_hold(reason)
             # A shadow draft is judged BEFORE the hold is announced, so the finish message carries the verdict
             # (the Telegram worker formats it the moment the hold event arrives).
-            verdict = await after_hold(job, ctx, ex, reason) if shadow else None
-            extra = finish_extra(job_id) if shadow else None
-            if verdict:
-                extra = {**(extra or {}), "judge": {"verdict": verdict["verdict"], "bucket": verdict["bucket"], "notes": verdict["notes"][:300]}}
+            extra = await hold_extra(job, ctx, ex, reason)
             set_status(job_id, states.HOLD, reason=reason, blocked_on=p.blocked_on, tab_target_id=tab_id, extra=extra)
             outcome = RunOutcome(states.HOLD, reason)
             if not shadow:

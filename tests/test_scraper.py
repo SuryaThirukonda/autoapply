@@ -56,6 +56,16 @@ def test_ingest_creates_jobs_by_lane(fresh_db):
     assert kinds.count("listing:new") == 3
 
 
+def test_a_skipped_portal_gets_a_closed_job_not_a_queued_one(fresh_db, monkeypatch):
+    from goat.config import SETTINGS
+    monkeypatch.setattr(SETTINGS, "skip_ats", ["icims"])
+    ic = _row("ic-1", "Peraton", "Software Engineer Intern", "https://careers-peraton.icims.com/jobs/1234/software-engineer-intern/job")
+    scraper.ingest([GH, ic], first_run=False)
+    job = _job("ic-1")
+    assert job is not None and job["status"] == states.DEAD and job["hold_reason"].startswith("skipped: icims is not run")
+    assert job["finished_at"] and _job("gh-1")["status"] == states.QUEUED
+
+
 def test_reingest_inactive_closes_job(fresh_db):
     scraper.ingest([GH], first_run=False)
     closed = dict(GH, active=False)

@@ -220,6 +220,29 @@ def decision_tier(source: str | None, field_label: str = "", company: str = "", 
     return "inferred"
 
 
+def unconfirmed_source(source: str | None, company: str = "", ats: str = "") -> tuple[bool, str]:
+    """Whether a recorded decision's value still needs checking before an automatic submit, and the evidence
+    the agent had for it. Unconfirmed: text the agent wrote (generated), its own judgment, a value kept as the
+    page showed it (user:manual), and a standing answer whose stored source is derived, default_no, profile or
+    classifier (the stored note says how it was derived). Confirmed: Surya's questionnaire, Telegram and web
+    answers, the reviewed answer bank, the résumé, adapter fills from standing answers, account policy."""
+    s = (source or "").strip()
+    low = s.lower()
+    if low.startswith(("standing:", "approved_wording:")):
+        key = s.split(":", 1)[1].split(" ", 1)[0].strip()
+        a = get(key, company, ats)
+        if a is None:
+            return True, ""
+        src = (a.source or "").lower()
+        confirmed = any(src.startswith(p) for p in CONFIRMED_SOURCES) and not any(src.startswith(p) for p in INFERRED_SOURCES)
+        return (False, "") if confirmed else (True, str(a.note or "")[:400])
+    if low.startswith(("bank:", "policy:", "resume", "adapter", "cleared", "seed:", "operator", "user:surya", "user:telegram", "user:web")):
+        return False, ""
+    if low.startswith("user:manual"):
+        return True, "kept as the page showed it"
+    return True, ""
+
+
 def save_answer(key: str, answer: str | None, *, answer_type: str = "text", source: str,
                 source_ref: str = "", scope: str = "global", scope_value: str = "",
                 note: str | None = None, approved: bool = True,

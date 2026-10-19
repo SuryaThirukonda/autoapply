@@ -58,8 +58,10 @@ async def test_next_is_stopped_once_when_a_field_drifted_and_goes_through_the_se
         out, _ = await d.t_click(nxt, "Next")              # never blocks twice on the same page
         assert "error" not in out and ctx.page_no == 2
         assert await ex.page.evaluate("() => window.__nexts || 0") == 1
+        # the second click re-checks: what still differs is kept, and the verified auto-submit refuses while it remains
         evs = db.connect().execute("SELECT COUNT(*) FROM events WHERE kind='gate:readback'").fetchone()[0]
-        assert evs == 1
+        assert evs == 2
+        assert list(ctx.readback_open) == [1] and "First Name" in ctx.readback_open[1][0]
     finally:
         await ex.close(close_browser=True)
 
@@ -75,8 +77,9 @@ async def test_a_clean_page_is_left_at_once(store, tmp_path):
         ctx.last_snapshot = snap
         await ex.page.fill("#fn", "Surya")
         records.record_decision(job["id"], ctx.page_no, "First Name*", "Surya", "standing:identity.first_name", _ref(snap, "First Name"))
+        ctx.readback_open = {1: ["stale"]}                 # a page fixed before it was left clears its entry
         out, _ = await d.t_click(_ref(snap, "Next"), "Next")
-        assert "error" not in out and ctx.page_no == 2
+        assert "error" not in out and ctx.page_no == 2 and ctx.readback_open == {}
     finally:
         await ex.close(close_browser=True)
 

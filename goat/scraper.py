@@ -87,14 +87,19 @@ _INSERT_LISTING = (
 )
 
 
+SKIPPED_PORTAL_REASON = "skipped: {ats} is not run (SKIP_ATS; iCIMS needs a CAPTCHA at account creation)"
+
+
 def _insert_job(con, listing_id: str, *, ats: str, variant: str, url: str, priority: int = 0,
                 created_at: int | None = None) -> int:
     ts = db.now()
+    # a portal the worker never claims (SKIP_ATS) gets its job closed at once, so it never sits in the queue
+    skipped = (ats or "").lower() in [a.lower() for a in (SETTINGS.skip_ats or [])]
     cur = con.execute(
-        "INSERT INTO jobs(listing_id,status,lane,priority,attempts,apply_url,resume_variant,created_at,updated_at)"
-        " VALUES(?,?,?,?,0,?,?,?,?)",
-        (listing_id, states.QUEUED, triage.lane_for(ats), priority, url, variant or "swe",
-         created_at or ts, ts))
+        "INSERT INTO jobs(listing_id,status,lane,priority,attempts,apply_url,resume_variant,created_at,updated_at,hold_reason,finished_at)"
+        " VALUES(?,?,?,?,0,?,?,?,?,?,?)",
+        (listing_id, states.DEAD if skipped else states.QUEUED, triage.lane_for(ats), priority, url, variant or "swe",
+         created_at or ts, ts, SKIPPED_PORTAL_REASON.format(ats=ats) if skipped else None, ts if skipped else None))
     return cur.lastrowid
 
 

@@ -142,6 +142,11 @@ class RunContext:
     consent_page_key: str = ""
     resolved: dict = field(default_factory=dict)   # norm(question) -> resolver outcome this run
     control_failures: dict = field(default_factory=dict)   # ref -> failed choose / set_date calls this run
+    readback_open: dict = field(default_factory=dict)      # page -> read-back mismatches still showing when the run left it
+    verdict: dict | None = None    # the judge's verdict from the submit check (verify.verify)
+    judged: bool = False           # the judge ran this run (a held draft is not judged twice)
+    auto_submitted: bool = False   # the verified auto-submit clicked Submit
+    shadow_only: bool = False      # run-once --shadow: never auto-submit
 
     @property
     def job_id(self) -> int:
@@ -366,11 +371,14 @@ class ToolDispatcher:
     WAITING_TOOLS = {"await_answers": "answer_wait_s", "ask_user": "answer_wait_s", "open_verification_link": "code_wait_s",
                      "open_password_reset_link": "code_wait_s", "enter_email_code": "code_wait_s"}
 
+    # submit may run the verification (one judge call) before its click
+    SLOW_TOOLS = {"submit": 480.0}
+
     def tool_timeout_s(self, name: str) -> float:
         attr = self.WAITING_TOOLS.get(name)
         if attr:
             return float(getattr(SETTINGS.budgets, attr, 900)) + 120.0
-        return self.TOOL_TIMEOUT_S
+        return self.SLOW_TOOLS.get(name, self.TOOL_TIMEOUT_S)
 
     async def dispatch(self, name: str, arguments: str) -> tuple[str, bytes | None]:
         """Returns (json text for the model, optional image bytes to attach)."""
@@ -688,18 +696,23 @@ class ToolDispatcher:
                              "(or the email / password form), then call `credentials`."}, None
         if item and (item.get("type") in ("radio", "checkbox") or item.get("tag") in ("select", "dropdown", "toggle")):
             return {"error": "that is a choice control; set it with fill_batch (radio/checkbox/toggle, value from an answer_key) or choose (dropdown) so the decision has a source"}, None
-        if label.lower().strip() in self.NEXT_LABELS and self.ctx.control_failures.get(f"readback:{self.ctx.page_no}", 0) < 1:
-            # Read-back BEFORE leaving the page, while its controls still exist: once per page, a mismatch between a
-            # decision and what its control shows stops the click so it can be fixed (it never blocks twice).
+        if label.lower().strip() in self.NEXT_LABELS:
+            # Read-back BEFORE leaving the page, while its controls still exist. A mismatch between a decision and what
+            # its control shows stops the first click so it can be fixed (it never blocks twice); whatever still differs
+            # when the page is left is kept, and the verified auto-submit refuses while any remains.
             from ..worker import readback_after_page
             snap_now = await snapmod.take(self.ctx.ex)
             self.ctx.last_snapshot = snap_now
             mism = await readback_after_page(self.ctx, snap_now, self.ctx.job_id, self.ctx.page_no)
-            if mism:
+            if mism and self.ctx.control_failures.get(f"readback:{self.ctx.page_no}", 0) < 1:
                 self.ctx.control_failures[f"readback:{self.ctx.page_no}"] = 1
                 return {"error": "not clicked: before leaving this page, these fields show something other than what was decided: "
                                  + "; ".join(mism[:6]) + ". Re-set them from their answer_keys (if the page shows the same answer in its own "
                                  "wording, it is fine), then click again."}, None
+            if mism:
+                self.ctx.readback_open[self.ctx.page_no] = mism
+            else:
+                self.ctx.readback_open.pop(self.ctx.page_no, None)
         info = await self.ctx.ex.click_ref(ref)
         await self.ctx.ex.settle(quiet_ms=400)
         note = await self.ctx.ex.follow_new_tab()
@@ -1251,8 +1264,18 @@ class ToolDispatcher:
                 con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), ctx.job_id))
             return {"status": "blocked", "gate": "blocked", "fix_these_then_call_submit_again": gate.reasons}, None
         if gate.result == "pass_shadow":
-            ctx.submitted = {"status": "shadow", "gate": gate.as_dict()}
-            raise Parked("shadow_mode: gate passed; stopping before the final click", "hold")
+            if not (SETTINGS.auto_submit_on() and not ctx.shadow_only):
+                ctx.submitted = {"status": "shadow", "gate": gate.as_dict()}
+                raise Parked("shadow_mode: gate passed; stopping before the final click", "hold")
+            # Verified auto-submit (Surya 2026-10-18): submit only when every check agrees the information is correct;
+            # otherwise hold it for his OK on Telegram (goat/verify.py).
+            from ..verify import verify
+            v = await verify(ctx, ctx.ex)
+            if not v.ok:
+                ctx.submitted = {"status": "review_needed", "gate": gate.as_dict()}
+                raise Parked("review_needed: " + v.summary(), "hold")
+            db.event(ctx.job_id, "auto_submit:verified", {"unconfirmed": v.unconfirmed, "judge": (v.verdict or {}).get("verdict")})
+            ctx.auto_submitted = True
         res = await do_submit(ctx.ex, ctx.job_id, label=button_label or "")
         db.event(ctx.job_id, f"submit:{res.status}", res.as_dict())
         if res.status == "submitted":

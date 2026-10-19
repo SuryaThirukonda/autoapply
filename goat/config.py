@@ -204,6 +204,15 @@ class Settings:
     live_portals: list = field(default_factory=lambda: [
         p.strip() for p in _env("LIVE_PORTALS", "").split(",") if p.strip()
     ])
+    # Verified auto-submit (Surya 2026-10-18): "verified" submits a shadow draft at once when the gate, the read-back
+    # on every page, the judge (with a fact check of every unconfirmed answer against the profile) and the question
+    # log all agree; anything short of that holds as review_needed with a Submit button on Telegram. "off" keeps
+    # the plain shadow hold.
+    auto_submit: str = _env("AUTO_SUBMIT", "off")
+    # Portals the worker never claims: iCIMS puts an hCaptcha in front of account creation (Surya 2026-10-18).
+    skip_ats: list = field(default_factory=lambda: [
+        p.strip().lower() for p in _env("SKIP_ATS", "icims").split(",") if p.strip()
+    ])
     simplify_prefill: bool = _env_bool("SIMPLIFY_PREFILL", False)
     # Lanes the worker may claim. The account lane (Workday/Oracle/iCIMS) needs Bitwarden + Gmail;
     # enable it in Phase 3. Build order per the memo: no-account portals first.
@@ -228,6 +237,9 @@ class Settings:
 
     def portal_is_live(self, portal: str) -> bool:
         return self.mode == "live" and portal in self.live_portals
+
+    def auto_submit_on(self) -> bool:
+        return (self.auto_submit or "").strip().lower() == "verified"
 
     def wall_budget_s(self, portal: str) -> int:
         return self.budgets.wall_s_by_portal.get(portal, self.budgets.wall_s_default)

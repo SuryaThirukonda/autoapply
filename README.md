@@ -43,6 +43,13 @@ draft is in the dashboard job drawer and `records/<job>/decisions.md`; Surya rev
 is switched live. A reviewed draft is submitted with `python -m goat release <job>` (or the chat's `release`, or the website's
 Release button); nothing else leaves shadow mode. Answers the agent still needs: [docs/QUESTIONNAIRE.md](docs/QUESTIONNAIRE.md).
 
+**Verified auto-submit** (`AUTO_SUBMIT=verified`, Surya 2026-10-18): a draft is submitted on its own only when every
+check agrees the information is correct: the code gate, the read-back on every page (no field shows something other
+than its decision), no unanswered question, and the judge's pass with a fact check of every unconfirmed answer (essays
+the agent wrote, derived answers, defaults) against `config/profile.md`. Anything short of that holds as
+`review_needed`, and Telegram sends a "Needs your OK" message with a Submit button (a reply "submit" works too).
+`goat run-once --shadow` never auto-submits; iCIMS is not run (`SKIP_ATS`).
+
 ## What you need to add before testing (all in `.env`)
 
 1. `OPENAI_API_KEY`. Then run the Phase-0 API checks (disputed behaviours: computer tool per model,
