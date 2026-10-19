@@ -108,6 +108,7 @@ class AgentLoop:
         self.steps = 0
         self.retried_step = False
         self.plain_text_questions = 0
+        self.idle_steps = 0          # consecutive model steps without a tool call
 
     # ------------------------------------------------------------------ prefix
     def _prefix(self, attempt_history: list[str]) -> list[dict]:
@@ -313,6 +314,13 @@ class AgentLoop:
                         reply = ("If this is a question for Surya, call ask_user with it. If the page is finished, call submit. "
                                  "If you cannot proceed, call park with a named reason. Do not answer in prose.")
                     self.items.append({"role": "user", "content": [{"type": "input_text", "text": reply}]})
+            if produced_tool:
+                self.idle_steps = 0
+            else:
+                self.idle_steps += 1
+                if self.idle_steps >= 6:
+                    # American Express (2026-10-19): eight minutes of reasoning-only replies every 3 s, with no step cap
+                    raise Parked("stuck: the model returned no tool call six times in a row", "hold")
             if not produced_tool and resp.output and all(getattr(o, "type", "") == "reasoning" for o in resp.output):
                 self.items.append({"role": "user", "content": [{"type": "input_text", "text": "Continue with a tool call."}]})
 
