@@ -37,6 +37,7 @@ AS_IS = "AS_IS"
 # 2026-10-19). It is entered once and never stored as an answer.
 CODE_PREFIX = "code."
 CODE_MIN_WAIT_S = 600
+PROVIDED_CODE_TTL_S = 1200
 USED = "(used)"
 
 
@@ -399,6 +400,42 @@ class QuestionBroker:
             return None
         code = re.sub(r"[^A-Za-z0-9]", "", str(r["answer"]))
         return code or None
+
+    def provide_code(self, job_id: int, code: str, source: str = "web") -> dict:
+        """A code Surya typed in the website's code box for an application, asked for or not (2026-10-19): it answers
+        the job's open code question, else it waits for the next code prompt on that job (20 minutes)."""
+        text = (code or "").strip()
+        if not re.sub(r"[^A-Za-z0-9]", "", text):
+            return {"ok": False, "reason": "empty_code", "message": "Type the code first."}
+        row = db.connect().execute(
+            "SELECT id FROM pending_questions WHERE job_id=? AND key LIKE ? AND answered_at IS NULL ORDER BY id DESC LIMIT 1",
+            (int(job_id), CODE_PREFIX + "%")).fetchone()
+        if row:
+            out = self.answer_pending(int(row["id"]), text, source=source)
+            db.event(int(job_id), "code:provided", {"via": source, "answered_question": int(row["id"])})
+            return {"ok": bool(out.get("ok")), "message": "Sent: the agent types it into the form now." if out.get("ok") else "Not taken."}
+        now = db.now()
+        with db.tx() as con:
+            con.execute("INSERT INTO pending_questions(job_id,key,question,options,field_type,asked_at,deadline_at,answered_at,answer)"
+                        " VALUES(?,?,?,?,?,?,?,?,?)",
+                        (int(job_id), f"{CODE_PREFIX}{int(job_id)}.{now}", "Verification code typed on the website", None, "code",
+                         now, now + PROVIDED_CODE_TTL_S, now, text))
+        db.event(int(job_id), "code:provided", {"via": source, "waiting": True})
+        self._wake(int(job_id))
+        return {"ok": True, "message": "Saved: the agent uses it the next time this application asks for a code (within 20 minutes)."}
+
+    @staticmethod
+    def recent_code(job_id: int, within_s: int | None = None) -> tuple[str, str] | None:
+        """(key, code) of the newest code Surya provided for this job that is still unused and fresh."""
+        since = db.now() - int(within_s or PROVIDED_CODE_TTL_S)
+        r = db.connect().execute(
+            "SELECT key, answer FROM pending_questions WHERE job_id=? AND key LIKE ? AND answered_at >= ? AND answer IS NOT NULL "
+            "AND answer NOT IN (?, ?) ORDER BY answered_at DESC, id DESC LIMIT 1",
+            (int(job_id), CODE_PREFIX + "%", since, USED, AS_IS)).fetchone()
+        if not r:
+            return None
+        code = re.sub(r"[^A-Za-z0-9]", "", str(r["answer"]))
+        return (r["key"], code) if code else None
 
     @staticmethod
     def mark_code_used(job_id: int, key: str) -> None:

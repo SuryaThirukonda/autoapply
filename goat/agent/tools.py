@@ -1532,6 +1532,21 @@ class ToolDispatcher:
             con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.AWAITING_CODE, db.now(), self.ctx.job_id))
         # A run that resumes on a code page did not request the code itself: Coinbase's arrived 7 minutes before the
         # rerun asked for it and a 3-minute look-back missed it (2026-10-19).
+        # A code Surya already typed in the website's code box for this application comes first.
+        given = BROKER.recent_code(self.ctx.job_id)
+        if given:
+            key, code = given
+            ok = await fill.type_code_into(self.ctx.ex, code_refs, code)
+            BROKER.mark_code_used(self.ctx.job_id, key)
+            with db.tx() as con:
+                con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))
+            self.ctx.budget.step()
+            for r in (code_refs or [None]):
+                records.record_decision(self.ctx.job_id, self.ctx.page_no, "emailed verification code", "(set)",
+                                        "user:verification_code", r or "")
+            db.event(self.ctx.job_id, "code:entered_from_surya", {"boxes": len(code_refs or []), "provided": True})
+            return {"status": "entered" if ok else "entered_unverified", "via": "the code Surya typed on the website",
+                    "next": "take a snapshot, then call submit once more"}, None
         after_ts = self.ctx.code_requested_at or (db.now() - 900)
         fetch = self.ctx.mail.fetch_code
         try:

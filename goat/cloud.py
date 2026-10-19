@@ -614,6 +614,10 @@ class CloudLink:
             if not out.get("ok"):
                 out["message"] = "Already answered, or no longer waiting." if out.get("reason") == "no_pending_question" else out.get("reason")
             return out
+        if kind == "provide_code":
+            if not p.get("job_id"):
+                return {"ok": False, "message": "No application named."}
+            return BROKER.provide_code(int(p["job_id"]), str(p.get("code") or ""), source=by)
         if kind == "decline_question":
             out = BROKER.hold_pending(int(p["question_id"]), source=by)
             if not out.get("ok"):

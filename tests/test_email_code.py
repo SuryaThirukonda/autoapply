@@ -88,3 +88,46 @@ async def test_no_email_asks_surya_for_the_code_and_types_his_answer(tmp_path, m
     assert db.connect().execute("SELECT answer FROM pending_questions WHERE id=?", (row["id"],)).fetchone()[0] == "(used)"
     decs = [d for d in records.decisions(1) if d["field_label"] == "emailed verification code"]
     assert sorted(d["ref"] for d in decs) == refs and all(d["source"] == "user:verification_code" for d in decs)
+
+
+
+@pytest.mark.asyncio
+async def test_a_code_typed_on_the_website_beforehand_is_used_first(tmp_path, monkeypatch):
+    """Surya (2026-10-19): a code box on the website for any application; a code typed there before the agent asks
+    is used at the next code prompt, and nothing is looked up in Gmail."""
+    from goat.human.questions import BROKER
+    db.reset_for_tests(tmp_path / "t.db")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('l1','Coinbase','Intern','https://x.example/job','greenhouse')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,priority) VALUES(1,'l1','filling','no_account',0)")
+    assert BROKER.provide_code(1, "  ")["ok"] is False
+    assert BROKER.provide_code(1, "ab12-cd34")["ok"]
+    typed = {}
+
+    async def type_it(ex, refs, code):
+        typed["code"] = code
+        return True
+
+    class Boom:
+        def fetch_code(self, *a, **k):
+            raise AssertionError("Gmail must not be read when Surya already gave the code")
+    monkeypatch.setattr(fill, "type_code_into", type_it)
+    ctx = RunContext(job={"id": 1, "company": "Coinbase", "ats": "greenhouse", "resume_file": None}, ex=Ex(),
+                     budget=Budget(1, "greenhouse"), classifier=None)
+    ctx.mail = Boom()
+    out, _ = await ToolDispatcher(ctx).t_enter_email_code(["e1"])
+    assert out["status"] == "entered" and typed["code"] == "ab12cd34"
+    assert BROKER.recent_code(1) is None                       # used once
+    assert db.connect().execute("SELECT answer FROM pending_questions WHERE job_id=1").fetchone()[0] == "(used)"
+
+
+def test_a_code_typed_on_the_website_answers_an_open_code_question(tmp_path):
+    from goat.human.questions import BROKER
+    db.reset_for_tests(tmp_path / "t.db")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('l1','Coinbase','Intern','https://x.example/job','greenhouse')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,priority) VALUES(1,'l1','awaiting_code','no_account',0)")
+        con.execute("INSERT INTO pending_questions(job_id,key,question,options,field_type,asked_at,deadline_at) VALUES(1,'code.1.5','Code?',NULL,'code',?,?)",
+                    (db.now(), db.now() + 600))
+    assert BROKER.provide_code(1, "ZZ99")["ok"]
+    assert BROKER.code_answer(1, "code.1.5") == "ZZ99"
