@@ -16,8 +16,35 @@ _COMMON = r"""
              parseFloat(s.opacity || '1') > 0.01;
     } catch (e) { return false; }
   };
-  const txt = (el) => ((el && (el.innerText || el.textContent)) || '').replace(/\s+/g, ' ').trim();
+  const txt = (el) => ((el && (el.innerText || el.textContent)) || '').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
   const PLACEHOLDER = /^(select one|select\.\.\.|select…|select|choose one|choose|search|please select|-- select --|--|)$/i;
+  // A field whose own label ends in "*" is required even without a required / aria-required attribute (Epic Games'
+  // "Email*:", "School*:", "Gender Identity*:", 2026-10-19: the gate passed with all of them blank). The label is the
+  // first plain label / legend above the control inside its own field box; a box holding other fields ends the search.
+  const STAR_RE = /\*\s*:?\s*$/;
+  const zw = (s) => (s || '').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+  // The first plain label / legend above a control inside its own field box (a box holding other fields ends the
+  // search): Epic Games keeps "<label>Email*:</label>" in a sibling block whose for= names no element.
+  function boxHead(el) {
+    const choice = el.type === 'radio' || el.type === 'checkbox';
+    let p = el.parentElement;
+    for (let i = 0; i < 7 && p && p !== document.body; i++, p = p.parentElement) {
+      const others = Array.from(p.querySelectorAll('input:not([type="hidden"]), select, textarea'))
+        .filter(f => f !== el && !(choice && f.name && f.name === el.name));
+      if (others.some(f => { const r = f.getBoundingClientRect(); return r.width > 0 && r.height > 0; })) return null;
+      const heads = Array.from(p.querySelectorAll('label, legend')).filter(l => !l.contains(el) && !l.querySelector('input, select, textarea'));
+      if (heads.length) return heads[0];
+    }
+    return null;
+  }
+  function starRequired(el) {
+    const choice = el.type === 'radio' || el.type === 'checkbox';
+    const own = el.labels ? Array.from(el.labels) : [];
+    if (!choice && own.length) return own.some(l => STAR_RE.test(zw(l.innerText || l.textContent)));
+    const h = boxHead(el);
+    return !!(h && STAR_RE.test(zw(h.innerText || h.textContent)));
+  }
+
   function labelFor(el) {
     const doc = el.ownerDocument; let t = '';
     if (el.id) { try { const l = doc.querySelector('label[for="' + CSS.escape(el.id) + '"]'); if (l) t = txt(l); } catch (e) {} }
@@ -29,6 +56,7 @@ _COMMON = r"""
     if (!t) { const ff = el.closest('[data-automation-id^="formField"], .field, .form-group, .application-field, [class*="field" i], fieldset'); if (ff) { const l = ff.querySelector('label, legend, [class*="label" i]'); if (l && !l.contains(el)) t = txt(l); } }
     // Lever custom questions: the text sits in a sibling block BEFORE the field container (.application-label + .application-field)
     if (!t) { const ff = el.closest('.application-field, [class*="field" i]'); let p = ff && ff.previousElementSibling; for (let i = 0; i < 2 && p && !t; i++, p = p.previousElementSibling) { if (/label|question/i.test(p.className || '')) t = txt(p).replace(/\s*[✱*]\s*$/, ''); } }
+    if (!t) { const h = boxHead(el); if (h) t = txt(h); }
     if (!t) t = el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '';
     if (selectedList) {
       // Workday keeps the search box inside the chip list once something is selected: say so, and name the section.
@@ -77,6 +105,8 @@ JS_SNAPSHOT = r"""
       if (lg && !lg.contains(el)) { const t = txt(lg); if (t && t.length < 300) return t; }
       const lb = fs.getAttribute('aria-labelledby'); if (lb) { const n = document.getElementById(lb.split(' ')[0]); if (n) return txt(n).slice(0, 300); }
     }
+    // a question label in a sibling block above the options (Epic Games' "Gender Identity*:", 2026-10-19)
+    const h = boxHead(el); if (h) { const t = txt(h); if (t && t.length < 300) return t; }
     return '';
   }
 
@@ -110,7 +140,7 @@ JS_SNAPSHOT = r"""
       }
       const role = el.getAttribute('role') || '';
       const item = { ref: ref(el), tag, type, role, label: labelFor(el), bbox: bbox(posEl), inview: inView(posEl) };
-      item.required = !!(el.required || el.getAttribute('aria-required') === 'true' || /required|\*/.test(el.getAttribute('aria-label') || '') );
+      item.required = !!(el.required || el.getAttribute('aria-required') === 'true' || /required|\*/.test(el.getAttribute('aria-label') || '') || starRequired(el));
       item.disabled = !!(el.disabled || el.getAttribute('aria-disabled') === 'true');
       item.invalid = el.getAttribute('aria-invalid') === 'true';
       item.placeholder = el.getAttribute('placeholder') || '';
@@ -273,6 +303,33 @@ JS_ELEMENT_AT = r"""
 # --------------------------------------------------------------------------- page errors (Hermes, proven)
 JS_PAGE_ERRORS = r"""
 () => {
+  // A field whose own label ends in "*" is required even without a required / aria-required attribute (Epic Games'
+  // "Email*:", "School*:", "Gender Identity*:", 2026-10-19: the gate passed with all of them blank). The label is the
+  // first plain label / legend above the control inside its own field box; a box holding other fields ends the search.
+  const STAR_RE = /\*\s*:?\s*$/;
+  const zw = (s) => (s || '').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+  // The first plain label / legend above a control inside its own field box (a box holding other fields ends the
+  // search): Epic Games keeps "<label>Email*:</label>" in a sibling block whose for= names no element.
+  function boxHead(el) {
+    const choice = el.type === 'radio' || el.type === 'checkbox';
+    let p = el.parentElement;
+    for (let i = 0; i < 7 && p && p !== document.body; i++, p = p.parentElement) {
+      const others = Array.from(p.querySelectorAll('input:not([type="hidden"]), select, textarea'))
+        .filter(f => f !== el && !(choice && f.name && f.name === el.name));
+      if (others.some(f => { const r = f.getBoundingClientRect(); return r.width > 0 && r.height > 0; })) return null;
+      const heads = Array.from(p.querySelectorAll('label, legend')).filter(l => !l.contains(el) && !l.querySelector('input, select, textarea'));
+      if (heads.length) return heads[0];
+    }
+    return null;
+  }
+  function starRequired(el) {
+    const choice = el.type === 'radio' || el.type === 'checkbox';
+    const own = el.labels ? Array.from(el.labels) : [];
+    if (!choice && own.length) return own.some(l => STAR_RE.test(zw(l.innerText || l.textContent)));
+    const h = boxHead(el);
+    return !!(h && STAR_RE.test(zw(h.innerText || h.textContent)));
+  }
+
   const ERR = /(no\s+\S+\s+found|not\s+a\s+valid|invalid|must\s+be|must\s+contain|cannot\s+be\s+(blank|empty)|can't\s+be\s+(blank|empty)|is\s+required|this\s+field\s+is\s+required|please\s+(enter|select|provide|choose|complete|correct|fix)|try\s+(entering|again|a\s+different)|failed|too\s+(short|long)|does\s+not\s+match|already\s+(exists|taken|registered|in\s+use)|incorrect|wrong\s+(email|password|username)|(account|user)\s+(might\s+be|is|has\s+been)\s+locked|unable\s+to\s+(sign|log)\s+in|could\s+not\s+(sign|log)\s+in)/i;
   const SKIP = /^(required|\*|optional|required\s*\*|\*\s*required)$/i;
   const FORM_SUMMARY = /(missing\s+entry\s+for\s+required\s+field|your\s+form\s+needs\s+corrections|please\s+(complete|fill\s+in)\s+(all\s+)?(the\s+)?required\s+fields|(fix|correct)\s+the\s+(errors|following)\s+(below|above|before))/i;
@@ -400,7 +457,7 @@ JS_PAGE_ERRORS = r"""
     let ctl = []; try { ctl = root.querySelectorAll('input, textarea, select'); } catch (e) { ctl = []; }
     for (const el of ctl) {
       if (el.type === 'hidden' || !vis(el)) continue;
-      const req = el.required || el.getAttribute('aria-required') === 'true';
+      const req = el.required || el.getAttribute('aria-required') === 'true' || starRequired(el);
       if (!req) continue;
       let empty;
       if (el.type === 'checkbox' || el.type === 'radio') {

@@ -134,6 +134,15 @@ def unconfirmed_answers(job_id: int, company: str = "", ats: str = "", limit: in
         unconfirmed, evidence = answers.unconfirmed_source(d.get("source"), company, ats)
         if not unconfirmed:
             continue
+        # The question may have an answer Surya confirmed (the questionnaire's "No" to accommodation needs) even when the
+        # agent wrote the box itself: give the fact check that answer as evidence.
+        try:
+            stored = answers.lookup(str(d.get("field_label") or ""), company, ats)
+        except Exception:
+            stored = None
+        if stored is not None and stored.has_value and not answers.unconfirmed_source(f"standing:{stored.key}", company, ats)[0]:
+            own = f"OWN STORED ANSWER ({stored.key}, confirmed by Surya): {str(stored.answer)[:200]}"
+            evidence = f"{evidence}; {own}" if evidence else own
         out.append({"label": str(d.get("field_label") or "")[:120], "value": val[:1500], "source": str(d.get("source") or "")[:80],
                     "evidence": evidence, "archived": bool(d.get("archived"))})
     return out[:limit]

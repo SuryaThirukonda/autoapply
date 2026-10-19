@@ -526,7 +526,7 @@ class WorkdaySections:
                 else:
                     failures += 1
                     self.report.failed.append(f"skill {skill}: the search returned nothing")
-                await self.ex.page.keyboard.press("Escape")
+                await self._clear_skills_search()
                 continue
             await self.ex.eval(self.JS_CLICK_OPTION, pick)
             await asyncio.sleep(0.8)
@@ -545,6 +545,20 @@ class WorkdaySections:
                         await self.remove_chip(c)
                 self.report.failed.append(f"skill {skill}: clicking {pick!r} produced {new}")
 
+    async def _clear_skills_search(self) -> None:
+        """Leave the Skills search box empty and its list closed. Text left behind ("FastAPI", not offered) kept the
+        suggestions open, and the agent's next click, on 'Add education', landed on one: Moderna got a 'FastReports'
+        chip and no education block (2026-10-19). Backspace runs only when the box holds text: in an empty Workday
+        prompt it deletes the last chip."""
+        try:
+            typed = await self.ex.eval("() => { const a = document.activeElement; return a && a.tagName === 'INPUT' ? (a.value || '') : ''; }")
+            if typed and await fill._select_all_text(self.ex):
+                await self.ex.page.keyboard.press("Backspace")
+            await self.ex.page.keyboard.press("Escape")
+            await fill._close_open_lists(self.ex)
+        except Exception:
+            pass
+
     async def remove_chip(self, text: str) -> bool:
         try:
             return bool(await self.ex.eval(
@@ -557,6 +571,7 @@ class WorkdaySections:
         await self.fill_work()
         await self.fill_websites()
         await self.fill_skills()
+        await self._clear_skills_search()
         return self.report
 
 

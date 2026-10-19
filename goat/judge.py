@@ -71,6 +71,8 @@ FACT_CHECK_INSTRUCTIONS = (
     "A statement about the company, its products or the role is supported when the JOB POSTING says it (IXL, 2026-10-18: "
     "the role's duties came from the posting). "
     "Motivation and opinion ('I am interested in X because ...') need no support beyond the facts they cite. "
+    "Evidence that quotes the applicant's OWN STORED ANSWER for that question (he confirmed it) supports an answer that "
+    "says the same thing in other words (Lyft, 2026-10-19: 'no accommodation needed' against his stored 'No'). "
     "For a single-choice question listed with several picks, only the last pick counts. When no unconfirmed answers "
     "are listed, return an empty list."
 )

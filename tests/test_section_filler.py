@@ -46,6 +46,13 @@ async def _open(path: Path):
     return ex
 
 
+async def _open_html(html: str):
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    await ex.start_launched(headless=True)
+    await ex.new_page(); ex.policy.hosts.add(""); await ex.page.set_content(html)
+    return ex
+
+
 def _filler(portal, ex):
     job = {"id": 1, "company": "Acme"}
     return (gh.GreenhouseSections if portal == "greenhouse" else ws.WorkdaySections)(ex, job, 1)
@@ -192,5 +199,39 @@ async def test_a_resumed_page_gets_its_present_entries_sourced_again(stored):
         rev = next(e for e in _work(info["entries"]) if (e["fields"].get("companyName") or {}).get("value") == "Revio")
         for name in ("startDate-dateSectionMonth-input", "startDate-dateSectionYear-input", "roleDescription", "currentlyWorkHere"):
             assert rev["fields"][name]["ref"] in refs, name
+    finally:
+        await ex.close(close_browser=True)
+
+
+SKILLS_BOX = """<!doctype html><html><body style="margin:20px">
+<div data-automation-id="multiSelectContainer"><div data-automation-id="selectedItem">Python (Programming Language)</div>
+ <input id="skills--skills" type="text" value=""></div>
+<ul id="list" role="listbox"><li role="option">FastReports</li></ul>
+<script>
+  const box = document.getElementById('skills--skills');
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Escape') document.getElementById('list').style.display = 'none';
+    if (e.key === 'Backspace' && !box.value) { const c = document.querySelector('[data-automation-id="selectedItem"]'); if (c) c.remove(); }
+  });
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_the_skills_search_box_is_left_empty_and_closed(stored):
+    """Moderna (2026-10-19): 'FastAPI' (not offered) stayed typed with its suggestions open; the agent's next click
+    landed on one and added 'FastReports'. An empty box never gets a Backspace (it deletes the last chip)."""
+    ex = await _open_html(SKILLS_BOX)
+    try:
+        f = _filler("workday", ex)
+        await ex.page.focus("#skills--skills")
+        await ex.page.keyboard.type("FastAPI")
+        await f._clear_skills_search()
+        st = await ex.page.evaluate("""() => ({v: document.getElementById('skills--skills').value,
+            open: document.getElementById('list').style.display !== 'none',
+            chips: document.querySelectorAll('[data-automation-id="selectedItem"]').length})""")
+        assert st == {"v": "", "open": False, "chips": 1}
+        await ex.page.focus("#skills--skills")
+        await f._clear_skills_search()
+        assert await ex.page.evaluate("() => document.querySelectorAll('[data-automation-id=\"selectedItem\"]').length") == 1
     finally:
         await ex.close(close_browser=True)

@@ -363,3 +363,19 @@ def test_claim_next_never_takes_a_skipped_portal(store, monkeypatch):
 def test_icims_is_skipped_by_default():
     from goat.config import Settings
     assert "icims" in Settings().skip_ats
+
+
+def test_a_written_answer_gets_his_own_stored_answer_as_evidence(store, tmp_path, monkeypatch):
+    """Lyft (2026-10-19): the agent wrote 'No accommodation needed' in a describe-box; the fact check called it
+    unsupported although his questionnaire answer to that question is No."""
+    from goat import db
+    monkeypatch.setattr(SETTINGS, "records_dir", tmp_path / "records")
+    job = _job()
+    answers.save_answer("availability.accommodation_needed", "No", answer_type="text", source="questionnaire",
+                        aliases=[])
+    with db.tx() as con:
+        con.execute("INSERT INTO question_aliases(alias, kind, key, confidence, approved, source, created_at) VALUES(?,?,?,?,?,?,?)",
+                    (json.dumps([["need", "accommodation"]]), "substrings", "availability.accommodation_needed", 1.0, 1, "questionnaire", 1))
+    records.record_decision(job["id"], 1, "Accommodation needs", "No accommodation is needed.", "generated", "e9")
+    un = {u["label"]: u for u in records.unconfirmed_answers(job["id"], job["company"], job["ats"])}
+    assert "OWN STORED ANSWER (availability.accommodation_needed, confirmed by Surya): No" in un["Accommodation needs"]["evidence"]

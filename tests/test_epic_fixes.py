@@ -204,3 +204,32 @@ async def test_a_computer_pick_is_kept_only_when_it_shows_the_stored_answer(stor
         assert out["results"][0]["status"] == "kept"
     finally:
         await ex.close(close_browser=True)
+
+
+EPIC_STARS = """<!doctype html><html><body style="margin:20px">
+<div><div><label for="Email"><span>Email\u2060*\u2060:</span></label></div><div><div><input name="questions.email" type="text" placeholder="Enter" value=""></div></div></div>
+<div><div><label for="Nick"><span>Preferred First Name\u2060\u2060:</span></label></div><div><div><input name="questions.nick" type="text" value=""></div></div></div>
+<div><div><label for="educations[0].school_name_id"><span>School\u2060\u2060\u2060*\u2060:</span></label></div>
+  <div><div><div><div><div>Select</div><div><div><input id="react-select-13-input" type="text" aria-autocomplete="list" value=""></div></div></div></div></div></div></div>
+<div><div><label for="Gender Identity"><span>Gender Identity\u2060*\u2060:</span></label></div><div></div>
+  <div><label><input name="g" type="radio" value="1"> Man</label></div><div><label><input name="g" type="radio" value="2"> Woman</label></div></div>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_star_in_the_visible_label_makes_a_field_required(tmp_path):
+    """Epic Games (2026-10-19): Email, School and Gender Identity carried '*' only in their labels (between word joiners);
+    the gate passed with all of them blank and only the judge noticed."""
+    ex = await _race(tmp_path, EPIC_STARS, "stars.html")
+    try:
+        snap = await snapshot.take(ex)
+        req = {(i.get("label") or "").split(":")[0]: bool(i.get("required")) for i in snap.items}
+        assert req.get("Email*") and req.get("School*") and not req.get("Preferred First Name"), req
+        assert "\u2060" not in " ".join(i.get("label") or "" for i in snap.items)
+        empty = " | ".join(str(e) for e in snap.required_empty())
+        assert "questions.email" in empty or "Email" in empty, empty
+        assert "react-select-13-input" in empty or "School" in empty, empty
+        assert "nick" not in empty.lower()
+        assert any(g.get("required") for g in snap.groups if "Gender" in (g.get("label") or "")), snap.groups
+    finally:
+        await ex.close(close_browser=True)
