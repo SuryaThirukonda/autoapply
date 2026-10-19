@@ -411,6 +411,11 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
         exact = [o for o in options if _norm(o["text"]) == w]
         if exact:
             return exact[0]
+        # the name line of a multi-line option ("Texas A&M University / United States / tamu.edu" on Ashby, where
+        # "Texas A&M University System" also starts with the want, ibotta 2026-10-19)
+        exact = [o for o in options if o.get("first") and o.get("first") != o.get("text") and _norm(o["first"]) == w]
+        if len(exact) == 1:
+            return exact[0]
         # a prefix or contains match on a school never lands on a campus the wants do not name
         near = [o for o in options if not (institution and _foreign_qualifier(o["text"], wants))]
         starts = [o for o in near if _norm(o["text"]) == w or _norm(o["text"]).startswith(w + " ")]

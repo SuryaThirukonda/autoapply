@@ -680,7 +680,9 @@ JS_LIST_OPTIONS = r"""
     if (!vis(o)) continue;
     const r = o.getBoundingClientRect();
     const t = txt(o).slice(0, 160); if (!t) continue;
-    out.push({ text: t, x: Math.round(r.x + Math.min(30, r.width / 2)), y: Math.round(r.y + r.height / 2), selected: o.getAttribute('aria-selected') === 'true' });
+    // An option can be several lines, name first (Ashby's schools: "Texas A&M University / United States / tamu.edu").
+    const first = ((o.innerText || '').split('\n').map(s => s.trim()).find(Boolean) || '').replace(/\s+/g, ' ').slice(0, 160);
+    out.push({ text: t, first, x: Math.round(r.x + Math.min(30, r.width / 2)), y: Math.round(r.y + r.height / 2), selected: o.getAttribute('aria-selected') === 'true' });
   }
   return JSON.stringify(out.slice(0, 400));
 }

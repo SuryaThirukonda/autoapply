@@ -90,3 +90,13 @@ async def test_a_page_without_the_field_is_left_alone(store, tmp_path):
         assert await fill_education(ex, _job(), 1) is None
     finally:
         await ex.close(close_browser=True)
+
+
+def test_a_multi_line_school_option_matches_on_its_name_line():
+    from goat.browser import fill
+    opts = [{"text": "Texas A&M University System United States tamus.edu", "first": "Texas A&M University System"},
+            {"text": "Texas A&M University United States tamu.edu", "first": "Texas A&M University"},
+            {"text": "West Texas A&M University United States wtamu.edu", "first": "West Texas A&M University"}]
+    assert fill.best_option(opts, ["Texas A&M University"])["first"] == "Texas A&M University"
+    # one-line options are unchanged: two starting with the want stay ambiguous
+    assert fill.best_option([{"text": "Texas A&M University System"}, {"text": "Texas A&M University Galveston"}], ["Texas A&M University"]) is None
