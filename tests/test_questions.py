@@ -240,3 +240,47 @@ async def test_ask_payload_is_numbered_for_the_batched_card(broker, wide):
                            {"key": "q.two", "question": "Two?"}], None)
     payload = sender.calls[0][1]
     assert [p["n"] for p in payload] == [1, 2] and payload[1]["key"] == "q.two"
+
+
+def _row(job_id, key, asked, deadline, answered=None):
+    with db.tx() as con:
+        con.execute("INSERT INTO pending_questions(job_id, key, question, options, field_type, asked_at, deadline_at, answered_at, answer)"
+                    " VALUES(?,?,?,?,?,?,?,?,?)", (job_id, key, "q?", "[]", "text", asked, deadline, answered, "x" if answered else None))
+
+
+def test_the_wait_is_short_only_while_surya_is_away(tmp_path, monkeypatch):
+    """Overnight 2026-10-19: every unanswered question held the single worker for 15 minutes."""
+    db.reset_for_tests(tmp_path / "t.db")
+    monkeypatch.setattr(SETTINGS.budgets, "answer_wait_s", 900)
+    monkeypatch.setattr(SETTINGS.budgets, "answer_wait_away_s", 120)
+    monkeypatch.setattr(SETTINGS.budgets, "away_after_s", 7200)
+    now = 1_800_000_000
+    j = make_job("L1")
+    assert questions.effective_answer_wait_s(now) == 900          # nothing asked lately
+    _row(j, "a", now - 5000, now - 4100, answered=now - 3600)
+    _row(j, "b", now - 3000, now - 2100)
+    assert questions.effective_answer_wait_s(now) == 900          # he answered an hour ago
+    with db.tx() as con:
+        con.execute("UPDATE pending_questions SET answered_at=? WHERE key='a'", (now - 3 * 3600,))
+    assert questions.effective_answer_wait_s(now) == 120          # quiet for 3 h and question b went unanswered
+    monkeypatch.setattr(SETTINGS.budgets, "answer_wait_away_s", 0)
+    assert questions.effective_answer_wait_s(now) == 900          # 0 turns it off
+
+
+@pytest.mark.asyncio
+async def test_a_question_keeps_the_wait_it_was_asked_with(tmp_path, monkeypatch):
+    """The first question after a quiet spell gets the full wait even though, once asked, it counts as unanswered."""
+    db.reset_for_tests(tmp_path / "t.db")
+    monkeypatch.setattr(SETTINGS.budgets, "answer_wait_s", 3)
+    monkeypatch.setattr(SETTINGS.budgets, "answer_wait_away_s", 1)
+    monkeypatch.setattr(SETTINGS.budgets, "away_after_s", 7200)
+    b = questions.QuestionBroker()
+    j = make_job("L2")
+    await b.ask(j, [{"key": "q.x", "question": "X?", "options": [], "field_type": "text"}])
+    other = make_job("L3")
+    _row(other, "q.y", db.now() - 100, db.now() - 50)           # now a missed question exists: new asks would be short
+    assert questions.effective_answer_wait_s() == 1
+    t0 = time.time()
+    with pytest.raises(Parked):
+        await b.await_answers(j, ["q.x"])
+    assert time.time() - t0 >= 1.5

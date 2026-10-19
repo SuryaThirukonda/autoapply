@@ -90,6 +90,11 @@ class Budgets:
         "icims": _env_int("BUDGET_WALL_S_ICIMS", 60 * 60),
     })
     answer_wait_s: int = _env_int("ANSWER_WAIT_S", 15 * 60)
+    # While Surya is away (nothing answered for AWAY_AFTER_S and a question already went unanswered in that time) a
+    # new question waits only ANSWER_WAIT_AWAY_S, then the job holds; his answer, when it comes, requeues it.
+    # 0 turns this off.
+    answer_wait_away_s: int = _env_int("ANSWER_WAIT_AWAY_S", 120)
+    away_after_s: int = _env_int("AWAY_AFTER_S", 2 * 3600)
     code_wait_s: int = _env_int("CODE_WAIT_S", 180)
     max_attempts: int = _env_int("BUDGET_MAX_ATTEMPTS", 3)
     max_held_tabs: int = _env_int("MAX_HELD_TABS", 4)

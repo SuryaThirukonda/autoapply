@@ -140,6 +140,26 @@ def _row_dict(row) -> dict:
     return d
 
 
+
+def effective_answer_wait_s(now: float | None = None) -> int:
+    """How long a new question may hold the worker. ANSWER_WAIT_S (15 min) while Surya answers; ANSWER_WAIT_AWAY_S
+    (2 min) once nothing has been answered for AWAY_AFTER_S and a question has already gone unanswered in that
+    time, so the first question after a quiet spell still gets the full wait. Overnight on 2026-10-19 each unanswered
+    question held the single worker for 15 minutes; a held job is requeued when its answer arrives."""
+    full = int(SETTINGS.budgets.answer_wait_s)
+    away = int(getattr(SETTINGS.budgets, "answer_wait_away_s", 0) or 0)
+    after = int(getattr(SETTINGS.budgets, "away_after_s", 0) or 0)
+    if away <= 0 or after <= 0 or away >= full:
+        return full
+    now = float(now if now is not None else db.now())
+    con = db.connect()
+    last = con.execute("SELECT MAX(answered_at) FROM pending_questions WHERE answered_at IS NOT NULL").fetchone()[0]
+    if last is not None and now - float(last) < after:
+        return full
+    missed = con.execute("SELECT COUNT(*) FROM pending_questions WHERE answered_at IS NULL AND asked_at >= ? AND deadline_at < ?",
+                         (now - after, now)).fetchone()[0]
+    return away if missed else full
+
 class QuestionBroker:
     """One per process. Holds the per-job wake events and the registered sender."""
 
@@ -184,7 +204,9 @@ class QuestionBroker:
         """Record and send the questions that have no stored answer yet. Returns every key passed
         in (answered or not) so the caller can hand the list straight to await_answers()."""
         self._remember_loop()
-        wait_s = int(SETTINGS.budgets.answer_wait_s)
+        wait_s = effective_answer_wait_s()
+        if wait_s < int(SETTINGS.budgets.answer_wait_s):
+            db.event(job_id, "question:short_wait", {"wait_s": wait_s, "why": "nothing answered lately: Surya is away"})
         now = db.now()
         keys: list[str] = []
         new_rows: list[tuple[int, dict]] = []
@@ -243,6 +265,18 @@ class QuestionBroker:
         return keys
 
     # ------------------------------------------------------------------ waiting
+    def _deadline(self, job_id: int, keys: list[str]) -> float:
+        """The deadline stored when these questions were asked (the earliest over unanswered rows); without one, first
+        ask + ANSWER_WAIT_S. The stored value counts because the wait is chosen at ask time (effective_answer_wait_s)."""
+        con = db.connect()
+        best = None
+        for k in keys:
+            row = con.execute("SELECT MIN(deadline_at) AS d FROM pending_questions WHERE job_id=? AND key=? AND answered_at IS NULL",
+                              (job_id, k)).fetchone()
+            if row is not None and row["d"] is not None:
+                best = float(row["d"]) if best is None else min(best, float(row["d"]))
+        return best if best is not None else self._asked_at(job_id, keys) + int(SETTINGS.budgets.answer_wait_s)
+
     def _asked_at(self, job_id: int, keys: list[str]) -> float:
         """Earliest first-ask time over these keys (unanswered rows); a key never asked counts as now."""
         con = db.connect()
@@ -297,8 +331,8 @@ class QuestionBroker:
         against the stored epoch seconds). Raises Parked(hold) on timeout or decline."""
         self._remember_loop()
         keys = list(dict.fromkeys(keys))
-        wait_s = int(SETTINGS.budgets.answer_wait_s)
-        deadline = self._asked_at(job_id, keys) + wait_s
+        deadline = self._deadline(job_id, keys)
+        wait_s = int(max(0, deadline - self._asked_at(job_id, keys)))
         ev = self.get_event(job_id)
         while True:
             found: dict[str, str] = {}
