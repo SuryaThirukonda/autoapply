@@ -27,6 +27,10 @@ from .advisor import Advisor
 from .prompts import INSTRUCTIONS, answers_block, job_brief
 from .tools import FUNCTION_TOOLS, RunContext, ToolDispatcher, _answer_rows_for_prompt
 
+# Form pages one attempt may pass through before it is held as stuck (a five-step Workday form with every allowed trip
+# back stays well under it; TIAA finished in 15).
+PAGE_CYCLE_LIMIT = 24
+
 log = logging.getLogger(__name__)
 
 # $/M tokens, list prices (input, cached input, output)
@@ -290,6 +294,11 @@ class AgentLoop:
                     if ctx.page_no != page_before:
                         # A new form page: the worker starts a fresh conversation from the cached prefix.
                         db.event(ctx.job_id, "page:done", {"page": page_before, "next": ctx.page_no})
+                        if ctx.page_no > PAGE_CYCLE_LIMIT and not ctx.submitted:
+                            # C&S Wholesale (2026-10-19) went round its five Workday steps 25 times (the Review kept
+                            # sending it back); with no step cap the wall budget alone would have let it run 90 minutes.
+                            raise Parked(f"stuck: {ctx.page_no - 1} form pages went by without reaching a submit; "
+                                         "the form keeps sending the run back", "hold")
                         self.items.append({"type": "function_call_output", "call_id": item.call_id, "output": out_text})
                         return LoopResult("page_done", f"page {ctx.page_no}", steps=self.steps)
                     if '"error"' in out_text[:40]:
