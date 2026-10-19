@@ -145,3 +145,22 @@ async def test_a_park_on_a_removed_posting_closes_the_job(store, tmp_path):
         assert pi.value.state == "dead" and pi.value.reason.startswith("posting_closed:")
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_vague_ready_for_you_park_gets_the_gate_blockers(store, tmp_path):
+    """Moderna (2026-10-19) parked 'ready_for_you: resume application fields' on My Information, where nothing needed
+    Surya; Epic Games parked 'complete the demographic questions'. A CAPTCHA reason still parks."""
+    job = _job()
+    ex = await _page(tmp_path, MID_FORM.replace('<input id="fn">', '<input id="fn" required aria-required="true">'))
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        ctx.last_snapshot = await snapshot.take(ex)
+        out, _ = await d.t_park("ready_for_you: resume application fields")
+        assert "not parked" in out["error"] and out.get("blockers")
+        with pytest.raises(Parked) as p:
+            await d.t_park("ready_for_you: hCaptcha then Submit")
+        assert p.value.state == "ready_for_you"
+    finally:
+        await ex.close(close_browser=True)

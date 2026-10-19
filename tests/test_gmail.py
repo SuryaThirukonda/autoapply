@@ -354,3 +354,57 @@ def test_gmail_calls_never_overlap_across_threads():
     for t in ts:
         t.join()
     assert peak[0] == 1
+
+
+def test_a_rate_limited_403_is_retried_and_a_poll_survives_a_gmail_hiccup(monkeypatch):
+    """2026-10-19 04:02: Gmail answered 403 rateLimitExceeded; the reset-link poll failed outright and Nike held."""
+    from goat.mail import gmail as g
+
+    class Resp:
+        status = 403
+
+    class RateLimited(Exception):
+        resp = Resp()
+
+        def __str__(self):
+            return '<HttpError 403 "rateLimitExceeded">'
+
+    class Forbidden(Exception):
+        resp = Resp()
+
+        def __str__(self):
+            return '<HttpError 403 "insufficientPermissions">'
+
+    assert g.GmailClient._transient(RateLimited())
+    assert not g.GmailClient._transient(Forbidden())
+
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    class Client:
+        def list_messages(self, q, n=10):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise g.MailUnavailable("Gmail list failed (HttpError)")
+            return []
+
+        def get_message(self, mid):
+            raise AssertionError("nothing listed")
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(g.time, "monotonic", lambda: clock["t"])
+
+    def fake_sleep(s):
+        clock["t"] += s
+
+    assert g._poll_newest(Client(), "q", "workday", "x.wd1.myworkdayjobs.com", 0, 30, 5, fake_sleep) is None
+    assert calls["n"] >= 2                      # kept polling after the failed listing
+
+    class Down:
+        def list_messages(self, q, n=10):
+            raise g.MailUnavailable("Gmail list failed (HttpError)")
+
+    clock["t"] = 0.0
+    import pytest as _pytest
+    with _pytest.raises(g.MailUnavailable):     # never listed once: say so instead of "not received"
+        g._poll_newest(Down(), "q", "workday", "x.wd1.myworkdayjobs.com", 0, 12, 5, fake_sleep)

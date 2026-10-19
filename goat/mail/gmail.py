@@ -25,6 +25,7 @@ from ..config import SETTINGS
 log = logging.getLogger("goat.mail")
 # Every Gmail API call holds this: the client and its connection are shared by threads (see GmailClient._execute).
 _GMAIL_LOCK = threading.RLock()
+_RATE_LIMITED = re.compile(r"rate ?limit|quota|too many requests", re.I)
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
@@ -448,13 +449,17 @@ class GmailClient:
 
     @staticmethod
     def _transient(e: Exception) -> bool:
-        """A dropped or stale connection (SSLError after an idle spell, reset, timeout) or a 429/5xx answer."""
+        """A dropped or stale connection (SSLError after an idle spell, reset, timeout), a 429/5xx answer, or a 403
+        that is only a rate limit ("rateLimitExceeded", 2026-10-19: the reset-link poll failed on it outright)."""
         status = getattr(getattr(e, "resp", None), "status", None)
         if status is not None:
             try:
-                return int(status) == 429 or int(status) >= 500
+                s = int(status)
             except (TypeError, ValueError):
                 return False
+            if s == 403 and _RATE_LIMITED.search(str(e)):
+                return True
+            return s == 429 or s >= 500
         return True
 
     def _execute(self, make_request, what: str):
@@ -476,9 +481,12 @@ class GmailClient:
                     last = e
                     if attempt == self.RETRIES or not self._transient(e):
                         break
-                    log.info("mail: Gmail %s failed (%s); retrying on a fresh connection", what, type(e).__name__)
-                    self._service = None
-                    time.sleep(0.5 * (attempt + 1))
+                    limited = bool(_RATE_LIMITED.search(str(e)))
+                    log.info("mail: Gmail %s failed (%s%s); retrying%s", what, type(e).__name__,
+                             ", rate limited" if limited else "", "" if limited else " on a fresh connection")
+                    if not limited:
+                        self._service = None
+                    time.sleep((3.0 * 2 ** attempt) if limited else 0.5 * (attempt + 1))
         raise MailUnavailable(f"Gmail {what} failed ({type(last).__name__})") from None
 
     def list_messages(self, q: str, max_results: int = 10) -> list[dict]:
@@ -539,14 +547,33 @@ def _poll_newest(
     filter (a verification email must carry a link on this portal's host)."""
     deadline = time.monotonic() + max(0.0, timeout_s)
     seen: dict[str, Message | None] = {}
+    listed_once = False
     while True:
         best: Message | None = None
-        for ref in client.list_messages(query, 10):
+        try:
+            refs = client.list_messages(query, 10)
+            listed_once = True
+        except MailUnavailable as e:
+            # Gmail unavailable for a moment (rate limit, dropped connection): keep polling until the deadline, and
+            # report it only if no listing ever succeeded (then "not received" would be a guess).
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                if listed_once:
+                    return None
+                raise
+            log.info("mail: %s; polling again", e)
+            sleep(min(max(poll_s, 5.0), remaining))
+            continue
+        for ref in refs:
             mid = str(ref.get("id") or "")
             if not mid:
                 continue
             if mid not in seen:
-                m = parse_message(client.get_message(mid))
+                try:
+                    m = parse_message(client.get_message(mid))
+                except MailUnavailable as e:
+                    log.info("mail: %s for message id=%s; trying it on the next pass", e, mid)
+                    continue
                 ok = (
                     m.ts >= int(after_ts)
                     and not is_forbidden(m.subject, m.snippet, allow_reset=allow_reset)

@@ -166,3 +166,41 @@ async def test_a_workday_prompt_is_a_combobox_and_refuses_typed_text(tmp_path):
         assert not out[0].ok and "use choose" in out[0].error
     finally:
         await ex.close(close_browser=True)
+
+
+ENROLL = """<!doctype html><html><body style="margin:20px">
+<label for="st">Current college enrollment status</label>
+<select id="st"><option>Select One</option><option>Full-time Status</option><option>Part-time Status</option></select>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_computer_pick_is_kept_only_when_it_shows_the_stored_answer(store, tmp_path):
+    """Aerospace Corporation (2026-10-19): after the picker failed, the model chose 'Part-time Status' with the computer
+    tool and recorded it 'as_is', i.e. as Surya's own choice."""
+    from goat import db
+    answers.save_answer("education.enrollment_status", "Full-time; Full-time Status", answer_type="choice_chain", source="questionnaire")
+    ex = await _race(tmp_path, ENROLL, "enroll.html")
+    try:
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        ref = next(i["ref"] for i in snap.items if i.get("tag") == "select")
+        await ex.page.select_option("#st", label="Part-time Status")
+        row = {"ref": ref, "answer_key": "education.enrollment_status", "value": None, "source": "computer", "label": "Enrollment status"}
+        out, _ = await d.t_fill_batch([row])
+        assert out["results"][0]["status"] == "failed" and "Part-time" in out["results"][0]["error"]
+        await ex.page.select_option("#st", label="Full-time Status")
+        out, _ = await d.t_fill_batch([row])
+        assert out["results"][0]["status"] == "kept"
+        # 'as_is' is Surya's own fill: refused until he said so on this job
+        out, _ = await d.t_fill_batch([{**row, "answer_key": None, "source": "as_is"}])
+        assert out["results"][0]["status"] == "failed" and "computer" in out["results"][0]["error"]
+        with db.tx() as con:
+            con.execute("INSERT INTO pending_questions(job_id, key, question, options, field_type, asked_at, deadline_at, answered_at, answer)"
+                        " VALUES(?,?,?,?,?,?,?,?,?)", (ctx.job_id, "q.x", "?", "[]", "text", 1, 2, 3, "AS_IS"))
+        out, _ = await d.t_fill_batch([{**row, "answer_key": None, "source": "as_is"}])
+        assert out["results"][0]["status"] == "kept"
+    finally:
+        await ex.close(close_browser=True)

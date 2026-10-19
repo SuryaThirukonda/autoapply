@@ -35,7 +35,7 @@ FUNCTION_TOOLS: list[dict] = [
          "ref": {"type": "string"},
          "answer_key": {"type": ["string", "null"], "description": "key from ANSWERS or from lookup_answer"},
          "value": {"type": ["string", "null"], "description": "literal value when no key applies (true/false for checkboxes and radios)"},
-         "source": {"type": ["string", "null"], "description": "required with a literal: 'generated' for free-response text you wrote under the writing rules, 'resume' for a value copied verbatim from the résumé text, 'clear' with an empty value to blank a field holding a stale or wrong value, 'as_is' (value null) to keep what the field already shows because Surya set it himself in the browser or told you it is done"},
+         "source": {"type": ["string", "null"], "description": "required with a literal: 'generated' for free-response text you wrote under the writing rules, 'resume' for a value copied verbatim from the résumé text, 'clear' with an empty value to blank a field holding a stale or wrong value, 'computer' (value null, WITH the answer_key) after you picked the option with the computer tool: it is kept only when the page shows that answer, 'as_is' (value null) to keep what the field already shows because Surya set it himself in the browser or told you it is done"},
          "label": {"type": "string", "description": "the field label as shown"}},
          "required": ["ref", "answer_key", "value", "source", "label"], "additionalProperties": False}}},
                     "required": ["fields"], "additionalProperties": False}},
@@ -524,6 +524,17 @@ class ToolDispatcher:
                 lab = str(f.get("label") or item.get("group") or "").strip()
                 if opt and answers.norm(opt) not in answers.norm(lab):
                     f = {**f, "label": f"{lab[:120]} / {opt[:60]}"}
+            if (f.get("source") or "").lower() == "computer":
+                # The ref tools failed and the model picked the option with the computer tool: the pick stands only
+                # when the page shows the stored answer of the key it came from. It used to be recorded 'as_is' as
+                # Surya's own choice (Aerospace Corporation's enrollment status went to "Part-time Status", 2026-10-19).
+                results.append(await self._keep_computer_pick(f, item))
+                continue
+            if (f.get("source") or "").lower() == "as_is" and not self._surya_kept_as_is():
+                results.append({"ref": f.get("ref"), "status": "failed",
+                                "error": "'as_is' is only for fields Surya filled himself and said so. For an option you picked with the "
+                                         "computer tool, record it with source 'computer' and the answer_key it came from (value null)."})
+                continue
             if (f.get("source") or "").lower() == "as_is":
                 # Surya set this field himself in Chrome (or answered "I already filled it out"): what the page
                 # shows IS his decision. Record it unchanged so the gate sees a sourced value (2026-10-18).
@@ -743,6 +754,45 @@ class ToolDispatcher:
             return out, None
         return self._with_fallback_hint(ref, r.as_dict()), None
 
+    def _surya_kept_as_is(self) -> bool:
+        """Did Surya answer one of this job's questions with "I already filled it out" (AS_IS)?"""
+        from ..human.questions import AS_IS
+        row = db.connect().execute("SELECT 1 FROM pending_questions WHERE job_id=? AND answer=? LIMIT 1",
+                                   (self.ctx.job_id, AS_IS)).fetchone()
+        return row is not None
+
+    async def _keep_computer_pick(self, f: dict, item: dict | None) -> dict:
+        ref = f.get("ref", "")
+        key = f.get("answer_key")
+        a = answers.get(key, self.ctx.job.get("company", ""), self.ctx.portal) if key else None
+        if a is None or not a.has_value:
+            return {"ref": ref, "status": "failed", "error": "a pick made with the computer tool is recorded with the answer_key it came "
+                                                             "from (lookup_answer first); with no stored answer, ask_user"}
+        try:
+            info = await self.ctx.ex.read_ref(ref)
+        except Exception:
+            info = {}
+        typ = str(info.get("type") or "").lower()
+        if typ in ("checkbox", "radio"):
+            if info.get("value") != "checked":
+                return {"ref": ref, "status": "failed", "error": "that option is not ticked on the page"}
+            shown = str((item or {}).get("label") or info.get("label") or "")
+        else:
+            shown = str(info.get("value") or info.get("shown") or "")
+        wants = [w.strip() for w in str(a.answer).split(";") if w.strip()]
+        variants = answers.get(key + "_variants", self.ctx.job.get("company", ""), self.ctx.portal)
+        if variants and variants.has_value:
+            wants += [w.strip() for w in str(variants.answer).split(";") if w.strip()]
+        ok = bool(shown) and (fill.best_option([{"text": shown}], wants) is not None
+                              or any(answers.norm(w) and answers.norm(w) in answers.norm(shown) for w in wants))
+        if not ok:
+            return {"ref": ref, "status": "failed",
+                    "error": f"the page shows {shown[:60]!r} but the stored answer for {key} is {str(a.answer)[:80]!r}: pick the option that "
+                             "says that, or ask_user when none does"}
+        records.record_decision(self.ctx.job_id, self.ctx.page_no, f.get("label") or (item or {}).get("label", ""), shown[:300],
+                                f"standing:{key}", ref)
+        return {"ref": ref, "status": "kept", "readback": shown[:120]}
+
     def _with_fallback_hint(self, ref: str, out: dict) -> dict:
         """Surya (2026-10-18): when the ref tools cannot work a control, go to screenshot mode and click it by
         hand. After the second failure on the same ref the model is told to switch to the computer tool."""
@@ -750,8 +800,9 @@ class ToolDispatcher:
         self.ctx.control_failures[ref] = n
         if n >= 2:
             out["fallback"] = ("the ref tools failed on this control twice: switch to the `computer` tool now. Take a screenshot, "
-                              "click the control, type or scroll inside its list, click the wanted option, then `snapshot` to confirm the "
-                              "value and record it with fill_batch source 'as_is' if the outline shows it set.")
+                              "click the control, type or scroll inside its list, click the option that matches the stored answer, then "
+                              "`snapshot` and record it with fill_batch: the same answer_key, value null, source 'computer' (kept only "
+                              "when the page shows that answer).")
         return out
 
     async def t_click(self, ref: str, label: str):
@@ -1433,6 +1484,12 @@ class ToolDispatcher:
     SATISFIED = re.compile(r"(work authorization|authorized to work|sponsorship|citizen|bachelor|gpa|18 years|relocat|onsite|on-site|hybrid|remote|2028|rising senior|eligible to obtain|clearance eligib|"
                            r"\bsatisf|40 hours|full[- ]time|hours (per|a) week|\d+ weeks|start date|begin|beginning|available from|"
                            r"(may|june) \d{1,2},? 2027|summer 2027|weekend|in[- ]person|commut|related (field|discipline|major|area|degree)|computer science|local to|during the internship)", re.I)
+    # What makes a ready_for_you park final: something only Surya can do or decide. Anything else ("resume application
+    # fields", "complete the demographic questions") goes through the gate first (t_park).
+    RFY_REASON = re.compile(r"captcha|human|\bbot\b|verif|challenge|prohibit|directly|the applicant|themsel|personally|in person|\bai\b|"
+                            r"automat|essay|upload|\bfile\b|portfolio|transcript|document|signature|\bssn\b|social security|consent|"
+                            r"legal|eligib|clearance|sponsor|not (offered|available|listed|selectable)|no (selectable|matching) |"
+                            r"cannot be (set|selected|answered)|picker .*(not|no)\b", re.I)
     # Surya 2026-10-18: a car requirement is fine (he arranges one); "local / within N miles" is fine when the posting is
     # paid; a straight hardware role is not.
     DISQUALIFIERS = re.compile(r"(master'?s|ph\.?d|doctoral|graduate program|active (secret|top secret|ts/sci|clearance)|returning intern|co-?op|fall 2027|spring 2028|quant|"
@@ -1612,7 +1669,13 @@ class ToolDispatcher:
             return {"error": "not parked: that requirement is SATISFIED by the standing facts (U.S. citizen, authorized, no sponsorship, "
                              "Bachelor's in progress, GPA 4.0, relocates anywhere, graduates May 2028). A posting stating it is not a restriction. "
                              "Continue: open the application (click Apply / Apply Manually) and fill it."}, None
-        hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch", "needs_you"))
+        # "ready_for_you" stands for what only Surya can do (a CAPTCHA, a posting that wants the applicant himself, a
+        # file goat does not have). Without such a reason it is checked like any eager park: Moderna's "resume
+        # application fields" quit on My Information and Epic Games' "complete the demographic questions" quit on
+        # questions his stored answers cover (2026-10-19).
+        rfy_soft = low.startswith("ready_for_you") and self.ctx.park_attempts < 2 and not self.RFY_REASON.search(reason)
+        hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch", "needs_you")) \
+            and not rfy_soft
         if not hard and self.ctx.park_attempts < 2:
             # An eager park: run the gate first. If it passes, the right move is submit; if it blocks,
             # the model gets the concrete blockers instead of giving up.

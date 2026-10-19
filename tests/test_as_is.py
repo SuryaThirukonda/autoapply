@@ -25,6 +25,10 @@ def _job():
 async def test_as_is_keeps_what_surya_set(tmp_path):
     db.reset_for_tests(tmp_path / "t.db")
     job = _job()
+    # Surya answered this job's question "I already filled it out" (as_is is refused without that, 2026-10-19)
+    with db.tx() as con:
+        con.execute("INSERT INTO pending_questions(job_id, key, question, options, field_type, asked_at, deadline_at, answered_at, answer)"
+                    " VALUES(?,?,?,?,?,?,?,?,?)", (job["id"], "q.org", "Organization preference?", "[]", "text", 1, 2, 3, "AS_IS"))
     ex = Executor(policy=HostPolicy(["about:blank"]))
     try:
         await ex.start_launched(headless=True)
