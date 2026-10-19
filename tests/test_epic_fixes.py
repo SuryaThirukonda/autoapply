@@ -446,3 +446,23 @@ async def test_a_disabled_star_field_is_not_an_empty_required_field(tmp_path):
         assert "sy" in empty and "ey" not in empty.replace("key", ""), empty
     finally:
         await ex.close(close_browser=True)
+
+
+BANNER = """<!doctype html><html><body style="margin:20px">
+<div class="error-banner" role="alert">Please correct highlighted fields</div>
+<div><div><label for="fn"><span>First Name*</span></label></div><div><input id="fn" type="text" value="Surya"></div></div>
+<div><div><label for="sm"><span>Start Date (Month)*</span></label></div><div><input id="sm" type="text" value="" aria-invalid="true"></div></div>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_highlight_banner_is_a_form_summary_not_a_field_error(tmp_path):
+    """Epic Games (2026-10-19): 'Please correct highlighted fields' was pinned on First Name (the nearest label)."""
+    ex = await _race(tmp_path, BANNER, "banner.html")
+    try:
+        snap = await snapshot.take(ex)
+        errs = " | ".join(str(e) for e in snap.errors.get("error_text", []))
+        assert "highlighted" not in errs, errs
+        assert any("highlighted" in str(s) for s in snap.errors.get("summaries", [])), snap.errors
+    finally:
+        await ex.close(close_browser=True)
