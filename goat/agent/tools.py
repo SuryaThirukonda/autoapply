@@ -488,9 +488,21 @@ class ToolDispatcher:
                         or (ans in ("yes", "true") and not NEGATED.match(item.get("label") or "") and lab not in ("no", "false")) \
                         or (ans == "no" and bool(NEGATED.match(item.get("label") or "")))
                     if not agree:
-                        results.append({"ref": f["ref"], "status": "failed", "error": f"stored answer for {f['answer_key']} is {a.answer!r} but this toggle reads {item.get('label')!r}; press the matching option instead"})
-                        continue
+                        # The stored answer names the OTHER half of a Yes/No pair: press that one (Primer's
+                        # sponsorship toggles were left with neither pressed, 2026-10-18).
+                        sibling = next((o for o in (snap.items if snap else []) if o.get("tag") == "toggle" and o is not item
+                                        and (o.get("group") or "") == (item.get("group") or "") and (
+                                            (ans in ("yes", "true") and answers.norm(o.get("label") or "") in ("yes", "true"))
+                                            or (ans == "no" and answers.norm(o.get("label") or "") in ("no", "false"))
+                                            or answers.norm(o.get("label") or "") == ans)), None)
+                        if sibling is None:
+                            results.append({"ref": f["ref"], "status": "failed", "error": f"stored answer for {f['answer_key']} is {a.answer!r} but this toggle reads {item.get('label')!r}; press the matching option instead"})
+                            continue
+                        item = sibling
+                        f = {**f, "ref": sibling["ref"]}
                     f = {**f, "value": "true", "_force_true": True}
+                    if item.get("group") and answers.norm(item.get("group") or "") != answers.norm(item.get("label") or ""):
+                        f["label"] = f"{item.get('group')[:80]} / {item.get('label') or ''}"
             if is_choice and not f.get("answer_key") and (f.get("source") or "").lower() == "generated":
                 results.append({"ref": f["ref"], "status": "failed", "error": "choices (radio/checkbox/select) need an answer_key: call lookup_answer, or ask_user if none fits"})
                 continue

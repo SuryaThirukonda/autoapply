@@ -112,3 +112,40 @@ def test_grouped_date_options_cover_a_stored_date():
     assert not date_option_covers("May 2028", "May 2027")
     assert not date_option_covers("Yes", "April/May/June")
     assert not date_option_covers("Texas A&M", "May")
+
+
+def test_a_single_full_name_box_maps_to_the_legal_name_not_the_first_name():
+    from goat.adapters import for_portal
+    fm = for_portal("ashby").field_map()
+
+    def key_for(label):
+        return next((k for pat, k, _ in fm if pat.search(label.strip().rstrip("*").strip())), None)
+    assert key_for("First Name and Last Name*") == "identity.legal_name"
+    assert key_for("First & Last Name") == "identity.legal_name"
+    assert key_for("First Name*") == "identity.first_name"
+    assert key_for("Last Name") == "identity.last_name"
+
+
+@pytest.mark.asyncio
+async def test_a_no_answer_presses_the_no_half_of_a_toggle_pair_and_labels_it(store, monkeypatch):
+    """Primer (2026-10-18): fill_batch on the 'Yes' toggle with a stored No pressed nothing; now the 'No' toggle is pressed
+    and the decision reads 'question / No' so the judge knows which half was chosen."""
+    from types import SimpleNamespace
+    from goat import records
+    from goat.browser import fill
+    job = _job()
+    answers.save_answer("bank.sponsorship-now", "No", answer_type="choice", source="questionnaire")
+    d, ctx = _dispatcher(job)
+    items = [{"ref": "e26", "tag": "toggle", "label": "Yes", "group": "Will you require sponsorship?", "pressed": False},
+             {"ref": "e27", "tag": "toggle", "label": "No", "group": "Will you require sponsorship?", "pressed": False}]
+    ctx.last_snapshot = SimpleNamespace(items=items, find=lambda ref: next((i for i in items if i["ref"] == ref), None), refs={i["ref"]: i for i in items}, groups=[])
+    pressed = []
+
+    async def fake_fill_batch(ex, fields):
+        pressed.extend(fields)
+        return [fill.FieldResult(f["ref"], True, "pressed") for f in fields]
+    monkeypatch.setattr(fill, "fill_batch", fake_fill_batch)
+    out, _ = await d.t_fill_batch([{"ref": "e26", "answer_key": "bank.sponsorship-now", "value": None, "source": None, "label": "Sponsorship"}])
+    assert pressed and pressed[0]["ref"] == "e27", (pressed, out)
+    decs = records.decisions(job["id"])
+    assert decs[-1]["ref"] == "e27" and decs[-1]["field_label"] == "Will you require sponsorship? / No" and decs[-1]["value"] == "pressed"

@@ -81,15 +81,15 @@ async def _select_all_text(ex: Executor) -> bool:
 # the same container (property first, then the attribute React leaves behind).
 JS_COMPANION_VALUE = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return '';
   const val = (i) => (i.value || i.getAttribute('value') || '').trim();
-  if (el.tagName === 'INPUT' && val(el)) return val(el);
+  if (el.tagName === 'INPUT' && val(el)) return { from: 'input', value: val(el) };
   let n = el.parentElement;
   for (let i = 0; i < 3 && n; i++, n = n.parentElement) {
     const inp = Array.from(n.querySelectorAll('input[role="combobox"], input[aria-haspopup], input:not([type=hidden]):not([type=checkbox]):not([type=radio])')).find(x => x !== el && val(x));
-    if (inp) return val(inp);
-    const chip = n.querySelector('[class*="single-value" i], [class*="selected" i], [data-automation-id="selectedItem"]');
-    if (chip && chip.textContent.trim()) return chip.textContent.trim();
+    if (inp) return { from: 'input', value: val(inp) };
+    const chip = n.querySelector('[class*="single-value" i], [data-automation-id="selectedItem"]');
+    if (chip && chip.textContent.trim()) return { from: 'chip', value: chip.textContent.trim() };
   }
-  return ''; }"""
+  return { from: '', value: '' }; }"""
 
 JS_IS_WORKDAY_PROMPT = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return false;
   const a = el.getAttribute('data-automation-id') || '';
@@ -427,9 +427,14 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
                     and await _text_box_focused(ex):
                 await _select_all_text(ex)     # replace, never append to, text left in the search box
                 await ex.type_text(want[:40], real_keys=True, delay_ms=20)
-                await asyncio.sleep(1.2)
-                filtered = await ex.eval(js.JS_LIST_OPTIONS)
-                filtered = [o for o in (filtered if isinstance(filtered, list) else []) if _key(o) not in baseline_keys]
+                # Server-backed autocompletes (Ashby's university search, Sierra 2026-10-18) answer in a few seconds
+                filtered = []
+                for _ in range(10):
+                    await asyncio.sleep(0.5)
+                    filtered = await ex.eval(js.JS_LIST_OPTIONS)
+                    filtered = [o for o in (filtered if isinstance(filtered, list) else []) if _key(o) not in baseline_keys]
+                    if filtered:
+                        break
                 if not filtered and shown_now:
                     # The typed wording filtered a react-select down to nothing (Lyft's 'Work Authorization' lists
                     # sentences, the want was 'Yes'): clear it so the whole list is back for the yes/no mapping.
@@ -501,8 +506,10 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
                 # companion input, then the outline's reading of the control (what the gate will see).
                 try:
                     comp = await ex.eval(JS_COMPANION_VALUE, ref)
-                    if isinstance(comp, str) and comp.strip():
-                        shown = comp
+                    cv = str((comp or {}).get("value") or "") if isinstance(comp, dict) else ""
+                    # an input beside a button is the real control; a chip only fills an empty read-back
+                    if cv.strip() and ((comp.get("from") == "input" and (not shown.strip() or after.get("tag") == "button")) or not shown.strip()):
+                        shown = cv
                 except Exception:
                     pass
             if not shown.strip():
@@ -546,7 +553,7 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
                 return FieldResult(ref, True, pick["text"] if _norm(pick["text"]) in _norm(shown) else shown)
             # the control may have been replaced; accept if the picked option text is now on the page near the field
             if _norm(pick["text"]) and _norm(pick["text"]) in _norm(after.get("shown", "")):
-                return FieldResult(ref, True, after.get("shown", pick["text"]))
+                return FieldResult(ref, True, pick["text"])          # the field text echoes the label; the pick is the value
             # still a placeholder: a multi-level prompt opened its next level. Keep it open and continue.
             nxt = await ex.eval(js.JS_LIST_OPTIONS)
             nxt = [o for o in (nxt if isinstance(nxt, list) else []) if _key(o) not in baseline_keys]

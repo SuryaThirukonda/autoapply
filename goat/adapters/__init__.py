@@ -15,6 +15,8 @@ from ..browser.snapshot import Snapshot
 
 # label regex -> (answer key, kind). kind: text | choose
 GENERIC_FIELD_MAP: list[tuple[re.Pattern, str, str]] = [
+    # one box for the whole name comes before the first-name rule (Hadrian's "First Name and Last Name", 2026-10-18)
+    (re.compile(r"^(first (name )?(and|&) last name|first and last name|name \(first and last\)|full legal name)\b", re.I), "identity.legal_name", "text"),
     (re.compile(r"^(legal )?first ?name\b|^given name", re.I), "identity.first_name", "text"),
     (re.compile(r"^(legal )?last ?name\b|^surname|^family name", re.I), "identity.last_name", "text"),
     (re.compile(r"^preferred (first )?name", re.I), "identity.preferred_name", "text"),
