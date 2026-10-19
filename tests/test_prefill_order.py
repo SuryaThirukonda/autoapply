@@ -43,3 +43,36 @@ async def test_country_is_picked_before_the_phone_is_typed(tmp_path):
         assert await ex.page.evaluate("() => document.getElementById('phone').value") == "281-832-1205", res.details
     finally:
         await ex.close()
+
+
+
+LOC_PAGE = """<html><body>
+<div class="field"><label for="loc">Which available location(s) on the posting are you open to relocating to? Please only select
+locations that are listed on the posting. Type city and states below (e.g. Palmdale, CA).</label>
+<textarea id="loc" style="width:300px;height:40px">Anywhere in the United States</textarea></div>
+<div class="field"><label for="loc2">Which of the locations listed in the job posting would you accept?</label>
+<input id="loc2" style="width:200px"></div>
+</body></html>"""
+
+
+async def test_prefill_types_the_posting_locations_into_a_box_that_asks_for_them(tmp_path):
+    """Northrop Grumman (2026-10-19): the box held 'Anywhere in the United States' from his relocation answer."""
+    db.reset_for_tests(tmp_path / "t.db")
+    answers.save_answer("availability.relocation_scope", "Anywhere in the United States", source="seed")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats,locations) VALUES('L1','Northrop Grumman','SWE Intern',"
+                    "'https://ngc.wd1.myworkdayjobs.com/x','workday','[\"Aurora, CO\"]')")
+        jid = con.execute("INSERT INTO jobs(listing_id,status,lane,created_at,updated_at) VALUES('L1','filling','no_account',1,1)").lastrowid
+    job = {"id": jid, "listing_id": "L1", "company": "Northrop Grumman", "title": "SWE Intern", "ats": "workday",
+           "url": "https://ngc.wd1.myworkdayjobs.com/x", "locations": '["Aurora, CO"]'}
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(LOC_PAGE)
+        snap = await snapshot.take(ex)
+        res = await for_portal("greenhouse").prefill(ex, snap, job, 1)
+        assert await ex.page.evaluate("() => document.getElementById('loc').value") == "Aurora, CO", res.details
+        assert await ex.page.evaluate("() => document.getElementById('loc2').value") == "Aurora, CO", res.details
+    finally:
+        await ex.close()

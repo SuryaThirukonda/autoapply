@@ -89,6 +89,31 @@ def consent_key(label: str) -> str | None:
     return "consent.privacy_notice"
 
 
+# "Which available location(s) on the posting are you open to relocating to? Please only select locations that are
+# listed on the posting. Type city and states below (e.g. Palmdale, CA)." (Northrop Grumman, 2026-10-19): the box wants
+# the posting's own locations, not his "Anywhere in the United States".
+POSTING_LOCATIONS = re.compile(
+    r"(locations?(\(s\))?\s+(that are |which are )?(listed |shown |offered |posted )?(on|in) (the|this) (job )?(posting|requisition|job description|job ad)\b|"
+    r"(available|listed|posted|offered) locations?(\(s\))? (on|in|for) (the|this) (job|posting|position|role|requisition)\b)", re.I)
+LOCATION_KEY = re.compile(r"(relocat|location|office)", re.I)
+
+
+def posting_locations(job: dict | None) -> list[str]:
+    """The listing's own "City, ST" locations (Remote and region-only entries left out)."""
+    import json as _json
+    raw = (job or {}).get("locations")
+    try:
+        locs = _json.loads(raw) if isinstance(raw, str) else list(raw or [])
+    except Exception:
+        locs = [x for x in str(raw or "").split(";")]
+    out = []
+    for x in locs:
+        x = str(x or "").strip()
+        if x and "," in x and not re.search(r"\bremote\b", x, re.I) and x not in out:
+            out.append(x)
+    return out
+
+
 SELF_ID = re.compile(r"(gender|race|ethnicit|hispanic|veteran|disabilit|pronoun|transgender|sexual orientation)", re.I)
 NEGATED = re.compile(r"^(not |no |none|i do not|i am not|unwilling|unable|never|decline|prefer not)", re.I)
 
@@ -202,6 +227,17 @@ class Adapter:
                 continue
             nv = answers.norm(val)
             key = None
+            if item.get("tag") in ("input", "textarea") and POSTING_LOCATIONS.search(label) and posting_locations(job):
+                # a box for the posting's own locations holds them all (Northrop Grumman held "Anywhere in the United
+                # States", 2026-10-19): verified when it does, re-typed when it does not
+                want = "; ".join(posting_locations(job))
+                if nv == answers.norm(want):
+                    records.record_decision(job["id"], page_no, label, val, "standing:availability.relocation_scope", item["ref"])
+                    res.set += 1
+                    res.details.append({"label": label, "ok": True, "verified": "posting locations"})
+                else:
+                    plan.append({"ref": item["ref"], "value": want, "_label": label, "_key": "availability.relocation_scope"})
+                continue
             for pat, k, _kind in self.field_map():
                 if pat.search(label.strip().rstrip("*").strip()):
                     a = answers.get(k, job.get("company", ""), self.portal)
@@ -259,6 +295,10 @@ class Adapter:
             if item.get("tag") not in ("input", "textarea", "select", "dropdown") or item.get("type") in ("checkbox", "radio", "file", "password"):
                 continue
             if item.get("value") or item.get("shown"):
+                continue
+            if item.get("tag") in ("input", "textarea") and POSTING_LOCATIONS.search(label) and posting_locations(job):
+                plan.append({"ref": item["ref"], "value": "; ".join(posting_locations(job)), "_label": label,
+                             "_key": "availability.relocation_scope"})
                 continue
             for pat, key, kind in self.field_map():
                 if pat.search(label.strip().rstrip("*").strip()):

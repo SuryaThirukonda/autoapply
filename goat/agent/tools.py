@@ -19,7 +19,7 @@ from ..browser.captcha import detect_challenge
 from ..browser.executor import ClickRefused, Executor, NavigationRefused
 from ..browser.submit import submit as do_submit
 from ..config import SETTINGS
-from ..gate import guardrail_check, run_gate
+from ..gate import guardrail_check, has_submit_control, run_gate
 from ..human.questions import BROKER
 
 log = logging.getLogger(__name__)
@@ -231,29 +231,7 @@ RULE_TEXT = re.compile(r"^\s*(select|pick|choose|tick|check|add|always|leave)\b|
                        r"^\s*(all|every|any) (offered|available|listed)( \w+)?\s*$", re.I)
 
 
-# "Which available location(s) on the posting are you open to relocating to? Please only select locations that are
-# listed on the posting. Type city and states below (e.g. Palmdale, CA)." (Northrop Grumman, 2026-10-19): the box wants
-# the posting's own locations, not his "Anywhere in the United States".
-POSTING_LOCATIONS = re.compile(
-    r"(locations?(\(s\))?\s+(that are |which are )?(listed |shown |offered |posted )?(on|in) (the|this) (job )?(posting|requisition|job description|job ad)\b|"
-    r"(available|listed|posted|offered) locations?(\(s\))? (on|in|for) (the|this) (job|posting|position|role|requisition)\b)", re.I)
-LOCATION_KEY = re.compile(r"(relocat|location|office)", re.I)
-
-
-def posting_locations(job: dict | None) -> list[str]:
-    """The listing's own "City, ST" locations (Remote and region-only entries left out)."""
-    import json as _json
-    raw = (job or {}).get("locations")
-    try:
-        locs = _json.loads(raw) if isinstance(raw, str) else list(raw or [])
-    except Exception:
-        locs = [x for x in str(raw or "").split(";")]
-    out = []
-    for x in locs:
-        x = str(x or "").strip()
-        if x and "," in x and not re.search(r"\bremote\b", x, re.I) and x not in out:
-            out.append(x)
-    return out
+from ..adapters import LOCATION_KEY, POSTING_LOCATIONS, posting_locations  # noqa: E402  (Northrop Grumman, 2026-10-19)
 
 
 def concrete_entries(answer) -> list[str]:
@@ -2030,7 +2008,14 @@ class ToolDispatcher:
             not stoppers or (bool(self.RFY_GIVE_UP.search(reason)) and not real_challenge))
         hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch", "needs_you")) \
             and not rfy_soft
-        if not hard and self.ctx.park_attempts < 4:
+        # past the budget, a park is still checked twice when the page has a submit control: Northrop Grumman spent its
+        # four parks on a portal error that had cleared, then parked from Review over an earlier attempt's certification
+        # problem that was no longer on the page (2026-10-19)
+        extra = not hard and self.ctx.park_attempts >= 4 and self.ctx.control_failures.get("park:past_budget", 0) < 2 \
+            and bool(self.ctx.last_snapshot is not None and has_submit_control(self.ctx.last_snapshot))
+        if extra:
+            self.ctx.control_failures["park:past_budget"] = self.ctx.control_failures.get("park:past_budget", 0) + 1
+        if not hard and (self.ctx.park_attempts < 4 or extra):
             # An eager park: run the gate first. If it passes, the right move is submit; if it blocks,
             # the model gets the concrete blockers instead of giving up. Four checks, not two: Epic Games spent both
             # within 30 s (one on the posting page before Apply opened the form) and its third park went through
@@ -2043,9 +2028,13 @@ class ToolDispatcher:
                             free_text_answers=[f["answer"] for f in self.ctx.free_text], portal=self.ctx.portal, page_no=self.ctx.page_no)
             db.event(self.ctx.job_id, "park:checked", {"reason": reason[:200], "gate": gate.as_dict()})
             if gate.passed:
-                return {"error": "not parked: the code gate PASSES on this page. Call submit now (the gate decides; in shadow mode it stops before the click)."}, None
+                return {"error": "not parked: the code gate PASSES on this page. A problem an EARLIER attempt recorded is not on "
+                                 "this page now: judge the page, not the history. Call submit now (the gate decides; the "
+                                 "checks before submitting stop anything wrong)."}, None
             from ..gate import NOT_APPLICATION
-            if gate.result == "blocked" and low.startswith("portal_error") and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons)                     and any("error or maintenance notice" in r for r in gate.reasons):
+            if extra:
+                pass   # past the budget and the gate blocks: the park stands
+            elif gate.result == "blocked" and low.startswith("portal_error") and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons)                     and any("error or maintenance notice" in r for r in gate.reasons):
                 pass   # the page shows the portal's own error or maintenance notice: the park stands
             elif gate.result == "blocked" and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons):
                 # a mid-form page (no submit control) is no portal error: Northrop Grumman parked on My Information after

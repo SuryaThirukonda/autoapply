@@ -1010,3 +1010,35 @@ async def test_fill_batch_types_the_posting_locations(store, monkeypatch):
     answers.save_answer("availability.relocation_scope", "Anywhere in the United States", answer_type="text", source="questionnaire")
     await d.t_fill_batch([{"ref": "e59", "answer_key": "availability.relocation_scope", "value": None, "source": None, "label": lab}])
     assert typed.get("e59") == "Aurora, CO", typed
+
+
+
+@pytest.mark.asyncio
+async def test_a_park_past_its_budget_on_a_passing_review_page_is_bounced(store, monkeypatch):
+    """Northrop Grumman (2026-10-19): four parks went to a cleared portal error, then the run parked from Review over an
+    earlier attempt's certification problem; the gate would have passed."""
+    from types import SimpleNamespace
+    from goat.agent import tools as toolsmod
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher({"id": 216, "company": "Northrop Grumman", "ats": "workday"})
+    snap = Snapshot(url="u", title="t", headings=["Review"], items=[{"ref": "e3", "tag": "button", "label": "Submit", "submitish": True}],
+                    groups=[], errors={}, challenge={})
+    for i in snap.items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    ctx.park_attempts = 4
+
+    async def page_text(n=30000):
+        return "Review My Information My Experience Submit"
+
+    async def take(ex):
+        return snap
+    ctx.ex.page_text = page_text
+    monkeypatch.setattr(toolsmod.snapmod, "take", take)
+    monkeypatch.setattr(toolsmod, "run_gate", lambda **k: SimpleNamespace(passed=True, result="pass_shadow", reasons=[], as_dict=lambda: {}))
+    out, _ = await d.t_park("no_standing_answer: required Certifications field has no accurate option (prior attempt)")
+    assert "PASSES" in out["error"]
+    out, _ = await d.t_park("no_standing_answer: required Certifications field has no accurate option (prior attempt)")
+    assert "PASSES" in out["error"]
+    with pytest.raises(toolsmod.Parked):          # twice past the budget, then the park stands
+        await d.t_park("no_standing_answer: required Certifications field has no accurate option (prior attempt)")
