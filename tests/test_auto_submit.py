@@ -379,3 +379,29 @@ def test_a_written_answer_gets_his_own_stored_answer_as_evidence(store, tmp_path
     records.record_decision(job["id"], 1, "Accommodation needs", "No accommodation is needed.", "generated", "e9")
     un = {u["label"]: u for u in records.unconfirmed_answers(job["id"], job["company"], job["ats"])}
     assert "OWN STORED ANSWER (availability.accommodation_needed, confirmed by Surya): No" in un["Accommodation needs"]["evidence"]
+
+
+
+def test_a_readback_complaint_the_page_no_longer_supports_is_dropped():
+    import asyncio
+    from types import SimpleNamespace
+    from goat import verify
+    from goat.browser.snapshot import Snapshot
+    snap = Snapshot(url="u", title="t", headings=[], items=[
+        {"ref": "e162", "tag": "input", "type": "text", "combo": True, "label": "Expected graduation date", "value": "April - June 2028"},
+        {"ref": "e167", "tag": "input", "type": "text", "combo": True, "label": "Degree program", "value": ""}], groups=[], errors={}, challenge={})
+    for i in snap.items:
+        snap.refs[i["ref"]] = i
+    ctx = SimpleNamespace(readback_open={1: ["field Expected graduation date [e162] shows '' but decision was 'April - June 2028'",
+                                            "field Degree program [e167] shows '' but decision was 'Bachelor (BA/BS)'"]})
+
+    async def fake_take(ex):
+        return snap
+    import goat.browser.snapshot as snapmod
+    orig = snapmod.take
+    snapmod.take = fake_take
+    try:
+        left = asyncio.run(verify.live_open_readback(ctx, None))
+    finally:
+        snapmod.take = orig
+    assert len(left) == 1 and "[e167]" in left[0]

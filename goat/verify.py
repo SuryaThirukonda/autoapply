@@ -52,6 +52,44 @@ def open_readback(ctx) -> list[str]:
     return out
 
 
+_MISMATCH = __import__("re").compile(r"\[(e\d+)\] shows ('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\") but decision was ('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")")
+
+
+async def live_open_readback(ctx, ex) -> list[str]:
+    """open_readback, without the complaints the page no longer supports: a field that now holds its decided value
+    was fixed after its page was left (American Express' Oracle pickers held the right values while the stale
+    complaints failed every check, 2026-10-19)."""
+    opened = getattr(ctx, "readback_open", None) or {}
+    if not opened:
+        return []
+    try:
+        import ast
+        from . import readback as rbm
+        from .browser import snapshot as snapmod
+        snap = await snapmod.take(ex)
+    except Exception:
+        return open_readback(ctx)
+    for page in list(opened):
+        keep = []
+        for m in opened[page] or []:
+            mm = _MISMATCH.search(m)
+            item = snap.refs.get(mm.group(1)) if mm else None
+            if item is not None:
+                try:
+                    want = ast.literal_eval(mm.group(3))
+                except Exception:
+                    want = None
+                if want is not None and rbm.values_equal(str(want), rbm._page_value(item), rbm._kind_for(item, str(want)),
+                                                         item.get("label") or ""):
+                    continue
+            keep.append(m)
+        if keep:
+            opened[page] = keep
+        else:
+            opened.pop(page, None)
+    return open_readback(ctx)
+
+
 def pending_questions(ctx) -> list[str]:
     company = ctx.job.get("company", "")
     return [k for k in ctx.asked_keys if not ((a := answers.get(k, company, ctx.portal)) and a.has_value)]
@@ -62,7 +100,7 @@ async def verify(ctx, ex) -> Verification:
     from .judge import judge_page
     why: list[str] = []
     fixes: list[str] = []
-    rb = open_readback(ctx)
+    rb = await live_open_readback(ctx, ex)
     if rb:
         why.append("read-back: " + "; ".join(rb[:3]))
         fixes += [f"{m} (go back to that page with go_to_step, re-set the field from its answer_key, then return and submit)" for m in rb[:4]]

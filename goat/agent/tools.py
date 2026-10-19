@@ -804,6 +804,15 @@ class ToolDispatcher:
 
     async def t_choose(self, ref: str, answer_key: str | None, options: list[str], label: str, source: str | None):
         out, img = await self._t_choose(ref, answer_key, options, label, source)
+        if isinstance(out, dict) and (out.get("status") in ("set", "kept") or str(out.get("summary", "")).startswith("1 set")):
+            # a picker set again fixes the read-back complaint recorded for it when its page was left; fill_batch already
+            # drops those, choose did not, and American Express' verify kept failing on pickers that held the right values
+            for page in list(self.ctx.readback_open):
+                left = [m for m in self.ctx.readback_open[page] if f"[{ref}]" not in m]
+                if left:
+                    self.ctx.readback_open[page] = left
+                else:
+                    self.ctx.readback_open.pop(page, None)
         if answer_key and answer_key.startswith("background.certification") and self.ctx.portal == "workday" \
                 and isinstance(out, dict) and out.get("status") == "failed":
             try:
