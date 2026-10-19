@@ -125,6 +125,10 @@ JS_SNAPSHOT = r"""
       // Setting the mirror too knocked Niantic's answer out of sync and the submit was refused (2026-10-18).
       if (tag === 'input' && (type === 'checkbox' || type === 'radio') && el.getAttribute('tabindex') === '-1'
           && el.parentElement && el.parentElement.querySelector('button[aria-pressed], [role="button"][aria-pressed]')) continue;
+      // An aria-hidden, untabbable text box is a layout mirror, not a field: Oracle sizes each textarea with a hidden
+      // copy of its text, and the gate demanded a decision for every copy (onsemi, 2026-10-19).
+      if ((tag === 'textarea' || (tag === 'input' && /^(text|)$/.test(type))) && el.getAttribute('aria-hidden') === 'true'
+          && el.getAttribute('tabindex') === '-1') continue;
       // Site chrome (header/nav menus, account and language switchers) is not part of the form.
       if (el.closest('header, nav, [role="banner"], [role="navigation"], [data-automation-id="utilityButtonBar"], [data-automation-id="header"], footer, [role="contentinfo"]')) {
         if (!(tag === 'input' || tag === 'textarea' || tag === 'select')) continue;

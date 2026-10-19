@@ -38,3 +38,25 @@ async def test_an_oracle_picker_reads_its_own_value_not_its_row():
         assert info.get("value") == "October" and not info.get("shown"), info
     finally:
         await ex.close()
+
+
+MIRROR = """<html><body>
+<div class="input-row"><label for="r">Responsibilities</label>
+  <textarea id="r" class="input-row__control input-row__control--autoheight">Forecast baggage revenue</textarea>
+  <textarea class="input-row__control input-row__control--helper" aria-hidden="true" tabindex="-1"
+            style="position:absolute;top:-800px">Forecast baggage revenue</textarea></div>
+</body></html>"""
+
+
+async def test_an_aria_hidden_layout_mirror_is_not_a_field():
+    """onsemi (2026-10-19): Oracle sizes each textarea with an aria-hidden copy; the gate wanted a decision for it."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(MIRROR)
+        snap = await snapshot.take(ex)
+        boxes = [i for i in snap.items if i.get("tag") == "textarea"]
+        assert len(boxes) == 1 and boxes[0].get("label") == "Responsibilities", boxes
+    finally:
+        await ex.close()

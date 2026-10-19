@@ -610,7 +610,13 @@ class Oracle(Adapter):
              "missing: pick 'Other' and type 'LinkedIn' in its 'Specify Other' box; 'ADD EXPERIENCE' opens one block per role "
              "(experience.work.N title, company, dates) and 'ADD EDUCATION' one for Texas A&M University (major, graduation May 2028); "
              "Veteran Status is a dropdown (self_id.veteran_status); the Full Name signature takes his legal name. Work through every "
-             "section top to bottom before calling submit; never hand the form back while a stored answer covers what is left.")
+             "section top to bottom before calling submit; never hand the form back while a stored answer covers what is left. "
+             "Experience and Education keep each saved entry as a tile with Edit / Delete (onsemi, 2026-10-19): read the tiles "
+             "first and add only stored entries that have no tile, never a second copy. 'Add Experience' opens a form: Employer "
+             "Name, Job Title, Employer City / Country, then the Start Date and End Date pickers (Month and Year are separate "
+             "pickers: choose the month name, then the year), Current Job for the current role, Responsibilities from "
+             ".description; then click the form's own ADD EXPERIENCE (or ADD EDUCATION) button to save it as a tile. A form "
+             "left open for an entry that already has a tile is closed with its CANCEL button.")
 
 
 class ICIMS(Adapter):
