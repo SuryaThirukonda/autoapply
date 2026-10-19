@@ -29,6 +29,7 @@ class Snapshot:
     page_height: int = 0
     total_items: int = 0
     refs: dict[str, dict] = field(default_factory=dict)
+    unsaved: list[dict] = field(default_factory=list)   # answers an autosaving form shows but has not stored (Ashby)
 
     def find(self, ref: str) -> dict | None:
         return self.refs.get(ref)
@@ -110,6 +111,9 @@ def render(s: Snapshot, max_chars: int = MAX_CHARS) -> str:
         lines.append(f"EMAILED CODE PAGE: {s.challenge.get('code_inputs')} code boxes (call enter_email_code; the code never comes to you)")
     if s.headings:
         lines.append("HEADINGS: " + " | ".join(s.headings[:8]))
+    for u in s.unsaved[:6]:
+        lines.append(f"NOT STORED BY THE FORM: '{u.get('title', '')[:80]}' shows {u.get('shown', '')!r} but the portal saved "
+                     f"{u.get('saved', '') or 'nothing'!r} (tick another option, then this one again)")
     lines.append(f"VIEWPORT scrollY={s.scroll_y} pageHeight={s.page_height} ({s.total_items} interactive elements, {len(s.items)} listed)")
     for g in s.groups:
         lines.append(_fmt_group(g))
@@ -155,6 +159,12 @@ async def take(ex: Executor, max_items: int = MAX_ITEMS, with_text: bool = False
     for g in snap.groups:
         for o in g.get("options", []):
             snap.refs[o["ref"]] = {**o, "tag": "input", "type": g.get("kind"), "group": g.get("label")}
+    if "ashbyhq.com" in (snap.url or ex.url or "").lower():
+        try:
+            u = await ex.eval(js.JS_ASHBY_UNSAVED)
+            snap.unsaved = u if isinstance(u, list) else []
+        except Exception:
+            snap.unsaved = []
     if with_text:
         snap.text = await ex.page_text(6000)
     return snap

@@ -25,11 +25,70 @@ class FieldResult:
         return {"ref": self.ref, "status": "set" if self.ok else "failed", "readback": self.readback, "error": self.error}
 
 
+# Portals that store every answer with its own background request the moment it changes. Two saves in flight at
+# once lose one of them (Sierra, 2026-10-19: four radios ticked in one script call, two never stored, and the
+# submit came back "Missing entry for required field" while the page showed all four).
+AUTOSAVE_HOSTS = ("ashbyhq.com",)
+
+
+def autosaves(ex: Executor) -> bool:
+    url = (getattr(ex, "url", "") or "").lower()
+    return any(h in url for h in AUTOSAVE_HOSTS)
+
+
+async def ashby_resave(ex: Executor) -> list[dict]:
+    """Make an autosaving form store the answers it shows but lost: a radio is ticked to another option and back
+    (each save awaited), a text box is focused and left. Returns the fields still unsaved afterwards."""
+    try:
+        bad = await ex.eval(js.JS_ASHBY_UNSAVED)
+    except Exception:
+        return []
+    bad = bad if isinstance(bad, list) else []
+    if not bad:
+        return []
+    for b in bad:
+        try:
+            if b.get("kind") == "radio":
+                r = await ex.eval(js.JS_ASHBY_REPICK, [b.get("path"), "away", -1])
+                if isinstance(r, dict) and r.get("ok"):
+                    await ex.wait_saves()
+                    await ex.eval(js.JS_ASHBY_REPICK, [b.get("path"), "back", r.get("idx")])
+                    await ex.wait_saves()
+            elif b.get("kind") == "text":
+                await ex.eval(js.JS_ASHBY_REPICK, [b.get("path"), "blur", -1])
+                await ex.wait_saves()
+        except Exception:
+            continue
+    try:
+        left = await ex.eval(js.JS_ASHBY_UNSAVED)
+    except Exception:
+        left = []
+    left = left if isinstance(left, list) else []
+    try:
+        from .. import db
+        db.event(ex.job_id, "fill:resaved", {"fields": [b.get("title", "")[:60] for b in bad][:10],
+                                             "still_unsaved": [b.get("title", "")[:60] for b in left][:10]})
+    except Exception:
+        pass
+    return left
+
+
 async def fill_batch(ex: Executor, fields: list[dict]) -> list[FieldResult]:
-    """fields: [{ref, value}] where value is str or bool. Password and file inputs are refused."""
+    """fields: [{ref, value}] where value is str or bool. Password and file inputs are refused. On an autosaving
+    form (Ashby) the fields are set one at a time, each save awaited, and lost saves are redone at the end."""
     if not fields:
         return []
-    raw = await ex.eval(js.JS_FILL_BATCH, fields)
+    serial = autosaves(ex)
+    if serial:
+        raw = []
+        for f in fields:
+            one = await ex.eval(js.JS_FILL_BATCH, [f])
+            one = one if isinstance(one, list) else []
+            raw += one
+            if any(r.get("ok") and not r.get("real_click") for r in one):
+                await ex.wait_saves()
+    else:
+        raw = await ex.eval(js.JS_FILL_BATCH, fields)
     out = []
     for r in raw if isinstance(raw, list) else []:
         if r.get("real_click"):
@@ -37,6 +96,8 @@ async def fill_batch(ex: Executor, fields: list[dict]) -> list[FieldResult]:
             try:
                 await ex.click_ref(str(r.get("ref", "")))
                 await asyncio.sleep(0.3)
+                if serial:
+                    await ex.wait_saves()
                 info = await ex.read_ref(str(r.get("ref", "")))
                 on = bool(info.get("pressed"))
                 r = {**r, "readback": "pressed" if on else "unpressed", "ok": on == bool(r.get("want"))}
@@ -44,6 +105,14 @@ async def fill_batch(ex: Executor, fields: list[dict]) -> list[FieldResult]:
                 r = {**r, "ok": False, "error": str(e)}
         out.append(FieldResult(ref=r.get("ref", ""), ok=bool(r.get("ok")), readback=str(r.get("readback", "")),
                                error=str(r.get("error", ""))))
+    if serial:
+        left = await ashby_resave(ex)
+        lost = {ref for b in left for ref in (b.get("refs") or [])}
+        for fr in out:
+            if fr.ref in lost and fr.ok:
+                fr.ok = False
+                fr.error = ("the page shows this answer but the form has not stored it: tick a different option, then this one "
+                            "again (or re-type the text)")
     return out
 
 
@@ -377,6 +446,13 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
 
 
 async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bool = True) -> FieldResult:
+    r = await _choose(ex, ref, wants, type_to_filter=type_to_filter)
+    if autosaves(ex):
+        await ex.wait_saves()
+    return r
+
+
+async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bool = True) -> FieldResult:
     """Pick an option in a custom dropdown / combobox / autocomplete.
 
     Order: (1) react-select props when the control is one; (2) click to open, optionally type the
@@ -736,6 +812,13 @@ async def _shows_file(ex: Executor, path: Path) -> bool:
 
 
 async def upload_file(ex: Executor, ref: str, path: Path) -> FieldResult:
+    r = await _upload_file(ex, ref, path)
+    if autosaves(ex):
+        await ex.wait_saves(min_s=1.0, timeout_s=15.0)
+    return r
+
+
+async def _upload_file(ex: Executor, ref: str, path: Path) -> FieldResult:
     if not path.exists():
         return FieldResult(ref, False, "", f"file missing: {path.name}")
     # Never attach twice: after one upload the portal replaces the drop zone, and a second call lands

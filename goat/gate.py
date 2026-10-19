@@ -216,6 +216,9 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     # 5c. read-back: every decision made on a control still on this page must be what the control shows now.
     from . import readback
     reasons += readback.diff(decs, snapshot, page_no)
+    for u in (getattr(snapshot, "unsaved", None) or [])[:6]:
+        reasons.append(f"the form shows {u.get('shown', '')!r} for '{(u.get('title') or '')[:80]}' but has not stored it (it would be "
+                       "missing on submit): tick another option, then this one again, or re-type the text")
 
     # 6. generated text against guardrails
     for t in free_text_answers:

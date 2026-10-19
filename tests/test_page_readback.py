@@ -328,3 +328,32 @@ async def test_the_chain_rule_finds_ungrouped_workday_checkboxes_on_the_page(sto
         assert ctx.readback_open == {}                       # the fix cleared the stale complaint
     finally:
         await ex.close(close_browser=True)
+
+
+OFFICES = """<!doctype html><html><body style="margin:20px">
+<fieldset><legend>Which Sierra office would you prefer to work from?</legend>
+  <label><input type="radio" name="o" id="sf"> San Francisco office</label>
+  <label><input type="radio" name="o" id="ny"> New York office</label></fieldset>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_ranked_location_list_picks_one_radio_by_rank(store, tmp_path):
+    """Sierra (2026-10-19): 'All offered locations; Dallas; ...; New York; San Francisco' on a one-choice office question."""
+    job = _job()
+    answers.save_answer("availability.location_ranking", "All offered locations; Dallas; Houston; Austin; New York; San Francisco",
+                        answer_type="choice_chain", source="questionnaire")
+    ex = await _race(tmp_path, OFFICES, "offices.html")
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        refs = {o["label"].strip()[:3]: o["ref"] for g in snap.groups for o in g["options"]}
+        key = "availability.location_ranking"
+        out, _ = await d.t_fill_batch([{"ref": refs["San"], "answer_key": key, "value": None, "source": None, "label": "Office"}])
+        assert out["results"][0]["status"] == "failed" and "New York office" in out["results"][0]["error"]
+        out, _ = await d.t_fill_batch([{"ref": refs["New"], "answer_key": key, "value": None, "source": None, "label": "Office"}])
+        assert out["results"][0]["status"] == "set"
+    finally:
+        await ex.close(close_browser=True)

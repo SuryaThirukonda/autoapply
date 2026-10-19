@@ -872,3 +872,64 @@ JS_CHOICE_SIBLINGS = r"""(ref) => {
   }
   return JSON.stringify([]);
 }"""
+
+
+# Ashby keeps each answer twice: the value on screen (component state) and the value its server stored (`savedValue`,
+# from the form render). A save lost to overlapping requests leaves the answer on screen but missing at submit:
+# "Missing entry for required field" (Sierra, 2026-10-19). Lists every field whose stored value differs from the
+# one shown (a text box only when nothing was stored at all).
+JS_ASHBY_UNSAVED = r"""() => {
+  const out = [];
+  const norm = v => v === undefined || v === null ? '' : (Array.isArray(v) ? v.map(x => String(x)).sort().join(' | ') : String(v).trim());
+  for (const entry of document.querySelectorAll('[data-field-path]')) {
+    const el = entry.querySelector('input:not([type="file"]):not([type="hidden"]), textarea, select, button[aria-pressed], [role="combobox"]');
+    if (!el) continue;
+    const fk = Object.keys(el).find(k => k.startsWith('__reactFiber'));
+    let f = fk ? el[fk] : null;
+    let shown, hasShown = false, choice = false, saved, found = false, title = '';
+    for (let i = 0; i < 25 && f; i++, f = f.return) {
+      const p = f.memoizedProps || {};
+      if (typeof p !== 'object') continue;
+      if ('savedValue' in p) { saved = p.savedValue; found = true; title = (p.field && (p.field.title || p.field.path)) || ''; break; }
+      if ('labeledValues' in p || 'selectableValues' in p) { choice = true; if ('value' in p) { shown = p.value; hasShown = true; } continue; }
+      if (!hasShown && typeof f.type !== 'string' && 'value' in p) { shown = p.value; hasShown = true; }
+    }
+    if (!found || !hasShown) continue;
+    const s = norm(shown), v = norm(saved);
+    if (s === v) continue;
+    if (!choice && typeof shown !== 'boolean' && (v !== '' || s === '')) continue;
+    const radios = entry.querySelectorAll('input[type="radio"]').length;
+    out.push({ path: entry.getAttribute('data-field-path'), title: String(title).slice(0, 120), shown: s.slice(0, 80), saved: v.slice(0, 80),
+               kind: radios >= 2 ? 'radio' : (choice ? 'choice' : (typeof shown === 'boolean' ? 'toggle' : 'text')),
+               refs: Array.from(entry.querySelectorAll('[data-goat-ref]')).map(e => e.getAttribute('data-goat-ref')).slice(0, 16) });
+  }
+  return JSON.stringify(out);
+}"""
+
+# Make Ashby store an answer it shows but lost: 'away' ticks another radio of the field (returns the index that was
+# ticked), 'back' ticks that index again, 'blur' focuses and leaves a text box (its blur handler saves).
+JS_ASHBY_REPICK = r"""([path, step, idx]) => {
+  const entry = Array.from(document.querySelectorAll('[data-field-path]')).find(e => e.getAttribute('data-field-path') === path);
+  if (!entry) return JSON.stringify({ ok: false, error: 'field not found' });
+  if (step === 'blur') {
+    const el = entry.querySelector('input:not([type="file"]):not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), textarea');
+    if (!el) return JSON.stringify({ ok: false, error: 'no text box' });
+    el.focus(); el.blur();
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    return JSON.stringify({ ok: true });
+  }
+  const radios = Array.from(entry.querySelectorAll('input[type="radio"]'));
+  if (radios.length < 2) return JSON.stringify({ ok: false, error: 'not a radio group' });
+  if (step === 'away') {
+    const cur = radios.findIndex(r => r.checked);
+    if (cur < 0) return JSON.stringify({ ok: false, error: 'nothing picked' });
+    const other = radios.find((r, i) => i !== cur && !r.disabled);
+    if (!other) return JSON.stringify({ ok: false, error: 'no other option' });
+    other.click();
+    return JSON.stringify({ ok: true, idx: cur });
+  }
+  const r = radios[idx];
+  if (!r) return JSON.stringify({ ok: false, error: 'option gone' });
+  if (!r.checked) r.click();
+  return JSON.stringify({ ok: r.checked, idx });
+}"""

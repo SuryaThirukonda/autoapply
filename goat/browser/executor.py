@@ -120,6 +120,9 @@ class Executor:
         self._new_tabs: list[Page] = []
         self._tab_notes: list[str] = []
         self.pending_chooser = None   # a native file picker the page opened (intercepted, never shown)
+        # fetch / XHR requests in flight on this job's tabs (start time by request), for wait_saves
+        self._inflight: dict = {}
+        self._net_t = 0.0
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -166,6 +169,36 @@ class Executor:
         # close it); upload_resume fulfils the pending chooser instead.
         page.on("filechooser", self._on_filechooser)
         page.on("close", lambda p=page: self.job_pages.remove(p) if p in self.job_pages else None)
+        page.on("request", self._on_request)
+        page.on("requestfinished", self._on_request_done)
+        page.on("requestfailed", self._on_request_done)
+
+    def _on_request(self, req) -> None:
+        try:
+            if req.resource_type in ("fetch", "xhr"):
+                self._inflight[req] = time.monotonic()
+                self._net_t = time.monotonic()
+        except Exception:
+            pass
+
+    def _on_request_done(self, req) -> None:
+        if self._inflight.pop(req, None) is not None:
+            self._net_t = time.monotonic()
+
+    async def wait_saves(self, min_s: float = 0.7, quiet_s: float = 0.3, timeout_s: float = 6.0) -> bool:
+        """Wait for a form's background saves: at least min_s, then until no fetch / XHR is in flight and none started
+        or finished for quiet_s. Ashby stores every answer with its own request as it changes (a text box after a
+        500 ms pause), and overlapping saves lose answers (Sierra, 2026-10-19). A request older than 10 s (a poll
+        or stream) is not waited for. True when the page went quiet before timeout_s."""
+        t0 = time.monotonic()
+        await asyncio.sleep(min_s)
+        while time.monotonic() - t0 < timeout_s:
+            now = time.monotonic()
+            live = [t for t in self._inflight.values() if now - t < 10.0]
+            if not live and now - self._net_t >= quiet_s:
+                return True
+            await asyncio.sleep(0.05)
+        return False
 
     def _on_popup(self, popup: Page) -> None:
         self._track(popup)
