@@ -1469,7 +1469,10 @@ class ToolDispatcher:
             db.event(self.ctx.job_id, "park:checked", {"reason": reason[:200], "gate": gate.as_dict()})
             if gate.passed:
                 return {"error": "not parked: the code gate PASSES on this page. Call submit now (the gate decides; in shadow mode it stops before the click)."}, None
-            if gate.result == "blocked":
+            from ..gate import NOT_APPLICATION
+            if gate.result == "blocked" and low.startswith("portal_error") and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons):
+                pass   # nothing to fix: the page is a portal error or has nothing to submit, so the park stands
+            elif gate.result == "blocked":
                 return {"error": "not parked yet: the gate names concrete blockers. Fix them, then call submit; park only if one truly has no stored answer.",
                         "blockers": gate.reasons}, None
         raise Parked(reason, state, blocked_on=pending if state == "hold" else None)

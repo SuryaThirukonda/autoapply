@@ -54,7 +54,27 @@ PORTAL_ERROR = re.compile(
     r"(something went wrong.{0,160}(error code|refresh the page|try again)|error code:\s*vps\b|"
     r"\b(500|502|503|504)\b.{0,40}(internal server error|bad gateway|service unavailable|gateway time-?out)|"
     r"(we are|we're|we['\u2019]re) (currently )?(experiencing technical difficulties|performing (scheduled )?maintenance)|"
-    r"(site|system|service) is (temporarily )?(unavailable|down for maintenance))", re.I | re.S)
+    r"(site|system|service) is (temporarily )?(unavailable|down for maintenance)|"
+    # Workday's maintenance page (Northrop Grumman, 2026-10-18): "Workday is currently unavailable."
+    r"\b(workday|the site|this site|the system|the portal|our careers site) is (currently |temporarily )?unavailable\b)", re.I | re.S)
+
+# The gate passes only where an application can actually be submitted (Northrop Grumman's maintenance page had no
+# controls at all and the gate passed, 2026-10-18). Reasons with this prefix mean "this is not the application".
+NOT_APPLICATION = "not an application page:"
+SUBMIT_LABEL = re.compile(r"\bsubmit\b|\bsend (my |your |the )?application\b|"
+                          r"^(finish|complete|complete (my |your )?application|apply|apply now|apply for this (job|position|role))$", re.I)
+
+
+def has_submit_control(snapshot: Snapshot) -> bool:
+    """A submit control on the page: one the snapshot marked, or any button whose label reads like a submit
+    (the model may name a final button the snapshot's exact list does not know)."""
+    if snapshot.submit_buttons():
+        return True
+    for i in snapshot.items:
+        buttonish = "submitish" in i or i.get("tag") in ("button", "a") or (i.get("type") or "").lower() in ("submit", "button")
+        if buttonish and SUBMIT_LABEL.search(" ".join(str(i.get("label") or "").split())):
+            return True
+    return False
 
 
 def portal_error(page_text: str) -> str | None:
@@ -93,6 +113,7 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     # 2. challenge
     if snapshot.challenge.get("challenge"):
         return GateResult("captcha_present", [f"human-verification challenge: {', '.join(snapshot.challenge.get('kinds') or [])}"])
+
 
     # 3. page errors and required fields
     # Workday's Review page lists every section; "No Response" under Work Experience (he has four roles) or
@@ -193,6 +214,12 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         blocks, _ = guardrail_check(t)
         if blocks:
             return GateResult("guardrail_block", [f"guardrail {b}" for b in blocks])
+
+    # 7. only a page that can be submitted passes: a maintenance notice or a mid-form page never does
+    if not has_submit_control(snapshot):
+        perr = portal_error(page_text)
+        reasons.append(f"{NOT_APPLICATION} " + (f"the portal shows an error or maintenance notice ({perr[:120]}): park portal_error" if perr else
+                       "no submit control on this page: fill it and continue to the final (Review) page; if the portal is broken, park portal_error"))
 
     if reasons:
         return GateResult("blocked", reasons)
