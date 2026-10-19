@@ -1042,3 +1042,29 @@ async def test_a_park_past_its_budget_on_a_passing_review_page_is_bounced(store,
     assert "PASSES" in out["error"]
     with pytest.raises(toolsmod.Parked):          # twice past the budget, then the park stands
         await d.t_park("no_standing_answer: required Certifications field has no accurate option (prior attempt)")
+
+
+@pytest.mark.asyncio
+async def test_a_ranked_chain_presses_the_first_offered_toggle(store, monkeypatch):
+    """Vertiv (2026-10-19): Oracle's 'How did you come to know about this opportunity?' pills read 'Employee Referral',
+    'Career Site', 'LinkedIn/Job Portal', 'Recruitment Agency', 'Other'; the chain 'LinkedIn; Job Board; ...' was refused."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher({"id": 24, "company": "Vertiv", "ats": "oracle"})
+    g = "How did you come to know about this opportunity?"
+    labels = ["Employee Referral", "Career Site", "LinkedIn/Job Portal", "Recruitment Agency", "Other"]
+    items = [{"ref": f"e{20 + n}", "tag": "toggle", "label": lab, "group": g, "pressed": False} for n, lab in enumerate(labels)]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    pressed = []
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        pressed.extend(p["ref"] for p in plan)
+        return [FieldResult(p["ref"], True, "pressed", "") for p in plan]
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("bank.hear-about", "LinkedIn; Job Board; Agency / Search Firm; Other", answer_type="choice_chain", source="questionnaire")
+    await d.t_fill_batch([{"ref": "e20", "answer_key": "bank.hear-about", "value": None, "source": None, "label": g}])
+    assert pressed == ["e22"], pressed

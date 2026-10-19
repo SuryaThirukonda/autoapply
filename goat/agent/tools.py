@@ -643,6 +643,26 @@ class ToolDispatcher:
                         or (ans == "no" and bool(NEGATED.match(item.get("label") or ""))) \
                         or ((first in SELECT_ALL or bool(re.match(r"^(select|pick|choose|tick|check) (every|all)\b", first)))
                             and not NEGATED.match(item.get("label") or "") and lab not in ("no", "false"))
+                    parts = [x.strip() for x in str(a.answer).split(";") if x.strip()]
+                    if not agree and len(parts) > 1:
+                        # A ranked chain ("LinkedIn; Job Board; Agency / Search Firm; Other") presses the toggle of the
+                        # first entry the group offers: Vertiv's Oracle pills read 'LinkedIn/Job Portal' (2026-10-19).
+                        group = [o for o in (snap.items if snap else []) if o.get("tag") == "toggle"
+                                 and (o.get("group") or "") == (item.get("group") or "")] or [item]
+                        offered = [{"text": str(o.get("label") or ""), "_i": n} for n, o in enumerate(group)]
+                        for part in parts:
+                            if answers.norm(part) in SELECT_ALL:
+                                continue
+                            hit = fill.best_option(offered, [part])
+                            if hit is not None:
+                                chosen = group[hit["_i"]]
+                                if chosen is item or chosen.get("ref") == item.get("ref"):
+                                    agree = True
+                                else:
+                                    item = chosen
+                                    f = {**f, "ref": chosen["ref"]}
+                                    agree = True
+                                break
                     if not agree:
                         # The stored answer names the OTHER half of a Yes/No pair: press that one (Primer's
                         # sponsorship toggles were left with neither pressed, 2026-10-18).
