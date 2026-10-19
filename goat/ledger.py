@@ -3,12 +3,20 @@ already_applied) so the old `applied` table imports without translation."""
 from __future__ import annotations
 
 import re
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from . import db
 from .answers import norm
 
 _LOOSE_DROP = re.compile(r"\([^)]*\)|\b(summer|fall|spring|winter)\b|\b20\d\d\b|\bremote\b|\bearly careers?\b")
+
+
+# Query parameters that name the posting itself. Without them every Greenhouse embed link
+# ("boards.greenhouse.io/embed/job_app?token=8175510") and every careers page that carries ?gh_jid= had ONE key:
+# intake attached the Coinbase sheet row to Simplify's FanDuel listing, and Figma's ledger key made every
+# job-boards.greenhouse.io embed posting look applied to (2026-10-19).
+ID_PARAMS = ("token", "gh_jid", "jobid", "job_id", "jid", "id", "reqid", "req_id", "requisitionid", "jobreqid",
+             "positionid", "jobpostingid", "postingid")
 
 
 def url_key(url: str) -> str:
@@ -23,7 +31,11 @@ def url_key(url: str) -> str:
     for tail in ("/apply", "/application"):
         if path.endswith(tail):
             path = path[: -len(tail)]
-    return f"{host}{path}" if host else ""
+    ids = []
+    for k, vals in sorted(parse_qs(p.query or "").items()):
+        if k.lower() in ID_PARAMS and vals and vals[0].strip():
+            ids.append(f"{k.lower()}={vals[0].strip().lower()}")
+    return (f"{host}{path}" + ("?" + "&".join(ids) if ids else "")) if host else ""
 
 
 def applied_keys(company: str, title: str, url: str) -> list[str]:

@@ -921,3 +921,19 @@ def test_structured_answers_are_never_wordings_to_pick():
     assert _plain_wordings("AWS Certified Cloud Practitioner; Cloud Practitioner; Cloud Practitioner") == \
         ["AWS Certified Cloud Practitioner", "Cloud Practitioner"]
     assert _plain_wordings(None) == []
+
+
+
+def test_a_picker_rule_is_never_text_for_a_box():
+    """Ryan (2026-10-19): 'please list up to three office locations' got the rule text of bank.office-preference and
+    the 'All offered locations' head of availability.location_ranking."""
+    from goat.agent.tools import RULE_TEXT, concrete_entries, text_from_chain
+    assert RULE_TEXT.search("Select every location offered. If only one can be chosen, pick San Francisco.")
+    assert concrete_entries("Select every location offered (multi-select); if only one can be chosen, San Francisco") == []
+    chain = "All offered locations; Dallas; Houston; Austin; Dallas, TX; Houston, TX; Austin, TX; New York"
+    assert concrete_entries(chain)[:3] == ["Dallas", "Houston", "Austin"]
+    label = "If you are open to locations outside of the one you applied, please list up to three"
+    assert text_from_chain(concrete_entries(chain), label) == "Dallas, Houston, Austin"
+    assert text_from_chain(concrete_entries(chain), "Preferred office") == "Dallas"
+    assert text_from_chain(["Sugar Land, Texas, United States", "Sugar Land, TX"], "City") == "Sugar Land, Texas, United States"
+    assert not RULE_TEXT.search("Houston, TX") and not RULE_TEXT.search("Within 30 days")

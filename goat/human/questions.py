@@ -334,11 +334,16 @@ class QuestionBroker:
         deadline = self._deadline(job_id, keys)
         wait_s = int(max(0, deadline - self._asked_at(job_id, keys)))
         ev = self.get_event(job_id)
+        # An answer saved for this company only (scope "company") counts too: looked up without the company, Sentry's
+        # company-scoped reply was invisible and the run would have waited out its deadline (2026-10-19).
+        row = db.connect().execute("SELECT l.company, l.ats FROM jobs j JOIN listings l ON l.id=j.listing_id WHERE j.id=?",
+                                   (job_id,)).fetchone()
+        company, ats = (row[0] or "", row[1] or "") if row else ("", "")
         while True:
             found: dict[str, str] = {}
             missing: list[str] = []
             for k in keys:
-                a = answers.get(k)
+                a = answers.get(k, company, ats)
                 if a is not None and a.has_value:
                     found[k] = str(a.answer)
                 elif self._kept_as_is(job_id, k):

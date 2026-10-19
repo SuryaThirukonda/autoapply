@@ -189,7 +189,9 @@ def diff(decisions: list[dict], snap: Snapshot, page_no: int = 0) -> list[str]:
     for d in decisions:
         r = d.get("ref") or ""
         it = snap.refs.get(r) if r else None
-        if it and (it.get("type") or "").lower() == "radio" and it.get("group") and (not page_no or int(d.get("page") or 0) == page_no):
+        # a Yes/No toggle-button pair (Ashby) is a radio group too: pressing Yes supersedes an earlier No (Sentry, 2026-10-19)
+        if it and ((it.get("type") or "").lower() == "radio" or it.get("tag") == "toggle") and it.get("group") \
+                and (not page_no or int(d.get("page") or 0) == page_no):
             newest_in_group[str(it.get("group"))] = r
     for d in decisions:
         ref = d.get("ref") or ""
@@ -217,7 +219,8 @@ def diff(decisions: list[dict], snap: Snapshot, page_no: int = 0) -> list[str]:
         item = d["_item"]
         if item.get("type") in ("file", "password", "hidden") or item.get("tag") in ("button", "a"):
             continue
-        if (item.get("type") or "").lower() == "radio" and item.get("group") and newest_in_group.get(str(item.get("group"))) not in (None, key):
+        if ((item.get("type") or "").lower() == "radio" or item.get("tag") == "toggle") and item.get("group") \
+                and newest_in_group.get(str(item.get("group"))) not in (None, key):
             continue          # superseded by a newer pick on another option of the same radio group
         kind = _kind_for(item, str(val))
         page_value = _page_value(item)

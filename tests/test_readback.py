@@ -209,3 +209,13 @@ def test_a_multiselect_decision_matches_any_of_its_chips():
                    "value": "FastAPI; RESTful APIs; Python", "selected_items": 3}])
     assert readback.diff([_dec("Skills", "RESTful APIs", "e24")], snap, 1) == []
     assert readback.diff([_dec("Skills", "Go", "e24")], snap, 1) != []
+
+
+
+def test_a_newer_toggle_pick_supersedes_its_sibling():
+    """Sentry (2026-10-19): No was pressed first, Yes after Surya answered; the old No must not block."""
+    snap = _snap([{"ref": "e34", "tag": "toggle", "label": "Yes", "group": "Need sponsorship in Austria?", "pressed": True},
+                  {"ref": "e35", "tag": "toggle", "label": "No", "group": "Need sponsorship in Austria?", "pressed": False}])
+    decs = [_dec("Need sponsorship in Austria? / No", "pressed", "e35"), _dec("Need sponsorship in Austria? / Yes", "pressed", "e34")]
+    assert readback.diff(decs, snap, 1) == []
+    assert readback.diff([_dec("Need sponsorship in Austria? / No", "pressed", "e35")], snap, 1) != []

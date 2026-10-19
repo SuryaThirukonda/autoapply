@@ -225,6 +225,39 @@ def _plain_wordings(answer) -> list[str]:
     return out
 
 
+# A stored answer that is a rule for pickers ("Select every location offered...", "All offered locations",
+# "San Francisco if only one is allowed"), never text for a box.
+RULE_TEXT = re.compile(r"^\s*(select|pick|choose|tick|check|add|always|leave)\b|\bif only one\b|"
+                       r"^\s*(all|every|any) (offered|available|listed)( \w+)?\s*$", re.I)
+
+
+def concrete_entries(answer) -> list[str]:
+    """The entries of a ';' chain that are values, without picker rules."""
+    return [w.strip() for w in str(answer if answer is not None else "").split(";") if w.strip() and not RULE_TEXT.search(w.strip())]
+
+
+def text_from_chain(entries: list[str], label: str) -> str:
+    """What a text box gets from an ordered chain: its first entry, or the first N distinct places when the box asks
+    for "up to three" ("Dallas" and "Dallas, TX" are one place)."""
+    m = re.search(r"\bup to (two|three|four|five|[2-5])\b|\b(two|three|four|five|[2-5]) (locations|offices|cities|choices|preferences)\b",
+                  label or "", re.I)
+    words = {"two": 2, "three": 3, "four": 4, "five": 5}
+    n = 1
+    if m:
+        w = (m.group(1) or m.group(2)).lower()
+        n = words.get(w) or int(w)
+    picked, seen = [], set()
+    for e in entries:
+        k = answers.norm(e.split(",")[0])
+        if k in seen:
+            continue
+        seen.add(k)
+        picked.append(e)
+        if len(picked) >= n:
+            break
+    return ", ".join(picked)
+
+
 # A work-entry field: its value is Surya's stored entry (experience.work.N.*), never a résumé or generated literal.
 WORK_ENTRY_FIELD = re.compile(r"^\s*(current |most recent |previous )?(company( name)?|employer( name)?|organi[sz]ation( name)?|"
                               r"job title|position title)\s*[*:]?\s*$", re.I)
@@ -620,11 +653,22 @@ class ToolDispatcher:
                 val = "true"
             # An ordered preference list ("LinkedIn; Job Board; Agency") is for pickers. A text box
             # takes the first choice only, never the whole chain.
-            if f.get("answer_key") and ";" in str(val) and item and item.get("tag") in ("input", "textarea", "richtext") \
+            if f.get("answer_key") and item and item.get("tag") in ("input", "textarea", "richtext") \
                     and item.get("type") not in ("radio", "checkbox"):
                 a = answers.get(f["answer_key"], self.ctx.job.get("company", ""), self.ctx.portal)
-                if a is not None and a.answer_type == "choice_chain":
-                    val = str(val).split(";")[0].strip()
+                if a is not None and a.answer_type in ("choice", "multi_choice", "choice_chain"):
+                    # A picker rule is not text: Ryan's "list up to three office locations" box got "Select every location
+                    # offered. If only one can be chosen, pick San Francisco." and "All offered locations" (2026-10-19).
+                    conc = concrete_entries(val)
+                    if not conc and RULE_TEXT.search(str(val)):
+                        results.append({"ref": f["ref"], "status": "failed", "error": (
+                            f"{f['answer_key']} is a rule for pickers ({str(val)[:90]!r}), not text to type. For a text box "
+                            "type the places themselves: availability.location_ranking gives his order (Dallas, Houston, "
+                            "Austin first) for a location box.")})
+                        continue
+                    if a.answer_type == "choice_chain" or (";" in str(val) and len(conc) < len([w for w in str(val).split(";") if w.strip()])):
+                        val = text_from_chain(conc or [str(val).split(";")[0].strip()],
+                                              str(item.get("label") or f.get("label") or ""))
             # An ordered preference chain ("decline; ...; Asian") picks ONE option per question: the first entry the
             # question offers. Ticking every option that matched some entry ticked both "I Do Not Wish to Answer" and
             # "Asian" on HCSC's race checkboxes (2026-10-19).

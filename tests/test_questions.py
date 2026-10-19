@@ -284,3 +284,21 @@ async def test_a_question_keeps_the_wait_it_was_asked_with(tmp_path, monkeypatch
     with pytest.raises(Parked):
         await b.await_answers(j, ["q.x"])
     assert time.time() - t0 >= 1.5
+
+
+
+@pytest.mark.asyncio
+async def test_a_company_scoped_answer_ends_the_wait(tmp_path, monkeypatch):
+    """Sentry (2026-10-19): the answer was saved for Sentry only and the waiter, looking it up without the company,
+    never saw it."""
+    from goat import answers, db
+    from goat.human.questions import QuestionBroker
+    db.reset_for_tests(tmp_path / "t.db")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('l1','Sentry','Intern','https://jobs.ashbyhq.com/sentry/1','ashby')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,priority) VALUES(1,'l1','awaiting_answer','no_account',0)")
+        con.execute("INSERT INTO pending_questions(job_id,key,question,options,field_type,asked_at,deadline_at) VALUES(1,'q.vienna','Vienna?','[]','choice',?,?)",
+                    (db.now(), db.now() + 60))
+    answers.save_answer("q.vienna", "Yes", answer_type="choice", source="operator", scope="company", scope_value="Sentry")
+    found = await QuestionBroker().await_answers(1, ["q.vienna"])
+    assert found == {"q.vienna": "Yes"}
