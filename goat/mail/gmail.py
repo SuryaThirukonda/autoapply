@@ -12,6 +12,7 @@ import base64
 import html as _html
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from email.utils import parseaddr
@@ -22,6 +23,8 @@ from urllib.parse import urlparse
 from ..config import SETTINGS
 
 log = logging.getLogger("goat.mail")
+# Every Gmail API call holds this: the client and its connection are shared by threads (see GmailClient._execute).
+_GMAIL_LOCK = threading.RLock()
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
@@ -456,20 +459,26 @@ class GmailClient:
 
     def _execute(self, make_request, what: str):
         """Run one API call; on a transient failure rebuild the service (a fresh connection: the cached one goes
-        stale while idle and the next call fails with an SSLError, 2026-10-18) and try again."""
+        stale while idle and the next call fails with an SSLError, 2026-10-18) and try again.
+
+        One call at a time across threads (_GMAIL_LOCK): the service and its httplib2 connection are not
+        thread-safe. The password-reset poll and the confirmation-mail reconciler hit an SSLError together,
+        both rebuilt and retried on the same connection, and the agent died in ntdll with an access
+        violation (2026-10-19 02:54)."""
         last: Exception | None = None
-        for attempt in range(self.RETRIES + 1):
-            try:
-                return make_request(self._svc()).execute()
-            except MailUnavailable:
-                raise
-            except Exception as e:  # noqa: BLE001 - classified below
-                last = e
-                if attempt == self.RETRIES or not self._transient(e):
-                    break
-                log.info("mail: Gmail %s failed (%s); retrying on a fresh connection", what, type(e).__name__)
-                self._service = None
-                time.sleep(0.5 * (attempt + 1))
+        with _GMAIL_LOCK:
+            for attempt in range(self.RETRIES + 1):
+                try:
+                    return make_request(self._svc()).execute()
+                except MailUnavailable:
+                    raise
+                except Exception as e:  # noqa: BLE001 - classified below
+                    last = e
+                    if attempt == self.RETRIES or not self._transient(e):
+                        break
+                    log.info("mail: Gmail %s failed (%s); retrying on a fresh connection", what, type(e).__name__)
+                    self._service = None
+                    time.sleep(0.5 * (attempt + 1))
         raise MailUnavailable(f"Gmail {what} failed ({type(last).__name__})") from None
 
     def list_messages(self, q: str, max_results: int = 10) -> list[dict]:
@@ -485,9 +494,10 @@ _default_client: MailClient | None = None
 
 def default_client() -> MailClient:
     global _default_client
-    if _default_client is None:
-        _default_client = GmailClient()
-    return _default_client
+    with _GMAIL_LOCK:
+        if _default_client is None:
+            _default_client = GmailClient()
+        return _default_client
 
 
 # --------------------------------------------------------------------------------------

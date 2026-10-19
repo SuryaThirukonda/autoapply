@@ -317,3 +317,40 @@ def test_a_stale_connection_is_rebuilt_and_retried(monkeypatch):
     import pytest as _pt
     with _pt.raises(gmail.MailUnavailable):
         c2.list_messages("from:x")
+
+
+def test_gmail_calls_never_overlap_across_threads():
+    """2026-10-19 02:54: two threads retried on the one shared connection after an SSLError and the agent died with
+    an access violation. Calls now run one at a time."""
+    import threading
+    import time as _t
+    from goat.mail import gmail as g
+
+    inside, peak = [0], [0]
+
+    class Req:
+        def execute(self):
+            inside[0] += 1
+            peak[0] = max(peak[0], inside[0])
+            _t.sleep(0.05)
+            inside[0] -= 1
+            return {"messages": []}
+
+    class Svc:
+        def users(self):
+            return self
+
+        def messages(self):
+            return self
+
+        def list(self, **kw):
+            return Req()
+
+    c = g.GmailClient()
+    c._service = Svc()
+    ts = [threading.Thread(target=c.list_messages, args=("q",)) for _ in range(6)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert peak[0] == 1
