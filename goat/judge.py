@@ -51,7 +51,9 @@ JUDGE_INSTRUCTIONS = (
     "log, outline, page text and screenshot show. A value typed inside a box appears in the OUTLINE (value=\"…\"), "
     "not in the page text, so a box is blank only when the outline shows it empty. A control the outline marks disabled "
     "holds the portal's own value (an end date while 'still a student' is ticked) and cannot be changed: never call it "
-    "wrong or missing."
+    "wrong or missing. A form-level banner from an earlier submit click ('Your form needs corrections', 'Missing entry for "
+    "required field: X') stays on screen until the next click: when the outline shows X holding its value now, the banner "
+    "is stale; judge the field, not the banner (the portal re-checks on the next click)."
 )
 
 FACT_CHECK_INSTRUCTIONS = (

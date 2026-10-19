@@ -893,6 +893,13 @@ class ToolDispatcher:
         return out, None
 
     async def t_upload_resume(self, ref: str, document: str):
+        if document == "transcript":
+            item = self.ctx.last_snapshot.find(ref) if self.ctx.last_snapshot else None
+            lab = str((item or {}).get("label") or "")
+            if re.search(r"\b(graduate|grad school|master'?s|ph\.?d|doctoral)\b", lab, re.I) and not re.search(r"undergrad", lab, re.I):
+                # Verkada (2026-10-18): the transcript went into the Graduate Transcript slot and the undergraduate one stayed empty
+                return {"error": f"'{lab[:60]}' is a graduate-school slot; Surya is an undergraduate (BS, graduating May 2028). Upload the "
+                                 "transcript into the Undergraduate Transcript slot and leave this one empty."}, None
         p = _resume_path(self.ctx, document)
         if not p or not p.exists():
             return {"error": f"{document} file not available in the résumé folder"}, None

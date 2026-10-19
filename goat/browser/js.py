@@ -87,6 +87,10 @@ JS_SNAPSHOT = r"""
       const tag = el.tagName.toLowerCase();
       const type = (el.getAttribute('type') || '').toLowerCase();
       if (type === 'hidden') continue;
+      // Ashby's Yes/No question mirrors its two toggle buttons in an untabbable checkbox: the buttons are the control.
+      // Setting the mirror too knocked Niantic's answer out of sync and the submit was refused (2026-10-18).
+      if (tag === 'input' && (type === 'checkbox' || type === 'radio') && el.getAttribute('tabindex') === '-1'
+          && el.parentElement && el.parentElement.querySelector('button[aria-pressed], [role="button"][aria-pressed]')) continue;
       // Site chrome (header/nav menus, account and language switchers) is not part of the form.
       if (el.closest('header, nav, [role="banner"], [role="navigation"], [data-automation-id="utilityButtonBar"], [data-automation-id="header"], footer, [role="contentinfo"]')) {
         if (!(tag === 'input' || tag === 'textarea' || tag === 'select')) continue;
@@ -268,9 +272,10 @@ JS_PAGE_ERRORS = r"""
 () => {
   const ERR = /(no\s+\S+\s+found|not\s+a\s+valid|invalid|must\s+be|must\s+contain|cannot\s+be\s+(blank|empty)|can't\s+be\s+(blank|empty)|is\s+required|this\s+field\s+is\s+required|please\s+(enter|select|provide|choose|complete|correct|fix)|try\s+(entering|again|a\s+different)|failed|too\s+(short|long)|does\s+not\s+match|already\s+(exists|taken|registered|in\s+use)|incorrect|wrong\s+(email|password|username)|(account|user)\s+(might\s+be|is|has\s+been)\s+locked|unable\s+to\s+(sign|log)\s+in|could\s+not\s+(sign|log)\s+in)/i;
   const SKIP = /^(required|\*|optional|required\s*\*|\*\s*required)$/i;
+  const FORM_SUMMARY = /(missing\s+entry\s+for\s+required\s+field|your\s+form\s+needs\s+corrections|please\s+(complete|fill\s+in)\s+(all\s+)?(the\s+)?required\s+fields|(fix|correct)\s+the\s+(errors|following)\s+(below|above|before))/i;
   const STATUSY = /(loaded|loading|please\s+wait|saved|updated|added|removed|expanded|collapsed|in\s+progress|step\s+\d|page\s+\d|results?\s+(found|updated)|showing\s+\d|selected)/i;
   const INSTRUCTIONAL = /(if\s+applicable|e\.g\.|for\s+example|\(optional\)|as\s+it\s+appears|do\s+not\s+include|maximum\s+of|up\s+to\s+\d|characters?\s+remaining|format:)/i;
-  const alerts = [], errorText = [], emptyRequired = [];
+  const alerts = [], errorText = [], emptyRequired = [], summaries = [];
   const seenRoots = new Set(), seenText = new Set();
   function vis(el) { try { const r = el.getBoundingClientRect(); const s = el.ownerDocument.defaultView.getComputedStyle(el);
       return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && parseFloat(s.opacity || '1') > 0.01; } catch (e) { return false; } }
@@ -355,6 +360,10 @@ JS_PAGE_ERRORS = r"""
       const promptKey = s => String(s || '').toLowerCase().replace(/[\s.:;!?]+$/g, '').trim();
       const isFieldPrompt = Array.from(document.querySelectorAll('label, legend')).some(l => promptKey(txt(l)) === promptKey(t));
       if (isFieldPrompt) continue;
+      // A form-level summary after a refused submit ("Your form needs corrections / Missing entry for required field: X",
+      // Ashby, Niantic 2026-10-18) is reported apart: it proves the last click was refused, but Ashby keeps it on screen
+      // until the next submit, so it must not block the corrected resubmit.
+      if (FORM_SUMMARY.test(t)) { push(summaries, { text: t.slice(0, 300), tag: el.tagName.toLowerCase() }, 's:' + t); continue; }
       if (!ERR.test(t)) continue;
       if (INSTRUCTIONAL.test(t)) continue;
       if (inDescription(el) || (!reddish(el) && !nearField(el))) continue;
@@ -410,7 +419,7 @@ JS_PAGE_ERRORS = r"""
     }
   }
   walk(document);
-  return JSON.stringify({ url: location.href, alerts: alerts.slice(0, 40), error_text: errorText.slice(0, 40), empty_required: emptyRequired.slice(0, 40) });
+  return JSON.stringify({ url: location.href, alerts: alerts.slice(0, 40), error_text: errorText.slice(0, 40), empty_required: emptyRequired.slice(0, 40), summaries: summaries.slice(0, 10) });
 }
 """
 

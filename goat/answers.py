@@ -98,6 +98,14 @@ def concrete_value(a: "Answer", *, company: str = "", posting_text: str = "", li
     if cond == "today":
         from datetime import date
         return date.today().strftime("%m/%d/%Y"), "today's date"
+    if cond == "signature_today":
+        # one box for the e-signature AND the date ("Full name and today's date", Lyft 2026-10-18): his legal name + today
+        from datetime import date
+        name = get("identity.legal_name")
+        legal = str(name.answer).strip() if name is not None and name.answer else ""
+        if not legal:
+            return None, "no stored legal name"
+        return f"{legal} {date.today().strftime('%m/%d/%Y')}", "his legal name and today's date"
     if cond == "posting_lists_pay":
         hit = posting_pay(posting_text)
         return (when_true, f"the posting lists pay: {hit[:60]}") if hit else (when_false, "the posting lists no pay")

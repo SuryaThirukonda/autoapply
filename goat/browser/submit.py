@@ -80,8 +80,9 @@ async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: f
                                 clicked_label=found.get("text", ""))
         # A page that shows a new error after the click is a definite failure: stop waiting.
         after_scan = await scan_errors(ex)
-        if why_blocked(after_scan):
-            return SubmitResult("failed", why=why_blocked(after_scan), url=after_scan.get("url", ""), clicked_label=found.get("text", ""))
+        refused = why_blocked(after_scan) + [f"form summary: {x.get('text')}" for x in (after_scan.get("summaries") or [])]
+        if refused:
+            return SubmitResult("failed", why=refused, url=after_scan.get("url", ""), clicked_label=found.get("text", ""))
 
     after = await scan_errors(ex)
     return SubmitResult("failed", why=why_blocked(after) or ["page did not change and showed no error; the control may be inert"],
