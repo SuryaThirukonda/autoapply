@@ -1178,7 +1178,22 @@ class ToolDispatcher:
         self.ctx.resolved[nq] = result
         return result
 
+    # A government-employment question that counts public / state universities as government entities: his stored No
+    # was written for federal government, and he worked in a Texas A&M research group (Booz Allen's question 6,
+    # 2026-10-19). Only his own answer to that wording settles it.
+    GOV_PUBLIC = re.compile(r"(public|state)[- ](funded |run )?(universit|college|institution|school)|universit\w* (owned|funded|operated|run) by (a |the )?state", re.I)
+    GOV_TOPIC = re.compile(r"government|public entit|political", re.I)
+
     async def t_lookup_answer(self, question: str, options: list[str], meaning: str | None = None, ref: str | None = None):
+        text = " ".join([question or "", meaning or "", " ".join(options or [])])
+        if self.GOV_PUBLIC.search(text) and self.GOV_TOPIC.search(text):
+            k = answers.key_from_question(question)
+            mine = answers.get(k, self.ctx.job.get("company", ""), self.ctx.portal)
+            if mine is not None and mine.has_value:
+                return self._present(mine), None
+            return {"miss": True, "key": k, "hint": "this form counts public / state universities as government entities, and Surya worked in a "
+                    "Texas A&M research group (a public university). His stored No to government employment covers federal government only: "
+                    "call ask_user with this question and its choices."}, None
         a = answers.lookup(question, self.ctx.job.get("company", ""), self.ctx.portal)
         if a is not None and a.has_value:
             return self._present(a), None

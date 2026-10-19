@@ -268,3 +268,17 @@ async def test_an_option_only_the_model_offered_is_recorded_as_judgment(store, t
         assert flag and "work_authorization.us_citizen = 'Yes'" in ev
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_government_question_that_counts_public_universities_goes_to_surya(store):
+    """Booz Allen (2026-10-19): question 6 counts public universities as Government Entities; the stored No (federal
+    government) was about to settle it although he worked in a Texas A&M research group."""
+    answers.save_answer("bank.gov-employee", "No", source="seed:answer_bank.json")
+    d, ctx = _dispatcher(_job())
+    q = ("6. State, Local, & Non-U.S. Government Employment: employment by a Government Entity includes public universities "
+         "and state agencies.")
+    out, _ = await d.t_lookup_answer(q, ["I have never been employed by a Government Entity", "I am currently employed by a Government Entity"], None, "e49")
+    assert out.get("miss") and "ask_user" in out["hint"] and "public" in out["hint"]
+    out, _ = await d.t_lookup_answer("Are you a current or former U.S. federal government employee?", ["Yes", "No"], None, "e50")
+    assert "public / state universities" not in str(out.get("hint", ""))
