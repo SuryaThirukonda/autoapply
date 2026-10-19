@@ -721,6 +721,7 @@ class ToolDispatcher:
             # chain, the self-ID guard and the decision format the read-back expects.
             return await self.t_fill_batch([{"ref": ref, "answer_key": answer_key, "value": None, "source": source, "label": label}])
         wants = list(options or [])
+        stored_wants: list[str] = []
         src = "adapter"
         if answer_key:
             val, src, err = self._resolve_value(answer_key, None, None, label)
@@ -731,6 +732,9 @@ class ToolDispatcher:
             variants = answers.get(answer_key + "_variants", self.ctx.job.get("company", ""), self.ctx.portal)
             if variants and variants.has_value:
                 wants += [w.strip() for w in str(variants.answer).split(";") if w.strip() and w.strip() not in wants]
+            stored_wants = [w.strip() for w in str(val).split(";") if w.strip()]
+            if variants and variants.has_value:
+                stored_wants += [w.strip() for w in str(variants.answer).split(";") if w.strip()]
             if answer_key.endswith("_variants"):
                 # The variants are the portal spellings tried AFTER the answer itself: picked by the variants key,
                 # Epic Games' school search got only "Texas A & M University"-style wordings, all unknown to it,
@@ -739,10 +743,11 @@ class ToolDispatcher:
                 if base and base.has_value:
                     head = [w.strip() for w in str(base.answer).split(";") if w.strip()]
                     wants = head + [w for w in wants if w not in head]
+                    stored_wants = head + stored_wants
         elif not wants:
             return {"error": "give options or an answer_key"}, None
         model_opts = [o for o in (options or []) if o]
-        his_wants = [w for w in wants if w not in model_opts]
+        his_wants = [w for w in wants if w not in model_opts or w in stored_wants]
         r = await fill.choose(self.ctx.ex, ref, wants)
         self.ctx.budget.step()
         if r.ok:
@@ -1517,7 +1522,7 @@ class ToolDispatcher:
                             r"automat|essay|upload|\bfile\b|portfolio|transcript|document|\bssn\b|social security|consent|"
                             r"legal|eligib|clearance|sponsor|not (offered|available|listed|selectable)|no (selectable|matching) |"
                             r"cannot be (set|selected|answered)|picker .*(not|no)\b", re.I)
-    RFY_GIVE_UP = re.compile(r"^ready_for_you:\s*(please\s+)?(complete|finish|fill|continue|resume|fix|enter|provide|answer|select|add)\b", re.I)
+    RFY_GIVE_UP = re.compile(r"^(ready_for_you|needs_you):\s*(please\s+)?(complete|finish|fill|continue|resume|fix|enter|provide|answer|select|add)\b", re.I)
     # Surya 2026-10-18: a car requirement is fine (he arranges one); "local / within N miles" is fine when the posting is
     # paid; a straight hardware role is not.
     DISQUALIFIERS = re.compile(r"(master'?s|ph\.?d|doctoral|graduate program|active (secret|top secret|ts/sci|clearance)|returning intern|co-?op|fall 2027|spring 2028|quant|"
@@ -1703,7 +1708,7 @@ class ToolDispatcher:
         # questions his stored answers cover (2026-10-19).
         # A reason that only says what is left to do ("complete the CSX Oracle application fields, including the full home
         # address, work experience, education, remaining questions, and e-signature", 2026-10-19) is never final.
-        rfy_soft = low.startswith("ready_for_you") and self.ctx.park_attempts < 2 and (
+        rfy_soft = low.startswith(("ready_for_you", "needs_you")) and self.ctx.park_attempts < 2 and (
             not self.RFY_REASON.search(reason)
             or (self.RFY_GIVE_UP.search(reason) and not re.search(r"captcha|human|\bbot\b|challenge", reason, re.I)))
         hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch", "needs_you")) \

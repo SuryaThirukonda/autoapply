@@ -107,6 +107,25 @@ def _page_value(item: dict) -> str:
     return str(item.get("shown") or item.get("value") or "")
 
 
+_FIELD_NOISE = {"selected", "items", "item", "choose", "control", "adds", "another", "select", "please", "your", "you", "the", "this",
+                "that", "and", "for", "with", "are", "have", "what", "which", "required", "optional", "enter", "field", "box"}
+
+
+def _stems(label: str) -> set[str]:
+    return {w[:5] for w in re.findall(r"[a-z0-9]+", (label or "").lower()) if len(w) >= 3 and w not in _FIELD_NOISE}
+
+
+def _same_field(decision_label: str, item_label: str) -> bool:
+    """Whether a decision's label and a control's label can name the same field: some word in common (on 5-letter
+    stems, so 'authorized' meets 'authorization'). Either label empty: no evidence against, so yes."""
+    a, b = _stems(decision_label), _stems(item_label)
+    if not a or not b or a & b:
+        return True
+    # a Workday date part ("Month", "Year", "Day") belongs to a date decision ("From date", "Start date", "Graduation")
+    return bool(re.match(r"\s*(month|year|day)\b", item_label or "", re.I)
+                and re.search(r"date|from|\bto\b|start|end|graduat|month|year|day|since|until", decision_label or "", re.I))
+
+
 def _match_by_label(decision: dict, snap: Snapshot) -> dict | None:
     """A decision whose ref is gone (the portal re-rendered) still pairs with the one control whose label
     words contain, or are contained in, the decision's label words. Ambiguity means no match."""
@@ -149,6 +168,10 @@ def diff(decisions: list[dict], snap: Snapshot, page_no: int = 0) -> list[str]:
         if not same_page:
             continue
         item = snap.refs.get(ref) if ref else None
+        if item is not None and not _same_field(str(d.get("field_label") or ""), str(item.get("label") or item.get("group") or "")):
+            # Workday re-renders a block after a prompt pick and the ref lands on another control (Moderna, 2026-10-19:
+            # e189 was the GPA box, then the School prompt, and the GPA decision blocked the page): pair by label instead.
+            item = _match_by_label(d, snap) if page_no else None
         if item is None and page_no:
             item = _match_by_label(d, snap)
         if item is None:

@@ -99,6 +99,10 @@ JS_SNAPSHOT = r"""
   const SEL = 'input, textarea, select, button, a[href], [role="button"], [role="combobox"], [role="listbox"], [role="checkbox"], [role="radio"], [role="switch"], [role="tab"], [role="menuitem"], [role="option"], [contenteditable="true"], [data-automation-id="selectWidget"], [data-automation-id="promptOption"], [aria-haspopup]';
 
   function groupLabel(el) {
+    // The group's own box first: the nearest container holding only this group and a question label (Epic Games'
+    // "Veteran Status*:" sits beside its options; a container classed "...Questions" held every demographic question,
+    // so its first label named another question and "Hispanic or Latino", an option, read as a question, 2026-10-19).
+    const own = boxHead(el); if (own) { const t0 = txt(own); if (t0 && t0.length < 300) return t0; }
     const fs = el.closest('fieldset, [role="group"], [role="radiogroup"], [data-automation-id^="formField"], .field, .form-group, .application-question, [class*="question" i]');
     if (fs) {
       const lg = fs.querySelector('legend, [class*="legend" i], [id$="-label"], [class*="question" i] > :first-child, label:not([for]), .label, [class*="label" i]');

@@ -282,3 +282,64 @@ async def test_a_government_question_that_counts_public_universities_goes_to_sur
     assert out.get("miss") and "ask_user" in out["hint"] and "public" in out["hint"]
     out, _ = await d.t_lookup_answer("Are you a current or former U.S. federal government employee?", ["Yes", "No"], None, "e50")
     assert "public / state universities" not in str(out.get("hint", ""))
+
+
+EPIC_DEMO = """<!doctype html><html><body style="margin:20px"><div class="DemographicQuestions__Styled">
+<div><div><div><label for="Race/Ethnicity"><span>Race/Ethnicity\u2060*\u2060:</span></label></div><div></div>
+  <div><label><input name="r" type="radio" value="1"> Hispanic or Latino</label></div>
+  <div><label><input name="r" type="radio" value="2"> Asian (Not Hispanic or Latino)</label></div>
+  <div><label><input name="r" type="radio" value="3"> I don't wish to answer</label></div></div></div>
+<div><div><div><label for="Veteran Status"><span>Veteran Status\u2060*\u2060:</span></label></div><div></div>
+  <div><label><input name="v" type="radio" value="1"> Yes</label></div>
+  <div><label><input name="v" type="radio" value="2"> No</label></div></div></div>
+</div></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_each_radio_group_takes_its_own_question_label(tmp_path):
+    """Epic Games (2026-10-19): a container classed '...Questions' held every demographic question, so each group got
+    the first label inside it; 'Hispanic or Latino' (an option) read as a question and Veteran Status had no label."""
+    ex = await _race(tmp_path, EPIC_DEMO, "demo.html")
+    try:
+        snap = await snapshot.take(ex)
+        labels = sorted((g.get("label") or "").split(":")[0] for g in snap.groups)
+        assert labels == ["Race/Ethnicity*", "Veteran Status*"], labels
+        assert all(g.get("required") for g in snap.groups)
+    finally:
+        await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_wording_in_his_chain_stays_his_even_when_the_model_offers_it_too(store, tmp_path):
+    """Nike (2026-10-19): 'Not Applicable' is the last entry of his immigration-status chain; the model offered it as well
+    and the pick was logged as the model's judgment."""
+    from goat import records
+    answers.save_answer("q.current_u_s_immigration_status", "U.S. Citizen; Not Applicable", answer_type="choice_chain", source="operator")
+    ex = await _race(tmp_path, STATUS.replace("<option>U.S. Citizen</option>", ""), "status2.html")
+    try:
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        ref = next(i["ref"] for i in snap.items if i.get("tag") == "select")
+        out, _ = await d.t_choose(ref, "q.current_u_s_immigration_status", ["Not Applicable"], "Immigration status", None)
+        assert out["readback"] == "Not Applicable" and "came from your options" not in out.get("note", "")
+        assert {r["source"] for r in records.decisions(ctx.job_id)} == {"standing:q.current_u_s_immigration_status"}
+    finally:
+        await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_needs_you_park_that_lists_work_gets_the_gate_first(store, tmp_path):
+    """CSX (2026-10-19) parked 'needs_you: Complete CSX's Experience and Education entries ... then submit' after the
+    same wording under ready_for_you was bounced."""
+    from tests.test_gate_pages import MID_FORM, _page
+    ex = await _page(tmp_path, MID_FORM.replace('<input id="fn">', '<input id="fn" required aria-required="true">'))
+    try:
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = await snapshot.take(ex)
+        out, _ = await d.t_park("needs_you: Complete CSX's Experience and Education entries, remaining required questions and signature, then submit.")
+        assert "not parked" in out["error"] and out.get("blockers")
+    finally:
+        await ex.close(close_browser=True)

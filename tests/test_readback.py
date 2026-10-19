@@ -160,3 +160,20 @@ def test_a_page_value_equal_to_a_stored_answer_is_sourced_at_gate_time(tmp_path)
     assert any("Nickname" in r and "no sourced decision" in r for r in g.reasons)
     decs = records.decisions(1)
     assert [(d["field_label"], d["value"], d["source"]) for d in decs] == [("College/University", "Texas A&M University", "standing:education.school")]
+
+
+def test_a_ref_reused_for_another_field_is_not_compared():
+    """Moderna (2026-10-19): after a Workday prompt pick re-rendered the education block, ref e189 moved from the GPA
+    box to the School prompt and the GPA decision '4.0' blocked the page."""
+    from goat import readback
+    from goat.browser.snapshot import Snapshot
+    s = Snapshot(url="u", title="t", headings=[], items=[
+        {"ref": "e189", "tag": "input", "type": "text", "label": "School or University* (selected items; choose on this control adds another)", "value": "Texas A & M University"},
+        {"ref": "e190", "tag": "input", "type": "text", "label": "Overall Result (GPA)*", "value": "4.0"}], groups=[], errors={}, challenge={})
+    for i in s.items:
+        s.refs[i["ref"]] = i
+    decs = [{"page": 1, "field_label": "GPA", "value": "4.0", "source": "standing:education.gpa", "ref": "e189"}]
+    assert readback.diff(decs, s, 1) == []
+    assert readback._same_field("Authorized to work", "Are you legally authorized to work in the U.S.?")
+    assert readback._same_field("Work authorization", "Are you authorized to work?")
+    assert not readback._same_field("GPA", "School or University* (selected items; choose on this control adds another)")
