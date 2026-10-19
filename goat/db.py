@@ -174,7 +174,9 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
 
 # Columns added after a table's CREATE: (table, column, type-and-default). executescript(SCHEMA) only creates
 # missing tables, so an existing database gets each column here, once, additively.
-COLUMN_MIGRATIONS: list[tuple[str, str, str]] = []
+COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
+    ("decisions", "tier", "TEXT"),            # confirmed | inferred | sensitive (2026-10-18, confidence tiers)
+]
 
 
 def _migrate(con: sqlite3.Connection) -> None:

@@ -228,3 +228,15 @@ def test_split_reply_helper():
     assert questions.split_reply("a\nb", 2) == ["a", "b"]
     assert questions.split_reply("2) b\n1) a", 2) == ["a", "b"]
     assert questions.split_reply("a", 3) == ["a", None, None]
+
+
+# --------------------------------------------------------------------------- batched card
+@pytest.mark.asyncio
+async def test_ask_payload_is_numbered_for_the_batched_card(broker, wide):
+    sender = FakeSender()
+    broker.register_sender(sender)
+    job = make_job("L9")
+    await broker.ask(job, [{"key": "q.one", "question": "One?", "options": ["Yes", "No"]},
+                           {"key": "q.two", "question": "Two?"}], None)
+    payload = sender.calls[0][1]
+    assert [p["n"] for p in payload] == [1, 2] and payload[1]["key"] == "q.two"

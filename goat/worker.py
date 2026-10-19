@@ -119,12 +119,20 @@ async def readback_after_page(ctx, snap, job_id: int, page: int) -> list[str]:
 
 
 def set_status(job_id: int, status: str, *, reason: str | None = None, blocked_on: list[str] | None = None,
-               tab_target_id: str | None = None, finished: bool = False) -> None:
+               tab_target_id: str | None = None, finished: bool = False, extra: dict | None = None) -> None:
     with db.tx() as con:
         con.execute("UPDATE jobs SET status=?, hold_reason=?, blocked_on_question_key=?, tab_target_id=COALESCE(?, tab_target_id), "
                     "updated_at=?, finished_at=CASE WHEN ? THEN ? ELSE finished_at END WHERE id=?",
                     (status, reason, (blocked_on or [None])[0], tab_target_id, db.now(), int(finished), db.now(), job_id))
-    db.event(job_id, f"job:{status}", {"reason": reason, "blocked_on": blocked_on})
+    db.event(job_id, f"job:{status}", {"reason": reason, "blocked_on": blocked_on, **(extra or {})})
+
+
+def finish_extra(job_id: int) -> dict:
+    """What a finish event carries for the review message: the decisions Surya did not confirm himself."""
+    try:
+        return {"inferred": records.inferred_decisions(job_id)}
+    except Exception:
+        return {}
 
 
 READY_TEXT_MAX = 1024   # a Telegram photo caption
@@ -392,7 +400,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
                 continue
             if res.outcome == "submitted":
                 app_id = ledger.record_application(job["listing_id"], job["company"], job["title"], job["url"], "goat", signal=res.reason)
-                set_status(job_id, states.SUBMITTED, reason=None, finished=True)
+                set_status(job_id, states.SUBMITTED, reason=None, finished=True, extra=finish_extra(job_id))
                 png = await ex.screenshot_png()
                 records.save_screenshot(job_id, png, "submitted")
                 outcome = RunOutcome(states.SUBMITTED, res.reason)
@@ -405,7 +413,7 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
         reason = p.reason
         tab_id = await ex.target_id() or tab_id   # the tab it ended on (it may have followed a new tab)
         if p.state == "ready_for_you":
-            set_status(job_id, states.READY_FOR_YOU, reason=reason, tab_target_id=tab_id)
+            set_status(job_id, states.READY_FOR_YOU, reason=reason, tab_target_id=tab_id, extra=finish_extra(job_id))
             outcome = RunOutcome(states.READY_FOR_YOU, reason)
             try:
                 png = await ex.screenshot_png()
@@ -414,7 +422,8 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             except Exception:
                 pass
         else:
-            set_status(job_id, states.HOLD, reason=reason, blocked_on=p.blocked_on, tab_target_id=tab_id)
+            set_status(job_id, states.HOLD, reason=reason, blocked_on=p.blocked_on, tab_target_id=tab_id,
+                       extra=finish_extra(job_id) if reason.startswith("shadow_mode") else None)
             outcome = RunOutcome(states.HOLD, reason)
             await after_hold(job, ctx, ex, reason)
     except BudgetExceeded as b:

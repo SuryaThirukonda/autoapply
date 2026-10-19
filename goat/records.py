@@ -41,19 +41,47 @@ def save_json(job_id: int, name: str, obj: Any) -> Path:
     return p
 
 
-def record_decision(job_id: int, page: int, field_label: str, value: Any, source: str, ref: str = "") -> None:
+def record_decision(job_id: int, page: int, field_label: str, value: Any, source: str, ref: str = "", tier: str | None = None) -> None:
     """Every field the agent set, with its source. `source` is one of:
     standing:<key> | bank:<id> | adapter:<name> | approved_wording:<key> | policy:<key> |
-    resume | user:<question key> | judgment (judgment must be explained in notes)."""
+    resume | user:<question key> | judgment (judgment must be explained in notes).
+    `tier` (confirmed | inferred | sensitive) is derived from the source when not given."""
+    from . import answers
     v = "(set)" if any(s in field_label.lower() for s in ("password", "verification code", "security code")) else value
+    tier = tier or answers.decision_tier(source, field_label)
     with db.tx() as con:
-        con.execute("INSERT INTO decisions(job_id,page,field_label,value,source,ref,ts) VALUES(?,?,?,?,?,?,?)",
-                    (job_id, page, field_label, None if v is None else str(v)[:2000], source, ref, db.now()))
+        con.execute("INSERT INTO decisions(job_id,page,field_label,value,source,ref,ts,tier) VALUES(?,?,?,?,?,?,?,?)",
+                    (job_id, page, field_label, None if v is None else str(v)[:2000], source, ref, db.now(), tier))
 
 
 def decisions(job_id: int) -> list[dict]:
     return [dict(r) for r in db.connect().execute(
-        "SELECT page, field_label, value, source, ref, ts FROM decisions WHERE job_id=? ORDER BY id", (job_id,))]
+        "SELECT page, field_label, value, source, ref, ts, tier FROM decisions WHERE job_id=? ORDER BY id", (job_id,))]
+
+
+def inferred_decisions(job_id: int, limit: int = 12) -> list[dict]:
+    """The decisions Surya did not confirm himself (newest per label), numbered for a one-tap review:
+    'all good' or 'fix 2: <value>' in the finish message."""
+    latest: dict[str, dict] = {}
+    for d in decisions(job_id):
+        if d.get("tier") != "inferred" or str(d.get("value") or "") in ("", "(set)"):
+            continue
+        src = str(d.get("source") or "")
+        key = src.split(":", 1)[1].split(" ", 1)[0] if ":" in src and src.lower().startswith(("standing:", "bank:")) else ""
+        latest[d["field_label"]] = {"label": str(d["field_label"])[:80], "value": str(d["value"])[:120], "source": src[:60], "key": key}
+    out = list(latest.values())[:limit]
+    for i, item in enumerate(out, 1):
+        item["n"] = i
+    return out
+
+
+def inferred_text(items: list[dict], max_chars: int = 300) -> str:
+    """The tail of a finish message: the inferred decisions and how to confirm or fix them."""
+    if not items:
+        return ""
+    head = f"{len(items)} inferred: " + "; ".join(f"{it['n']}) {it['label'][:30]} = {it['value'][:30]}" for it in items)
+    tail = " Reply 'all good' or 'fix 2: <value>'."
+    return (head[: max_chars - len(tail) - 1].rstrip() + ("…" if len(head) > max_chars - len(tail) - 1 else "")) + tail
 
 
 def write_decisions_markdown(job_id: int, header: dict, free_text: list[dict], notes: list[str]) -> Path:

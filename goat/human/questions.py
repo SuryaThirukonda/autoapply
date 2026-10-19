@@ -215,9 +215,9 @@ class QuestionBroker:
                 log.debug("job %s: %d question(s) already pending, not re-asked", job_id, reused)
             return keys
 
-        payload = [{"id": pid, "key": q["key"], "question": q.get("question") or q["key"],
+        payload = [{"id": pid, "n": i + 1, "key": q["key"], "question": q.get("question") or q["key"],
                     "options": list(q.get("options") or []) or None,
-                    "field_type": q.get("field_type")} for pid, q in new_rows]
+                    "field_type": q.get("field_type")} for i, (pid, q) in enumerate(new_rows)]
         message_ids: list[int | None] = [None] * len(new_rows)
         if self._sender is None:
             log.warning("job %s: %d question(s) recorded but no sender registered (Telegram not "

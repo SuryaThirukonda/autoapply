@@ -51,6 +51,10 @@ class Answer:
         return self.answer is not None and str(self.answer).strip() != ""
 
     @property
+    def tier(self) -> str:
+        return answer_tier(self)
+
+    @property
     def is_blank(self) -> bool:
         return self.answer_type == "blank"
 
@@ -172,6 +176,46 @@ def lookup(question: str, company: str = "", ats: str = "") -> Answer | None:
     a.confidence = conf
     a.via = via
     return a
+
+
+# Confidence tiers (roadmap 2026-10-18 item 2). confirmed: Surya said so (questionnaire, Telegram, the web form,
+# an operator command, the Hermes-era bank he reviewed). inferred: the agent derived or defaulted it. sensitive:
+# self-identification, consent and policy answers, which are re-shown whatever their source.
+CONFIRMED_SOURCES = ("questionnaire", "telegram", "web", "operator", "remember", "hermes", "surya", "seed:", "nightly:approved", "user:")
+INFERRED_SOURCES = ("derived", "default_no", "only_option", "profile", "classifier", "seed:derived", "generated", "judgment")
+SENSITIVE_KEY_PREFIXES = ("self_id.", "consent.", "policy.", "compliance.", "compensation.", "identity.dob", "identity.date_of_birth", "identity.ssn")
+
+
+def tier_for(key: str | None, source: str | None) -> str:
+    k = (key or "").lower()
+    if any(k.startswith(p) for p in SENSITIVE_KEY_PREFIXES):
+        return "sensitive"
+    s = (source or "").lower()
+    if any(s.startswith(p) for p in INFERRED_SOURCES):
+        return "inferred"
+    if any(s.startswith(p) for p in CONFIRMED_SOURCES):
+        return "confirmed"
+    return "inferred"
+
+
+def answer_tier(a: "Answer") -> str:
+    return tier_for(a.key, a.source)
+
+
+def decision_tier(source: str | None, field_label: str = "", company: str = "", ats: str = "") -> str:
+    """The tier of a recorded decision from its source tag: standing:<key> looks the answer up; resume,
+    adapter and as-is values are confirmed; generated / judgment / unknown are inferred."""
+    s = (source or "").strip()
+    low = s.lower()
+    if low.startswith(("standing:", "bank:", "policy:", "approved_wording:")):
+        key = s.split(":", 1)[1].split(" ", 1)[0].strip()
+        if low.startswith("policy:"):
+            return "sensitive"
+        a = get(key, company, ats)
+        return answer_tier(a) if a else tier_for(key, "")
+    if low.startswith(("resume", "adapter", "cleared", "as_is", "user:", "seed:", "standing")):
+        return "confirmed"
+    return "inferred"
 
 
 def save_answer(key: str, answer: str | None, *, answer_type: str = "text", source: str,
