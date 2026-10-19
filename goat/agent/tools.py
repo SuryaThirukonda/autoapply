@@ -1631,7 +1631,9 @@ class ToolDispatcher:
                 shown = "; ".join(f"{d['field_label'][:40]} = {str(d.get('value'))[:50]!r}" for d in named[:3])
                 db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "set_fields": shown[:200]})
                 return {"error": f"not parked: the field(s) this names are already set and sourced this attempt ({shown}); a wording that differs "
-                                 "from the stored value is the portal's own spelling, which is correct. Move on to the rest of the page and submit."}, None
+                                 "from the stored value is the portal's own spelling, which is correct. A Workday prompt nests options under "
+                                 "categories: a chip showing the stored value is picked even when the top-level list does not show it (T-Mobile, "
+                                 "2026-10-19). Move on to the rest of the page and submit."}, None
         if re.search(r"race|ethnicit|hispanic|latino|gender|veteran|disabilit|self[- ]identif", low) and self.ctx.park_attempts < 3:
             # Self-identification never parks: every wording has a stored chain, including his own answers for forms
             # with no decline option (Surya, 2026-10-18).
