@@ -1521,7 +1521,9 @@ class ToolDispatcher:
         import asyncio
         with db.tx() as con:
             con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.AWAITING_CODE, db.now(), self.ctx.job_id))
-        after_ts = self.ctx.code_requested_at or (db.now() - 180)
+        # A run that resumes on a code page did not request the code itself: Coinbase's arrived 7 minutes before the
+        # rerun asked for it and a 3-minute look-back missed it (2026-10-19).
+        after_ts = self.ctx.code_requested_at or (db.now() - 900)
         fetch = self.ctx.mail.fetch_code
         try:
             import inspect
