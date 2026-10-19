@@ -710,7 +710,10 @@ def find_confirmation_email(
     toks = _company_tokens(company)
     if not toks:
         return None
-    company_q = " ".join(_quote(t) for t in toks)
+    # Gmail ANDs bare words, and "ICF International"'s confirmation (from icf@myworkday.com) never says "International"
+    # (2026-10-18): search for any of the name's words, then require all of them in the message, or the first one in the
+    # sender ("ICF Human Resources <icf@myworkday.com>").
+    company_q = "(" + " OR ".join(_quote(t) for t in toks) + ")" if len(toks) > 1 else _quote(toks[0])
     q = f'subject:(application OR applying OR received OR "thank you") after:{int(after_ts)} {company_q}'
     best: Message | None = None
     for ref in client.list_messages(q, 10):
@@ -720,8 +723,8 @@ def find_confirmation_email(
         m = parse_message(client.get_message(mid))
         if m.ts < int(after_ts) or is_forbidden(m.subject, m.snippet):
             continue
-        hay = f"{m.from_header}\n{m.subject}\n{m.snippet}".lower()
-        if not any(t.lower() in hay for t in toks):
+        hay = f"{m.from_header}\n{m.subject}\n{m.snippet}\n{m.text}".lower()
+        if not (all(t.lower() in hay for t in toks) or toks[0].lower() in (m.from_header or "").lower()):
             continue
         if best is None or m.ts > best.ts:
             best = m

@@ -221,8 +221,18 @@ def test_find_confirmation_email():
     bad = _msg("c3", 1_700_000_300, "billing@acme.com", "Acme invoice received", "", snippet="payment")
     client = FakeMailClient([[ok, newer, bad]])
     assert gmail.find_confirmation_email("Acme Robotics, Inc.", 1_700_000_000, "greenhouse", client=client) == "c2"
-    assert client.queries[0].endswith("after:1700000000 Acme Robotics") and "Inc" not in client.queries[0]
+    assert client.queries[0].endswith("after:1700000000 (Acme OR Robotics)") and "Inc" not in client.queries[0]
     assert gmail.find_confirmation_email("Acme Robotics", 1_700_000_000, None, client=FakeMailClient([[]])) is None
+
+
+def test_a_confirmation_that_names_only_part_of_the_company_still_matches_by_sender():
+    """ICF International (2026-10-18): 'Thank you for applying!' from icf@myworkday.com never says 'International'."""
+    icf = _msg("i1", 1_700_000_100, "ICF Human Resources <icf@myworkday.com>", "Thank you for applying!",
+               "Thanks for applying to the Software Engineer Intern role.", snippet="Thanks for applying")
+    other = _msg("i2", 1_700_000_200, "Jobs <no-reply@international-careers.com>", "Thank you for applying",
+                 "Thanks for applying to International Paper.", snippet="International Paper")
+    assert gmail.find_confirmation_email("ICF International", 1_700_000_000, None, client=FakeMailClient([[icf, other]])) == "i1"
+    assert gmail.find_confirmation_email("ICF International", 1_700_000_000, None, client=FakeMailClient([[other]])) is None
 
 
 def test_gmail_client_without_token_raises_mail_unavailable(monkeypatch, tmp_path):
