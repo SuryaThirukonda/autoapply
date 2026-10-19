@@ -27,3 +27,28 @@ def test_one_of_action_or_actions_survives():
 
 def test_other_items_pass_through():
     assert echo_item({"type": "function_call", "name": "snapshot", "arguments": "{}", "call_id": "c"})["name"] == "snapshot"
+
+
+def test_a_bare_call_is_left_out_with_its_reasoning():
+    """Stoke Space (2026-10-19): even rebuilt as a screenshot action, the bare call was refused ("exactly one of `action`
+    or `actions`"); it is now left out of the replay, together with the reasoning item that produced it."""
+    from goat.agent.loop import echo_items, is_bare_computer_call
+    reasoning = {"type": "reasoning", "id": "rs_1", "summary": []}
+    fc = {"type": "function_call", "name": "snapshot", "arguments": "{}", "call_id": "c"}
+    assert is_bare_computer_call(_call()) and not is_bare_computer_call(_call(action={"type": "screenshot"}))
+    out = echo_items([fc, reasoning, _call()])
+    assert out == [fc]
+    out = echo_items([reasoning, _call(action={"type": "click", "x": 1, "y": 2, "button": "left"})])
+    assert [o["type"] for o in out] == ["reasoning", "computer_call"]
+
+
+def test_location_wordings_map_to_the_city_picker():
+    """IXL (2026-10-19): 'Your Location (Search by City)' has to be picked from the suggestions, not typed."""
+    from goat.adapters import GENERIC_FIELD_MAP
+    def rule(label):
+        return next(((k, how) for rx, k, how in GENERIC_FIELD_MAP if rx.search(label)), None)
+    for label in ("Your Location (Search by City)", "Location (City)", "Current location", "Location*", "Where are you located?",
+                  "Your location"):
+        assert rule(label) == ("identity.location_city", "choose"), label
+    assert rule("Preferred location") != ("identity.location_city", "choose")
+    assert rule("City") == ("identity.city", "text")

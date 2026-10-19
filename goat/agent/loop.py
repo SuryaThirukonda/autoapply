@@ -38,6 +38,32 @@ PRICES = {
 }
 
 
+def is_bare_computer_call(o: Any) -> bool:
+    """A computer_call with neither an action nor a non-empty batch: the model only wanted to look. Replaying it, even
+    rebuilt as a screenshot action, was refused ("exactly one of `action` or `actions`", Stoke Space 2026-10-19)."""
+    d = o.model_dump(exclude_none=True) if hasattr(o, "model_dump") else dict(o)
+    if d.get("type") != "computer_call":
+        return False
+    acts = d.get("actions")
+    if isinstance(acts, dict):
+        acts = acts.get("actions")
+    return not acts and not d.get("action")
+
+
+def echo_items(output: list) -> list[dict]:
+    """The response's output items as input items for the next request. A bare computer_call is left out, with the
+    reasoning item right before it (the API refuses a reasoning item without its following item); the caller shows
+    the screen as a user message instead."""
+    out: list[dict] = []
+    for o in output:
+        if is_bare_computer_call(o):
+            if out and out[-1].get("type") == "reasoning":
+                out.pop()
+            continue
+        out.append(echo_item(o))
+    return out
+
+
 def echo_item(o: Any) -> dict:
     """A response output item as an input item for the next request. A computer_call must carry exactly
     one of `action` / `actions` (the API rejects both or neither, which ended a T-Mobile run): the batch
@@ -224,11 +250,18 @@ class AgentLoop:
                 records.save_json(ctx.job_id, f"request_failed_{int(time.time())}.json", {"items_tail": self.items[-6:], "error": str(e)})
                 return LoopResult("error", f"model request failed: {str(e)[:200]}")
             self.steps += 1
-            self.items += [echo_item(o) for o in resp.output]
+            self.items += echo_items(resp.output)
             produced_tool = False
             step_failed = False
             for item in resp.output:
                 typ = getattr(item, "type", None)
+                if typ == "computer_call" and is_bare_computer_call(item):
+                    # nothing to do but look: the call is not replayed (see echo_items), so the screen goes back as a user message
+                    produced_tool = True
+                    self.items.append({"role": "user", "content": [
+                        {"type": "input_text", "text": "The page as it looks now (computer tool calls must carry an action)."},
+                        {"type": "input_image", "image_url": await ctx.ex.screenshot_data_url(), "detail": self.detail or "auto"}]})
+                    continue
                 if typ == "computer_call":
                     produced_tool = True
                     decision = policy.review_safety_checks(getattr(item, "pending_safety_checks", []) or [], ctx.ex.url, ctx.ex.policy)

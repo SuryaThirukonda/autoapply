@@ -25,7 +25,9 @@ GENERIC_FIELD_MAP: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"^(mobile |cell |primary )?phone( number)?\b|^telephone", re.I), "identity.phone", "text"),
     (re.compile(r"^(street )?address( line)? ?1?$|^address$|^street", re.I), "identity.address_line", "text"),
     (re.compile(r"city,? state,? (and |& )?zip", re.I), "identity.city_state_zip", "text"),
-    (re.compile(r"^(current )?location( \(city\))?\s*\*?$|^(current )?city of residence", re.I), "identity.location_city", "choose"),
+    # IXL (2026-10-19): "Your Location (Search by City)" was typed, not picked, and Greenhouse refused the submit twice
+    (re.compile(r"^(your |current )?(home )?location( \([^)]*\))?\s*\*?$|^(current )?city of residence|^where are you (currently )?(located|based)\b", re.I),
+     "identity.location_city", "choose"),
     (re.compile(r"^city\b", re.I), "identity.city", "text"),
     (re.compile(r"^(zip|postal)( code)?\b", re.I), "identity.zip", "text"),
     (re.compile(r"^linkedin( profile| url)?\b", re.I), "identity.linkedin", "text"),
