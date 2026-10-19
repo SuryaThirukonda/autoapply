@@ -638,6 +638,10 @@ class ToolDispatcher:
             if is_choice and not f.get("answer_key") and (f.get("source") or "").lower() == "generated":
                 results.append({"ref": f["ref"], "status": "failed", "error": "choices (radio/checkbox/select) need an answer_key: call lookup_answer, or ask_user if none fits"})
                 continue
+            if f.get("answer_key") == "identity.phone" and re.search(r"\bext(ension)?\b", f"{f.get('label') or ''} {(item or {}).get('label') or ''}", re.I):
+                results.append({"ref": f["ref"], "status": "failed", "error": "a phone EXTENSION box stays empty: Surya has no extension "
+                                "(his number goes in the Phone box only)"})
+                continue
             if not f.get("answer_key") and (f.get("source") or "").lower() in ("resume", "generated") and (
                     WORK_ENTRY_FIELD.match(str(f.get("label") or "")) or WORK_ENTRY_FIELD.match(str((item or {}).get("label") or ""))):
                 # T-Mobile (2026-10-19): asked by a mistaken judge note to "fix" work entry 5's company, the model typed

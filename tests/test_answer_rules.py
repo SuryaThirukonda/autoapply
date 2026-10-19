@@ -937,3 +937,12 @@ def test_a_picker_rule_is_never_text_for_a_box():
     assert text_from_chain(concrete_entries(chain), "Preferred office") == "Dallas"
     assert text_from_chain(["Sugar Land, Texas, United States", "Sugar Land, TX"], "City") == "Sugar Land, Texas, United States"
     assert not RULE_TEXT.search("Houston, TX") and not RULE_TEXT.search("Within 30 days")
+
+
+
+def test_a_phone_extension_box_never_gets_the_phone_number():
+    """Ryan (2026-10-19): Workday's 'Phone Extension' took the whole number through the 'phone' label rule."""
+    from goat.adapters import GENERIC_FIELD_MAP
+    rule = next(r for r in GENERIC_FIELD_MAP if r[1] == "identity.phone")
+    assert rule[0].search("Phone Number*") and rule[0].search("Mobile phone") and rule[0].search("Telephone")
+    assert not rule[0].search("Phone Extension") and not rule[0].search("Phone Ext.")

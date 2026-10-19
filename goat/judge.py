@@ -58,7 +58,8 @@ JUDGE_INSTRUCTIONS = (
     "Consents, acknowledgments and attestations a form requires to apply (privacy notice, terms, data use, 'I have read "
     "and understood', a policy to follow, an e-signature with his name and date) are delegated: Surya authorized the "
     "agent to accept them on his behalf, so a ticked acknowledgment is the intended value, never a defect (Waymo, "
-    "2026-10-19). Marketing, job-alert and talent-community opt-ins stay unticked."
+    "2026-10-19). An SMS / text-message opt-in is ticked (his choice); marketing email, job-alert and talent-community "
+    "opt-ins stay unticked."
 )
 
 FACT_CHECK_INSTRUCTIONS = (

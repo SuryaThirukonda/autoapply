@@ -25,7 +25,8 @@ GENERIC_FIELD_MAP: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"^preferred (first )?name", re.I), "identity.preferred_name", "text"),
     (re.compile(r"^(full|legal) name$|^name$", re.I), "identity.legal_name", "text"),
     (re.compile(r"^e-?mail( address)?\b", re.I), "identity.email", "text"),
-    (re.compile(r"^(mobile |cell |primary )?phone( number)?\b|^telephone", re.I), "identity.phone", "text"),
+    # never "Phone Extension" / "Phone Ext." (Ryan's Workday form got the whole number there, 2026-10-19)
+    (re.compile(r"^(?!.*\bext(ension)?\b)((mobile |cell |primary )?phone( number)?\b|telephone)", re.I), "identity.phone", "text"),
     (re.compile(r"^(street )?address( line)? ?1?$|^address$|^street", re.I), "identity.address_line", "text"),
     (re.compile(r"city,? state,? (and |& )?zip", re.I), "identity.city_state_zip", "text"),
     # IXL (2026-10-19): "Your Location (Search by City)" was typed, not picked, and Greenhouse refused the submit twice
