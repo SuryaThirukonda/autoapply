@@ -41,6 +41,10 @@ def knowledge_text(company: str = "", ats: str = "", profile_chars: int = 30000)
             val = "(leave empty)"
         elif atype.startswith("conditional:"):
             val = f"{str(r['answer'])[:160]} [depends on {atype.split(':', 1)[1]}]"
+        elif str(r["answer"]).strip().lower() in ("none", "n/a", "na", "none."):
+            # his answer IS "None" (nothing applies); shown bare it read as a missing value and Aptiv asked him the same
+            # travel question twice (2026-10-19)
+            val = f'"{str(r["answer"]).strip()}" (his answer: nothing applies)'
         else:
             val = str(r["answer"]).replace("\n", " ")[:220]
         wording = "; ".join(f'"{a}"' for a in asked.get(r["key"], []))

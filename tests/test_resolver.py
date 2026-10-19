@@ -181,3 +181,15 @@ async def test_free_response_prompts_never_reach_the_resolver(kb):
     d, clf = _d(kb, {"meaning": "why", "verdict": "derived", "key": None, "answer": "Because ...", "evidence": "profile", "confidence": 0.99})
     out, _ = await d.t_lookup_answer("Why are you interested in this role?", [], None, None)
     assert out.get("miss") is True and "draft it yourself" in out["hint"] and clf.calls == []
+
+
+
+def test_a_stored_none_is_shown_as_his_answer(tmp_path):
+    """Aptiv (2026-10-19): his web answer 'None' to the foreign-travel question read as a missing value."""
+    from goat import answers, db
+    from goat.agent import knowledge
+    db.reset_for_tests(tmp_path / "k.db")
+    answers.save_answer("q.list_countries_outside_the_u_s", "None", source="web")
+    knowledge._cache.clear()
+    line = next(l for l in knowledge.knowledge_text("Aptiv", "workday").splitlines() if "q.list_countries_outside_the_u_s" in l)
+    assert "his answer: nothing applies" in line
