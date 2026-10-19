@@ -41,18 +41,32 @@ def claim_next() -> dict | None:
         job = dict(row)
         con.execute("UPDATE jobs SET status=?, claimed_at=?, updated_at=?, attempts=attempts+1 WHERE id=?",
                     (states.FILLING, db.now(), db.now(), job["id"]))
-        # Decisions belong to one attempt: archive the previous attempt's rows, then start clean.
-        old = con.execute("SELECT page, field_label, value, source, ref, ts FROM decisions WHERE job_id=? ORDER BY id", (job["id"],)).fetchall()
-        if old:
-            d = records.job_dir(int(job["id"]))
-            n = len(list(d.glob("decisions_attempt*.md"))) + 1
-            lines = [f"# Decisions archived from attempt {n}", "", "| Page | Field label | Value | Source | ts |", "|---|---|---|---|---|"]
-            lines += [f"| {r['page']} | {r['field_label']} | {str(r['value'] or '').replace('|', '/')[:200]} | {r['source']} | {r['ts']} |" for r in old]
-            (d / f"decisions_attempt{n}.md").write_text("\n".join(lines), encoding="utf-8")
-            con.execute("DELETE FROM decisions WHERE job_id=?", (job["id"],))
+        # Decisions belong to one attempt: archive the previous attempt's rows, then start clean. A draft Surya released
+        # as filled keeps them while its tab may still hold the form he approved (run_job archives them if it does not).
+        if not keeps_decisions(job):
+            archive_decisions(con, int(job["id"]))
         job["attempts"] = job["attempts"]  # attempts before this one
         db.event(job["id"], "job:claimed", {"company": job["company"], "title": job["title"], "ats": job["ats"], "attempt": job["attempts"] + 1})
         return job
+
+
+def keeps_decisions(job: dict) -> bool:
+    """A released draft whose tab is still known: its decisions are the ones Surya approved, so they stay."""
+    return bool(job.get("cleared_live")) and bool(job.get("tab_target_id"))
+
+
+def archive_decisions(con, job_id: int) -> int:
+    """Move a job's decisions into records/<job>/decisions_attemptN.md and clear them. Returns how many moved."""
+    old = con.execute("SELECT page, field_label, value, source, ref, ts FROM decisions WHERE job_id=? ORDER BY id", (job_id,)).fetchall()
+    if not old:
+        return 0
+    d = records.job_dir(job_id)
+    n = len(list(d.glob("decisions_attempt*.md"))) + 1
+    lines = [f"# Decisions archived from attempt {n}", "", "| Page | Field label | Value | Source | ts |", "|---|---|---|---|---|"]
+    lines += [f"| {r['page']} | {r['field_label']} | {str(r['value'] or '').replace('|', '/')[:200]} | {r['source']} | {r['ts']} |" for r in old]
+    (d / f"decisions_attempt{n}.md").write_text("\n".join(lines), encoding="utf-8")
+    con.execute("DELETE FROM decisions WHERE job_id=?", (job_id,))
+    return len(old)
 
 
 def attempt_history(job_id: int, listing_id: str) -> list[str]:
@@ -357,22 +371,26 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
     try:
         await ex.start()
         page = None
+        reopened = False                    # the form on screen is not the held one (new tab, re-open or reload)
         if job.get("tab_target_id"):
             page = await ex.attach(job["tab_target_id"])
         if page is None:
             await ex.new_page()
             await ex.goto(apply_url)
+            reopened = True
         else:
             await ex.bring_to_front()
             await ex.settle()
             if not ex.policy.allowed(ex.url) or "login" in ex.url.lower():
                 await ex.goto(apply_url)   # expired session: re-open and re-fill from the store
+                reopened = True
             else:
                 # A stale Workday tab shows "Something went wrong ... refresh the page": do that, then re-open the posting.
                 from .gate import portal_error
                 if portal_error(await ex.page_text(30000)):
                     await ex.page.reload(wait_until="domcontentloaded")
                     await ex.settle()
+                    reopened = True
                     if portal_error(await ex.page_text(30000)):
                         await ex.goto(apply_url)
                     db.event(job_id, "tab:reloaded", {"url": ex.url[:200]})
@@ -388,9 +406,16 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
                 apply_url = embedded
                 ex.policy = HostPolicy([job["url"], apply_url])
                 await ex.goto(apply_url)
+                reopened = True
         tab_id = await ex.target_id()
         with db.tx() as con:
             con.execute("UPDATE jobs SET apply_url=?, tab_target_id=? WHERE id=?", (apply_url, tab_id, job_id))
+        released_as_filled = keeps_decisions(job) and not reopened
+        if keeps_decisions(job) and reopened:
+            # The released draft's tab was gone or reloaded: the form gets filled again, so the old decisions go.
+            with db.tx() as con:
+                moved = archive_decisions(con, job_id)
+            db.event(job_id, "decisions:archived", {"why": "released draft re-opened", "moved": moved})
         png = await ex.screenshot_png()
         records.save_screenshot(job_id, png, "opened")
         # The posting text decides conditional answers (relocation at own expense: Yes only when pay is listed).
@@ -416,7 +441,11 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
 
         loop = AgentLoop(ctx)
         note = adapter.opening_note(job.get("attempts", 0) + 1)
-        if job.get("cleared_live"):
+        if job.get("cleared_live") and released_as_filled:
+            note += ("\nSurya RELEASED this draft for a LIVE submission exactly as filled: the tab still shows the form he approved and its "
+                     "decisions are kept. Call snapshot, then call submit at once WITHOUT changing any field (the gate checks it live). Only "
+                     "if the gate names blockers, fix exactly those from their answer_keys and call submit again.")
+        elif job.get("cleared_live"):
             note += ("\nThis job was RELEASED by Surya for a LIVE submission after he reviewed its shadow draft: the gate passes live. "
                      "Call snapshot; the saved draft usually reopens at its Review page: call submit there. If the gate names blockers, "
                      "re-set those fields from their answer_keys and call submit again.")

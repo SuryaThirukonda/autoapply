@@ -107,3 +107,45 @@ def test_dashboard_action_release_goes_through_the_same_guard(seeded):
     from goat.dashboard import action
     assert action(1, "release", {})["ok"] is True and _job(1)["cleared_live"] == 1
     assert action(2, "release", {})["ok"] is False
+
+
+def _queued_with_decisions(cleared: int, tab: str | None):
+    from goat import records
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('k1','Sierra','Intern','https://jobs.ashbyhq.com/Sierra/1','ashby')")
+        cur = con.execute("INSERT INTO jobs(listing_id,status,lane,priority,cleared_live,tab_target_id,created_at,updated_at) "
+                          "VALUES('k1',?,'no_account',5000,?,?,1,1)", (states.QUEUED, cleared, tab))
+        jid = cur.lastrowid
+    records.record_decision(jid, 1, "Which Sierra office would you prefer?", "New York", "standing:availability.location_ranking", "e30")
+    return jid
+
+
+def test_a_released_draft_with_its_tab_keeps_the_decisions_he_approved(seeded, monkeypatch, tmp_path):
+    from goat import records, worker
+    monkeypatch.setattr(SETTINGS, "records_dir", tmp_path / "records")
+    jid = _queued_with_decisions(1, "TAB123")
+    job = worker.claim_next()
+    assert job["id"] == jid and worker.keeps_decisions(job)
+    assert [d["value"] for d in records.decisions(jid)] == ["New York"]
+    assert not list(records.job_dir(jid).glob("decisions_attempt*.md"))
+
+
+def test_a_released_draft_without_a_tab_and_a_plain_requeue_archive_as_before(seeded, monkeypatch, tmp_path):
+    from goat import records, worker
+    monkeypatch.setattr(SETTINGS, "records_dir", tmp_path / "records")
+    jid = _queued_with_decisions(1, None)
+    job = worker.claim_next()
+    assert job["id"] == jid and not worker.keeps_decisions(job)
+    assert records.decisions(jid) == [] and list(records.job_dir(jid).glob("decisions_attempt*.md"))
+    assert not worker.keeps_decisions({"cleared_live": 0, "tab_target_id": "T"})
+
+
+def test_archive_decisions_moves_the_rows_into_the_attempt_file(seeded, monkeypatch, tmp_path):
+    from goat import records, worker
+    monkeypatch.setattr(SETTINGS, "records_dir", tmp_path / "records")
+    jid = _queued_with_decisions(0, None)
+    with db.tx() as con:
+        assert worker.archive_decisions(con, jid) == 1
+        assert worker.archive_decisions(con, jid) == 0
+    text = (records.job_dir(jid) / "decisions_attempt1.md").read_text(encoding="utf-8")
+    assert "Which Sierra office would you prefer?" in text and "New York" in text and records.decisions(jid) == []
