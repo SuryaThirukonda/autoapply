@@ -203,3 +203,26 @@ def test_a_placeholder_value_is_not_an_unsourced_value(tmp_path):
     reasons = [r for r in gate.run_gate(job=job, snapshot=snap, page_text="", expected_resume=None, free_text_answers=[], portal="greenhouse", page_no=1).reasons if "no sourced decision" in r]
     assert any("Nickname" in r for r in reasons)
     assert not any("IXL office" in r or "University" in r for r in reasons), reasons
+
+
+
+def test_only_the_newest_decision_on_a_control_is_judged(tmp_path):
+    """Axiom Space (2026-10-19): an attestation first set without a key (source adapter), then re-set from the
+    consent rule under another label on the same box, must not keep the gate blocked."""
+    from goat import db, gate, records
+    from goat.browser.snapshot import Snapshot
+    db.reset_for_tests(tmp_path / "t.db")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('l1','Axiom Space','Intern','https://x.example/job','workday')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,priority) VALUES(1,'l1','filling','account',0)")
+    job = dict(db.connect().execute("SELECT j.*, l.company, l.title, l.url, l.ats FROM jobs j JOIN listings l ON l.id=j.listing_id WHERE j.id=1").fetchone())
+    records.record_decision(1, 1, "Acknowledge and agree to complete NASA export-control screening if selected", "Yes", "adapter", "e31")
+    snap = Snapshot(url="https://x.example/job", title="t", headings=["Review"], items=[
+        {"ref": "e40", "tag": "button", "label": "Submit", "submitish": True}], groups=[], errors={}, challenge={})
+    for i in snap.items:
+        snap.refs[i["ref"]] = i
+    def reasons():
+        return gate.run_gate(job=job, snapshot=snap, page_text="", expected_resume=None, free_text_answers=[], portal="workday", page_no=1).reasons
+    assert any("attestation not from a standing answer" in r for r in reasons())
+    records.record_decision(1, 1, "Acknowledge NASA export-control screening", "Yes", "standing:consent.privacy_notice", "e31")
+    assert not any("attestation not from a standing answer" in r for r in reasons())

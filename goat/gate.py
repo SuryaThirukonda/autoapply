@@ -148,7 +148,16 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
 
     # 4. decisions: every value has a source; attestations only from standing answers
     decs = records.decisions(job["id"])
-    for d in decs:
+    # Only the newest decision on a control counts: Axiom Space's NASA export-screening box was set first without an
+    # answer key (source adapter), then again from his consent rule under another label, and the stale first decision
+    # kept the gate blocked (2026-10-19). A control is its ref on its page (Workday reuses refs across pages).
+    newest: dict[tuple, int] = {}
+    for i, d in enumerate(decs):
+        if d.get("ref"):
+            newest[(d.get("page"), d.get("ref"))] = i
+    for i, d in enumerate(decs):
+        if d.get("ref") and newest.get((d.get("page"), d.get("ref"))) != i:
+            continue
         if not d["source"] or d["source"] == "judgment":
             reasons.append(f"decision without an approved source: {d['field_label']}")
         if ATTESTATION.search(d["field_label"] or "") and not str(d["source"]).startswith(ALLOWED_ATTESTATION_SOURCES):
