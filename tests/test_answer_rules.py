@@ -1087,3 +1087,21 @@ def test_a_junior_or_senior_standing_requirement_is_satisfied():
     r = ("eligibility: Nissan requires students entering their Junior or Senior year at the start of the upcoming academic "
          "term; Surya's standing academic classification is Sophomore.")
     assert ToolDispatcher.SATISFIED.search(r) and not ToolDispatcher.DISQUALIFIERS.search(r)
+
+
+@pytest.mark.asyncio
+async def test_go_to_step_allows_the_trip_the_gate_asks_for(store):
+    """Aptiv (2026-10-19): the Review gate said 'call go_to_step('My Experience')' while go_to_step refused a third trip."""
+    d, ctx = _dispatcher({"id": 50, "company": "Aptiv", "ats": "workday"})
+    ctx.control_failures["step:my experience"] = 2
+    ctx.gate_result = {"result": "blocked", "reasons": ["the Review page does not show work entry 2 (DeKalb Capital Management): "
+                                                        "call go_to_step('My Experience'), then fill_sections"]}
+    async def page_text(n=4000):
+        return "current step 1 of 5\nMy Experience\n"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_go_to_step("My Experience")
+    assert "already gone back" not in str(out), out
+    ctx.gate_result = None
+    ctx.control_failures["step:my experience"] = 2
+    out, _ = await d.t_go_to_step("My Experience")
+    assert "already gone back" in out["error"]

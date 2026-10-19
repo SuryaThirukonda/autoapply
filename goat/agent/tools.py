@@ -1186,7 +1186,11 @@ class ToolDispatcher:
         want = step.strip().lower()
         visits = self.ctx.control_failures.get(f"step:{want}", 0) + 1
         self.ctx.control_failures[f"step:{want}"] = visits
-        if visits > 2:
+        last = " ".join(str(r) for r in ((self.ctx.gate_result or {}).get("reasons") or [])).lower()
+        # the gate itself sends the run back ("the Review page does not show work entry 2 ...: call go_to_step('My
+        # Experience')"): two more trips are allowed then (Aptiv, 2026-10-19, stalled between the two instructions)
+        asked = f"go_to_step('{step.strip().lower()}')" in last or (want.startswith("my experience") and "does not show work entry" in last)
+        if visits > 2 and not (asked and visits <= 4):
             return {"error": f"you have already gone back to {step!r} twice this run and set its fields with sourced values; a wording that "
                              "differs from the stored one is the portal's own, which is correct. Do not go back again: continue forward to "
                              "Review and call submit."}, None
@@ -2080,6 +2084,7 @@ class ToolDispatcher:
             gate = run_gate(job=self.ctx.job, snapshot=snap, page_text=page_text, expected_resume=self.ctx.resume_file,
                             free_text_answers=[f["answer"] for f in self.ctx.free_text], portal=self.ctx.portal, page_no=self.ctx.page_no)
             db.event(self.ctx.job_id, "park:checked", {"reason": reason[:200], "gate": gate.as_dict()})
+            self.ctx.gate_result = gate.as_dict()
             if gate.passed:
                 return {"error": "not parked: the code gate PASSES on this page. A problem an EARLIER attempt recorded is not on "
                                  "this page now: judge the page, not the history. Call submit now (the gate decides; the "
