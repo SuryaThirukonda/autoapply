@@ -616,9 +616,14 @@ class ToolDispatcher:
                 a = answers.get(f["answer_key"], self.ctx.job.get("company", ""), self.ctx.portal)
                 if a and a.has_value:
                     ans = answers.norm(str(a.answer)); lab = answers.norm(item.get("label") or "")
+                    first = answers.norm(str(a.answer).split(";")[0])
+                    # "All offered locations" / "Select every location offered" presses every location toggle (American
+                    # Express' Oracle offices are toggle buttons, 2026-10-19)
                     agree = (lab == ans) or (ans in ("yes", "true") and lab in ("yes", "true")) or (ans == "no" and lab in ("no", "false")) \
                         or (ans in ("yes", "true") and not NEGATED.match(item.get("label") or "") and lab not in ("no", "false")) \
-                        or (ans == "no" and bool(NEGATED.match(item.get("label") or "")))
+                        or (ans == "no" and bool(NEGATED.match(item.get("label") or ""))) \
+                        or ((first in SELECT_ALL or bool(re.match(r"^(select|pick|choose|tick|check) (every|all)\b", first)))
+                            and not NEGATED.match(item.get("label") or "") and lab not in ("no", "false"))
                     if not agree:
                         # The stored answer names the OTHER half of a Yes/No pair: press that one (Primer's
                         # sponsorship toggles were left with neither pressed, 2026-10-18).
