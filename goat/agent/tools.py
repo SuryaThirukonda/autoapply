@@ -1942,7 +1942,9 @@ class ToolDispatcher:
         real_challenge = bool(snap0 is not None and (getattr(snap0, "challenge", None) or {}).get("challenge"))
         stoppers = [m.group(0) for m in self.RFY_REASON.finditer(reason)
                     if real_challenge or not re.search(r"captcha|human|\bbot\b|challenge|verif", m.group(0), re.I)]
-        rfy_soft = low.startswith(("ready_for_you", "needs_you")) and self.ctx.park_attempts < 2 and (
+        # four gate-checked bounces, as for any eager park: American Express spent two (one on a timed-out session) and its
+        # third, "Oracle VERIFY requires a human click" on a page already showing the form, stood (2026-10-19)
+        rfy_soft = low.startswith(("ready_for_you", "needs_you")) and self.ctx.park_attempts < 4 and (
             not stoppers or (bool(self.RFY_GIVE_UP.search(reason)) and not real_challenge))
         hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch", "needs_you")) \
             and not rfy_soft

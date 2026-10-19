@@ -561,6 +561,8 @@ class Oracle(Adapter):
     portal = "oracle"
     lane = "account"
     hints = ("Oracle Recruiting Cloud: an account or an emailed access code is required; use credentials / enter_email_code. "
+             "After enter_email_code, click the VERIFY / Next button yourself (it is an ordinary button, not a human check), "
+             "then fill the application form that opens. "
              "Sessions time out after 30 idle minutes. Oracle uses role=alert for status chatter such as 'The form Address form loaded'; "
              "the harness already ignores that. Fill the Address block completely: a missing home address blocked a submit before. "
              "One long page (CSX, 2026-10-19): Yes/No and band questions are toggle buttons (fill_batch with the answer_key: GPA band "
