@@ -27,9 +27,9 @@ from .advisor import Advisor
 from .prompts import INSTRUCTIONS, answers_block, job_brief
 from .tools import FUNCTION_TOOLS, RunContext, ToolDispatcher, _answer_rows_for_prompt
 
-# Form pages one attempt may pass through before it is held as stuck (a five-step Workday form with every allowed trip
-# back stays well under it; TIAA finished in 15).
-PAGE_CYCLE_LIMIT = 24
+# Form pages one attempt may pass through before it is held as stuck (TIAA finished in 15 pages, C&S Wholesale in 26 after
+# many trips back; at about 30 s a page, 40 pages is some 20 minutes).
+PAGE_CYCLE_LIMIT = 40
 
 log = logging.getLogger(__name__)
 
