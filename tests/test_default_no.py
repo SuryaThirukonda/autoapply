@@ -149,3 +149,28 @@ async def test_a_no_answer_presses_the_no_half_of_a_toggle_pair_and_labels_it(st
     assert pressed and pressed[0]["ref"] == "e27", (pressed, out)
     decs = records.decisions(job["id"])
     assert decs[-1]["ref"] == "e27" and decs[-1]["field_label"] == "Will you require sponsorship? / No" and decs[-1]["value"] == "pressed"
+
+
+NEVER_DEFAULT_NO = [
+    # Penn State (2026-10-18): a background-investigation list that mentions a spouse and relatives
+    ("Do any of these circumstances apply to you: foreign-issued passport; spouse or relatives who are foreign nationals; "
+     "foreign activities (property, business, financial, employment, or government connections); extensive foreign travel; "
+     "mental-health counseling; police records", ["Yes", "No"]),
+    ("How much experience do you have related to Generative AI?", []),                                   # an amount, not yes/no
+    ("I am willing and able to use this skill set in this language to serve our customers", ["Yes", "No"]),  # willingness
+    ("Are you currently excluded from participation as a provider in any federal health care program?", ["Yes", "No"]),
+    ("Are you currently under sanctions other than exclusions?", ["Yes", "No"]),
+    ("Have you ever been found liable for a violation of the civil False Claims Act?", ["Yes", "No"]),
+    ("Do you or any relatives hold a dual citizenship?", ["Yes", "No"]),
+]
+
+
+@pytest.mark.parametrize("question,options", NEVER_DEFAULT_NO)
+def test_background_legal_amount_and_willingness_questions_never_default_to_no(question, options):
+    from goat.agent.tools import is_affiliation_question
+    assert is_affiliation_question(question, options) is False
+
+
+def test_the_fact_check_is_told_silence_does_not_back_background_answers():
+    from goat.judge import FACT_CHECK_INSTRUCTIONS
+    assert "silence supports a No only" in FACT_CHECK_INSTRUCTIONS and "security-clearance history" in FACT_CHECK_INSTRUCTIONS

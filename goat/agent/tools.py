@@ -218,6 +218,18 @@ AFFILIATION = re.compile(
     r"\bcompetitors?\b|subsidiar|parent company|former employee|current employee|independent contractor|consultant (for|to)|"
     r"\bindustry\b|close personal relation|domestic partner|significant other|\bkin\b|know anyone|acquaint|royal family|"
     r"political (party|office)|candidate for (political )?office|government (entity|employee|official)|member of your (family|household))", re.I)
+# Never a default No, even when they mention relatives, a spouse or customers (Penn State, 2026-10-18: "spouse or relatives
+# who are foreign nationals; foreign travel; counseling; police records" was answered No by the affiliation rule):
+# background-investigation, legal, financial and medical history, amounts of experience, and statements of willingness.
+NOT_AFFILIATION = re.compile(
+    r"(foreign (national|citizen|government|travel|contact|passport|activit|propert|business|financ|influence|preference)|"
+    r"dual citizen|citizenship|passport|clearance|background (check|investigation)|"
+    r"\bpolice\b|\barrest|\bconvict|criminal|felony|misdemeanor|\boffen[cs]e|\bcourt\b|\bcharged\b|probation|"
+    r"illegal (drug|use)|drug use|\bsubstance|mental[- ]health|counsel+ing|psychiatr|"
+    r"bankrupt|delinquen|\bdebts?\b|garnish|false claims|\bliable\b|debar|excluded from participation|\bsanctions?\b|"
+    r"export control|\bitar\b|"
+    r"how (much|many|long)|number of|\byears? of\b|\bmonths? of\b|"
+    r"^\W*(i am|i'm|are you) (willing|able)\b|willing and able)", re.I)
 _YES = re.compile(r"^(yes|y|true)\b", re.I)
 SELECT_ALL = {"all", "all offered locations", "all offered", "all locations", "all of the above", "select all", "every location", "any"}
 _NO = re.compile(r"^(no|n|false|none)\b", re.I)
@@ -255,7 +267,7 @@ CREATE_STEPS = ("no reset email came, so this tenant most likely has no account 
 
 def is_affiliation_question(question: str, options: list[str] | None) -> bool:
     """A yes/no question in the employer/industry/affiliation family (options empty, or Yes/No-like)."""
-    if not AFFILIATION.search(question or ""):
+    if not AFFILIATION.search(question or "") or NOT_AFFILIATION.search(question or ""):
         return False
     if re.search(r"(if (yes|so)|please (explain|describe|list|provide)|who\b|which\b|name of|names of)", question, re.I) and not options:
         return False

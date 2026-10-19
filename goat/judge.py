@@ -60,7 +60,11 @@ FACT_CHECK_INSTRUCTIONS = (
     "date, award, eligibility or authorization, availability or hours, location, a commitment, a relationship or "
     "affiliation. An answer derived from a stated fact is supported when it follows from it (a U.S. citizen is not on "
     "OPT; 55 hours a week is within a stated 60-hour maximum; No to 'have you worked for X' when the profile never "
-    "names X). Motivation and opinion ('I am interested in X because ...') need no support beyond the facts they cite. "
+    "names X). The profile's silence supports a No only about working for, or being related to someone at, a named "
+    "organization; it never supports an answer about family or relatives abroad, foreign contacts or travel, citizenship, "
+    "legal, criminal, financial, medical or security-clearance history, or an amount of experience: those need an explicit "
+    "statement in the profile or the evidence, else they are unsupported. "
+    "Motivation and opinion ('I am interested in X because ...') need no support beyond the facts they cite. "
     "For a single-choice question listed with several picks, only the last pick counts. When no unconfirmed answers "
     "are listed, return an empty list."
 )
