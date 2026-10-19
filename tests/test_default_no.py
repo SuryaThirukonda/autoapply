@@ -182,3 +182,17 @@ def test_services_or_a_badge_at_the_company_is_an_affiliation_question():
     q = ("Have you ever performed services for Northrop Grumman as a contractor/contingent worker, or been issued a "
          "Northrop Grumman security badge?")
     assert is_affiliation_question(q, ["Select One", "Yes", "No"])
+
+
+
+def test_information_related_to_a_topic_is_no_relative_question():
+    """TIAA (2026-10-19): 'Willing to disclose information related to political contributions ... as required by SEC Rule
+    206(4)-5?' took the relatives default No."""
+    from goat.agent.tools import consent_question_key, is_affiliation_question
+    q = ("Would you be willing to disclose, post-offer and as necessary, information related to your political contributions "
+         "as required by SEC Rule 206(4)-5?")
+    assert not is_affiliation_question(q, ["Yes", "No"])
+    assert consent_question_key(q) == "consent.compliance_disclosure"
+    assert is_affiliation_question("Are you related to anyone employed by TIAA?", ["Yes", "No"])
+    assert is_affiliation_question("Are you related to a current employee of the company?", ["Yes", "No"])
+    assert not is_affiliation_question("Describe experience related to data analysis", ["Yes", "No"])

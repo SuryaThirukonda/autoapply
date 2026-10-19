@@ -266,7 +266,9 @@ WORK_ENTRY_FIELD = re.compile(r"^\s*(current |most recent |previous )?(company( 
                               r"job title|position title)\s*[*:]?\s*$", re.I)
 
 AFFILIATION = re.compile(
-    r"(employed (by|with|at)\b|\bwork(ed|ing)? (for|at)\b|\baffiliat|relationships? (with|to)\b|\brelated to\b|\brelatives?\b|family member|"
+    r"(employed (by|with|at)\b|\bwork(ed|ing)? (for|at)\b|\baffiliat|relationships? (with|to)\b|\brelatives?\b|family member|"
+    # 'related to' only about a person: TIAA's "information related to your political contributions" took the default No
+    r"\b(are|is|be) (you|anyone|any(one)? \w+) related to\b|\brelated to (anyone|someone|an? (current |former )?(employee|officer|director|board member|member|person|individual))|"
     r"household member|immediate family|\bspouse\b|board member|\bofficers?\b|\bdirectors?\b|government official|public official|"
     r"conflict of interest|financial interest|\bown (stock|shares)|\bvendors?\b|\bsuppliers?\b|\bcustomers?\b|\bclients?\b|"
     r"\bcompetitors?\b|subsidiar|parent company|former employee|current employee|independent contractor|consultant (for|to)|"
@@ -286,7 +288,7 @@ NOT_AFFILIATION = re.compile(
     r"bankrupt|delinquen|\bdebts?\b|garnish|false claims|\bliable\b|debar|excluded from participation|\bsanctions?\b|"
     r"export control|\bitar\b|"
     r"how (much|many|long)|number of|\byears? of\b|\bmonths? of\b|"
-    r"^\W*(i am|i'm|are you) (willing|able)\b|willing and able)", re.I)
+    r"^\W*(i am|i'm|are you) (willing|able)\b|willing and able|\bwilling to\b)", re.I)
 _YES = re.compile(r"^(yes|y|true)\b", re.I)
 SELECT_ALL = {"all", "all offered locations", "all offered", "all locations", "all of the above", "select all", "every location", "any"}
 _NO = re.compile(r"^(no|n|false|none)\b", re.I)
@@ -384,8 +386,10 @@ def default_no_choice(question: str, options: list[str] | None) -> str | None:
 def consent_question_key(question: str) -> str | None:
     """Consent / acknowledgement / certification questions Surya answers yes to on every form (his rule,
     2026-10-15), mapped to the standing key that authorizes it. Marketing opt-ins map to the No key."""
-    from ..adapters import CONSENT, MARKETING, PROCESSING, SMS, consent_key
+    from ..adapters import COMPLIANCE_DISCLOSURE, CONSENT, MARKETING, PROCESSING, SMS, consent_key
     q = question or ""
+    if COMPLIANCE_DISCLOSURE.search(q):
+        return "consent.compliance_disclosure"
     asks_consent = re.search(r"\b(do|will|would) you (agree|accept|acknowledge|consent|certify|authori[sz]e|understand|confirm)\b", q, re.I)
     if SMS.search(q) and (asks_consent or CONSENT.search(q) or re.search(r"\b(receive|opt in|opt-in)\b", q, re.I)):
         return "consent.sms"

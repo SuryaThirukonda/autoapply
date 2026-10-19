@@ -66,10 +66,19 @@ SIGNATURE_LABEL = re.compile(r"(e-?signature|electronic signature|^signature\b|^
 SIGNATURE_DATE_LABEL = re.compile(r"^(today'?s date|date signed|signature date|date of signature|current date|date)\s*\*?$", re.I)
 
 
+# "Would you be willing to disclose, post-offer and as necessary, information related to your political contributions
+# as required by SEC Rule 206(4)-5?" (TIAA, 2026-10-19): compliance with a rule or policy is a consent he delegated.
+COMPLIANCE_DISCLOSURE = re.compile(
+    r"\bwilling to (disclose|comply|provide|submit|undergo|report)\b.{0,200}\b(required|requirement|rules?|regulations?|polic(y|ies)|laws?|sec)\b",
+    re.I | re.S)
+
+
 def consent_key(label: str) -> str | None:
     """The standing answer key that authorizes ticking this consent, or None to leave it alone."""
     if SMS.search(label):
         return "consent.sms"
+    if COMPLIANCE_DISCLOSURE.search(label):
+        return "consent.compliance_disclosure"
     if re.search(r"(authori[sz]ed to work|work authori[sz]ation|eligib(le|ility) to work|without restrictions?|sponsorship|legally (able|permitted))", label, re.I):
         return None                       # a work-authorization question, not a consent (Niantic, judged 2026-10-18)
     if MARKETING.search(label) and not PROCESSING.search(label):
