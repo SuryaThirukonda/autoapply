@@ -1328,7 +1328,7 @@ class ToolDispatcher:
             # lookback: the email, if any, was sent earlier; never the full code wait here).
             try:
                 out, _ = await self.t_open_verification_link(timeout_s=20)
-            except Parked:
+            except Exception:              # Parked, or Gmail unreachable (an SSLError broke a park, 2026-10-18): best effort only
                 out = {}
             if out.get("status") == "verified":
                 db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "verified": True})

@@ -135,3 +135,20 @@ async def test_a_tool_that_never_returns_is_stopped_and_reported(store):
     from goat.config import SETTINGS
     assert d.tool_timeout_s("await_answers") == SETTINGS.budgets.answer_wait_s + 120
     assert d.tool_timeout_s("click") == 0.2
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_mailbox_never_breaks_a_park(store):
+    """Gmail raised an SSLError inside the park's verification-link check (2026-10-18): the park still happens."""
+    job = _job()
+    d, ctx = _with_ex(job, SignInEx("Please verify your email"))
+
+    class BrokenMail:
+        def fetch_verification_link(self, *a, **k):
+            raise RuntimeError("Gmail list failed (SSLError)")
+    ctx.mail = BrokenMail()
+    ctx.reset_link_tried = True
+    ctx.park_attempts = 2
+    with pytest.raises(Parked) as e:
+        await d.t_park("credentials_unknown: verification email never arrived")
+    assert e.value.reason.startswith("credentials_unknown")
