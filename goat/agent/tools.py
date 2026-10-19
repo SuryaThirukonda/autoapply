@@ -1544,7 +1544,11 @@ class ToolDispatcher:
         with db.tx() as con:
             con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))
         self.ctx.budget.step()
-        records.record_decision(self.ctx.job_id, self.ctx.page_no, "emailed verification code", "(set)", "policy:may_enter_emailed_verification_code")
+        # One decision per code box, on its ref: Greenhouse's eight "Security code" boxes each held a character the gate
+        # saw as a value with no sourced decision, so Coinbase's submit stayed blocked after the code was in (2026-10-19).
+        for r in (code_refs or [None]):
+            records.record_decision(self.ctx.job_id, self.ctx.page_no, "emailed verification code", "(set)",
+                                    "policy:may_enter_emailed_verification_code", r or "")
         return {"status": status if ok_box["ok"] else "entered_unverified", "message_id": getattr(handle, "message_id", None)}, None
 
     async def t_open_password_reset_link(self):
