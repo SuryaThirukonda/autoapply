@@ -34,6 +34,7 @@ def test_decision_tier_from_source_strings(tmp_path):
     assert answers.decision_tier("standing:missing.key") == "inferred"
     assert answers.decision_tier("standing:self_id.gender") == "sensitive"
     assert answers.decision_tier("policy:may_create_accounts") == "sensitive"
+    assert answers.decision_tier("bank:ai-tools-in-development") == "confirmed"
     assert answers.decision_tier("generated") == "inferred"
     assert answers.decision_tier("resume") == "confirmed"
     assert answers.decision_tier("cleared") == "confirmed"

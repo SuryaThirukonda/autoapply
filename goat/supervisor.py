@@ -52,6 +52,10 @@ async def watchdog(stop: asyncio.Event) -> None:
             n = requeue_portal_errors()
             if n:
                 log.info("watchdog: requeued %d job(s) parked on a portal error", n)
+            from .worker import requeue_browser_error_holds
+            n = requeue_browser_error_holds()
+            if n:
+                log.info("watchdog: requeued %d job(s) held on an old browser failure", n)
             from .caps import requeue_reopened
             n = requeue_reopened()
             if n:

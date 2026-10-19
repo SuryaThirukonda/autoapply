@@ -49,6 +49,69 @@ def cmd_show(a) -> None:
         print(f"{e['ts']} {e['kind']:<24} {(e['detail'] or '')[:160]} {e['model'] or ''} {e['tokens_in'] or ''}/{e['tokens_out'] or ''} ${e['cost_usd'] or 0:.4f}")
 
 
+def requeue_where(prefix: str, ats: str = "", limit: int = 10, dry_run: bool = False, by: str = "operator:requeue-where") -> dict:
+    """Batch requeue of held jobs whose hold_reason starts with `prefix` (optionally one ATS), newest postings
+    first. Hold-only, and cloud.job_action refuses submitted/confirmed rows besides."""
+    from .cloud import job_action
+    con = db.connect()
+    rows = con.execute("SELECT j.id, l.ats, l.company, l.title, j.attempts, j.hold_reason FROM jobs j JOIN listings l ON l.id=j.listing_id "
+                       "WHERE j.status=? AND j.hold_reason LIKE ? || '%' AND (?='' OR l.ats=?) ORDER BY l.date_posted DESC, j.id LIMIT ?",
+                       (states.HOLD, prefix, ats or "", ats or "", int(limit))).fetchall()
+    cands = [dict(r) for r in rows]
+    if dry_run or not cands:
+        return {"candidates": cands, "changed": [], "refused": [], "dry_run": dry_run}
+    out = job_action([c["id"] for c in cands], "requeue", by)
+    return {"candidates": cands, "changed": out.get("changed", []), "refused": out.get("refused", []), "dry_run": False}
+
+
+def cmd_requeue_where(a) -> None:
+    out = requeue_where(a.reason_prefix, a.ats, a.limit, a.dry_run)
+    for c in out["candidates"]:
+        mark = "would requeue" if a.dry_run else ("requeued" if c["id"] in out["changed"] else "refused")
+        print(f"#{c['id']:<5} {c['ats']:<10} {c['company'][:28]:<28} {c['title'][:44]:<44} a={c['attempts']} {mark}")
+    print(f"{len(out['changed'])} requeued, {len(out['refused'])} refused, {len(out['candidates'])} candidates")
+
+
+def holds_report(since_s: int = 7200) -> dict:
+    """What the holds say: reasons by prefix, the error holds by wording, per-ATS counts, recent outcomes."""
+    con = db.connect()
+    now = db.now()
+    by_prefix = [dict(r) for r in con.execute(
+        "SELECT substr(hold_reason, 1, instr(hold_reason || ':', ':') - 1) AS reason, COUNT(*) AS n FROM jobs WHERE status=? "
+        "GROUP BY reason ORDER BY n DESC", (states.HOLD,))]
+    errors = [dict(r) for r in con.execute(
+        "SELECT substr(hold_reason, 1, 60) AS wording, COUNT(*) AS n FROM jobs WHERE status=? AND hold_reason LIKE 'error:%' "
+        "GROUP BY wording ORDER BY n DESC LIMIT 10", (states.HOLD,))]
+    top = by_prefix[0]["reason"] if by_prefix else ""
+    per_ats = [dict(r) for r in con.execute(
+        "SELECT l.ats, COUNT(*) AS n FROM jobs j JOIN listings l ON l.id=j.listing_id WHERE j.status=? AND j.hold_reason LIKE ? || '%' "
+        "GROUP BY l.ats ORDER BY n DESC", (states.HOLD, top))] if top else []
+    recent = [dict(r) for r in con.execute(
+        "SELECT j.id, j.status, l.ats, l.company, l.title, substr(j.hold_reason, 1, 80) AS reason FROM jobs j JOIN listings l ON l.id=j.listing_id "
+        "WHERE j.updated_at > ? AND j.status NOT IN ('new','queued') ORDER BY j.updated_at DESC LIMIT 60", (now - since_s,))]
+    apps = con.execute("SELECT COUNT(*) FROM applications").fetchone()[0]
+    return {"holds_by_reason": by_prefix, "error_holds": errors, "top_reason": top, "top_reason_by_ats": per_ats, "recent": recent, "applications": apps}
+
+
+def cmd_holds_report(a) -> None:
+    rep = holds_report(int(a.since_hours * 3600))
+    if a.json:
+        _print(rep); return
+    print("holds by reason:")
+    for r in rep["holds_by_reason"]:
+        print(f"  {r['n']:>4}  {r['reason']}")
+    if rep["error_holds"]:
+        print("error holds by wording:")
+        for r in rep["error_holds"]:
+            print(f"  {r['n']:>4}  {r['wording']}")
+    if rep["top_reason_by_ats"]:
+        print(f"'{rep['top_reason']}' by ATS: " + ", ".join(f"{r['ats']} {r['n']}" for r in rep["top_reason_by_ats"]))
+    print(f"recent outcomes (last {a.since_hours:g} h):")
+    for r in rep["recent"]:
+        print(f"  #{r['id']:<5} {r['status']:<14} {r['ats']:<10} {r['company'][:26]:<26} {r['title'][:40]:<40} {r['reason'] or ''}")
+    print(f"applications in the ledger: {rep['applications']}")
+
+
 def cmd_proposals(a) -> None:
     from . import nightly
     if a.run_nightly:
@@ -288,6 +351,9 @@ def main(argv=None) -> None:
     sub.add_parser("cloud-sync").set_defaults(fn=cmd_cloud_sync)
     s = sub.add_parser("dashboard"); s.add_argument("--port", type=int, default=8787); s.set_defaults(fn=cmd_dashboard)
     s = sub.add_parser("demo"); s.add_argument("--live", action="store_true"); s.add_argument("--real", action="store_true"); s.set_defaults(fn=cmd_demo)
+    s = sub.add_parser("requeue-where"); s.add_argument("--reason-prefix", required=True); s.add_argument("--ats", default="")
+    s.add_argument("--limit", type=int, default=10); s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_requeue_where)
+    s = sub.add_parser("holds-report"); s.add_argument("--since-hours", type=float, default=2.0); s.add_argument("--json", action="store_true"); s.set_defaults(fn=cmd_holds_report)
     s = sub.add_parser("proposals"); s.add_argument("--approve", type=int, default=0); s.add_argument("--reject", type=int, default=0)
     s.add_argument("--run-nightly", action="store_true"); s.add_argument("--status", default=""); s.set_defaults(fn=cmd_proposals)
     a = p.parse_args(argv)

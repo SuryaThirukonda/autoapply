@@ -211,6 +211,8 @@ def decision_tier(source: str | None, field_label: str = "", company: str = "", 
         key = s.split(":", 1)[1].split(" ", 1)[0].strip()
         if low.startswith("policy:"):
             return "sensitive"
+        if low.startswith("bank:"):
+            return "confirmed"            # the answer bank is Surya's own reviewed wording (Hermes era)
         a = get(key, company, ats)
         return answer_tier(a) if a else tier_for(key, "")
     if low.startswith(("resume", "adapter", "cleared", "as_is", "user:", "seed:", "standing")):

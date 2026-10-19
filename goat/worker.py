@@ -186,10 +186,13 @@ _BROWSER_FAILURE_MARKS = ("connect_over_cdp", "ECONNREFUSED 127.0.0.1", "Browser
                           "Target page, context or browser has been closed", "browser has disconnected")
 
 
+def browser_failure_text(text: str) -> bool:
+    return any(m.lower() in (text or "").lower() for m in _BROWSER_FAILURE_MARKS)
+
+
 def is_browser_failure(e: BaseException) -> bool:
     """Chrome itself unreachable (CDP connect timeout, refused, closed): not the posting's fault."""
-    text = f"{type(e).__name__}: {e}"
-    return any(m.lower() in text.lower() for m in _BROWSER_FAILURE_MARKS)
+    return browser_failure_text(f"{type(e).__name__}: {e}")
 
 
 def _browser_down(job_id: int, why: str) -> "RunOutcome":
@@ -507,6 +510,40 @@ def requeue_portal_errors(now: int | None = None) -> int:
                         (states.QUEUED, now, r["id"]))
             con.execute("INSERT INTO events(job_id,ts,kind,detail) VALUES(?,?,?,?)",
                         (r["id"], now, "job:requeued", json.dumps({"reason": "portal_error retry"})))
+            n += 1
+    return n
+
+
+BROWSER_HOLD_RETRY_AFTER_S = 3600
+BROWSER_HOLD_SWEEP_PER_PASS = 1      # 0 switches the drain off
+
+
+def requeue_browser_error_holds(now: int | None = None, limit: int = BROWSER_HOLD_SWEEP_PER_PASS) -> int:
+    """Holds whose reason is a browser failure ('error: TimeoutError: BrowserType.connect_over_cdp …', written
+    before the circuit breaker existed) drain back into the queue: one per pass, only when the queue is idle
+    and Chrome answers, once per job, the attempt not counted. 152 such holds from 2026-10-16."""
+    if limit <= 0 or CONTROL.browser_ok is False or db.meta_get("worker_paused"):
+        return 0
+    now = now or db.now()
+    n = 0
+    with db.tx() as con:
+        if con.execute("SELECT 1 FROM jobs WHERE status=? LIMIT 1", (states.QUEUED,)).fetchone():
+            return 0
+        rows = con.execute("SELECT id, hold_reason, attempts FROM jobs WHERE status=? AND hold_reason LIKE 'error: %' AND updated_at < ? "
+                           "AND attempts <= ? ORDER BY updated_at LIMIT 200",
+                           (states.HOLD, now - BROWSER_HOLD_RETRY_AFTER_S, SETTINGS.budgets.max_attempts)).fetchall()
+        for r in rows:
+            if n >= limit:
+                break
+            if not browser_failure_text(r["hold_reason"] or ""):
+                continue
+            seen = con.execute("SELECT 1 FROM events WHERE job_id=? AND kind='job:requeued' AND detail LIKE '%browser_error_hold%' LIMIT 1", (r["id"],)).fetchone()
+            if seen:
+                continue
+            con.execute("UPDATE jobs SET status=?, hold_reason=NULL, tab_target_id=NULL, attempts=MAX(attempts-1, 0), updated_at=? WHERE id=?",
+                        (states.QUEUED, now, r["id"]))
+            con.execute("INSERT INTO events(job_id,ts,kind,detail) VALUES(?,?,?,?)",
+                        (r["id"], now, "job:requeued", json.dumps({"reason": "browser_error_hold", "detail": (r["hold_reason"] or "")[:200]})))
             n += 1
     return n
 
