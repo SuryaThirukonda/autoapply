@@ -114,3 +114,24 @@ def test_workday_hints_describe_the_reset_flow():
     h = for_portal("workday").hints
     assert "open_password_reset_link" in h and "set_password" in h
     assert "park with 'credentials_unknown'" not in h and "mode 'login' first" not in h
+
+
+@pytest.mark.asyncio
+async def test_a_tool_that_never_returns_is_stopped_and_reported(store):
+    """No tool may hang the single worker: past its cap the call is cancelled and the model told to snapshot."""
+    import asyncio
+    import json
+    job = _job()
+    d, ctx = _with_ex(job, SignInEx(""))
+
+    async def t_sleepy():
+        await asyncio.sleep(5)
+        return {"ok": True}, None
+    d.t_sleepy = t_sleepy
+    d.TOOL_TIMEOUT_S = 0.2
+    text, _ = await d.dispatch("sleepy", "{}")
+    assert "did not finish within" in json.loads(text)["error"]
+    assert db.connect().execute("SELECT COUNT(*) FROM events WHERE kind='tool:sleepy:timeout'").fetchone()[0] == 1
+    from goat.config import SETTINGS
+    assert d.tool_timeout_s("await_answers") == SETTINGS.budgets.answer_wait_s + 120
+    assert d.tool_timeout_s("click") == 0.2

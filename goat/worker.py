@@ -378,7 +378,12 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
         pages = 0
         while True:
             pages += 1
-            res: LoopResult = await loop.run_page(history, note)
+            # Backstop for anything the per-tool cap does not cover (a model request that never returns): the page
+            # run may take at most what is left of the wall budget plus a margin.
+            try:
+                res: LoopResult = await asyncio.wait_for(loop.run_page(history, note), timeout=max(60.0, budget.remaining_s()) + PAGE_HANG_MARGIN_S)
+            except asyncio.TimeoutError:
+                raise BudgetExceeded(f"budget_spent: a step hung past the wall budget ({budget.wall_s}s)")
             if res.outcome == "page_done":
                 note = f"You are now on page {ctx.page_no}. Call snapshot and fill this page."
                 # Deterministic prefill on every page, not only the first (Workday's My Experience is page 2 or later).
@@ -433,10 +438,17 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             except Exception:
                 pass
         else:
-            set_status(job_id, states.HOLD, reason=reason, blocked_on=p.blocked_on, tab_target_id=tab_id,
-                       extra=finish_extra(job_id) if reason.startswith("shadow_mode") else None)
+            shadow = reason.startswith("shadow_mode")
+            # A shadow draft is judged BEFORE the hold is announced, so the finish message carries the verdict
+            # (the Telegram worker formats it the moment the hold event arrives).
+            verdict = await after_hold(job, ctx, ex, reason) if shadow else None
+            extra = finish_extra(job_id) if shadow else None
+            if verdict:
+                extra = {**(extra or {}), "judge": {"verdict": verdict["verdict"], "bucket": verdict["bucket"], "notes": verdict["notes"][:300]}}
+            set_status(job_id, states.HOLD, reason=reason, blocked_on=p.blocked_on, tab_target_id=tab_id, extra=extra)
             outcome = RunOutcome(states.HOLD, reason)
-            await after_hold(job, ctx, ex, reason)
+            if not shadow:
+                await after_hold(job, ctx, ex, reason)
     except BudgetExceeded as b:
         with db.tx() as con:
             con.execute("UPDATE jobs SET model_tier=model_tier+1 WHERE id=?", (job_id,))
@@ -523,6 +535,7 @@ def requeue_portal_errors(now: int | None = None) -> int:
 
 
 BROWSER_HOLD_RETRY_AFTER_S = 3600
+PAGE_HANG_MARGIN_S = 180.0      # a page run may overrun the wall budget by this much before it is cut
 BROWSER_HOLD_SWEEP_PER_PASS = 1      # 0 switches the drain off
 
 

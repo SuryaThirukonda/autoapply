@@ -2,6 +2,7 @@
 lives here as deterministic code; the model only requests it. Secrets never pass through."""
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import logging
@@ -357,6 +358,17 @@ class ToolDispatcher:
     def __init__(self, ctx: RunContext):
         self.ctx = ctx
 
+    TOOL_TIMEOUT_S = 240.0
+    # tools that legitimately wait on Surya or on an email: their own deadline plus a margin
+    WAITING_TOOLS = {"await_answers": "answer_wait_s", "ask_user": "answer_wait_s", "open_verification_link": "code_wait_s",
+                     "open_password_reset_link": "code_wait_s", "enter_email_code": "code_wait_s"}
+
+    def tool_timeout_s(self, name: str) -> float:
+        attr = self.WAITING_TOOLS.get(name)
+        if attr:
+            return float(getattr(SETTINGS.budgets, attr, 900)) + 120.0
+        return self.TOOL_TIMEOUT_S
+
     async def dispatch(self, name: str, arguments: str) -> tuple[str, bytes | None]:
         """Returns (json text for the model, optional image bytes to attach)."""
         try:
@@ -368,7 +380,15 @@ class ToolDispatcher:
             return json.dumps({"error": f"unknown tool {name}"}), None
         t0 = time.monotonic()
         try:
-            out, img = await fn(**args)
+            try:
+                # No tool may hang the run: a page blocked by a dialog or a stuck network wait once held the single
+                # worker for 12+ minutes (Persona AI, 2026-10-18). Waiting tools keep their own longer limits.
+                out, img = await asyncio.wait_for(fn(**args), timeout=self.tool_timeout_s(name))
+            except asyncio.TimeoutError:
+                self.ctx.consecutive_failures += 1
+                db.event(self.ctx.job_id, f"tool:{name}:timeout", {"args": args, "timeout_s": self.tool_timeout_s(name)})
+                return json.dumps({"error": f"the {name} call did not finish within {int(self.tool_timeout_s(name))} s and was stopped. "
+                                            "Take a snapshot; if the page is stuck, reload it with tabs action 'reload' and continue."}), None
             ok = not (isinstance(out, dict) and out.get("error"))
             self.ctx.consecutive_failures = 0 if ok else self.ctx.consecutive_failures + 1
             db.event(self.ctx.job_id, f"tool:{name}", {"args": args, "out": out}, latency_ms=int((time.monotonic() - t0) * 1000))

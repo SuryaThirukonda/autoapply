@@ -86,3 +86,13 @@ def test_finish_events_carry_the_inferred_list(tmp_path):
     worker.set_status(1, states.HOLD, reason="eligibility: x")
     ev = json.loads(db.connect().execute("SELECT detail FROM events WHERE kind='job:hold' ORDER BY n DESC LIMIT 1").fetchone()[0])
     assert "inferred" not in ev
+
+
+def test_shadow_hold_event_carries_the_judge_verdict_when_given(tmp_path):
+    """The worker judges first and puts the verdict in the hold event, so Telegram never formats it too early."""
+    from goat import worker
+    _fresh(tmp_path)
+    worker.set_status(1, states.HOLD, reason="shadow_mode: gate passed",
+                      extra={"inferred": [], "judge": {"verdict": "pass", "bucket": "none", "notes": "ok"}})
+    ev = json.loads(db.connect().execute("SELECT detail FROM events WHERE kind='job:hold' ORDER BY n DESC LIMIT 1").fetchone()[0])
+    assert ev["judge"] == {"verdict": "pass", "bucket": "none", "notes": "ok"}
