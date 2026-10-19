@@ -160,3 +160,13 @@ def test_a_value_the_judge_says_is_shown_but_is_not_on_the_page_is_a_phantom():
     assert phantom_claims("The page shows \u201cAurora, CO\u201d where the posting lists Palmdale.", page) == []
     assert phantom_claims('Willing to relocate shows "Yes" as intended.', page) == []
     assert phantom_claims("", page) == [] and phantom_claims(None, page) == []
+
+
+
+def test_values_that_differ_only_in_case_are_found_in_the_notes():
+    """Life Fitness (2026-10-19): 'The intended company value is "Southwest Airlines," but the review page shows
+    "southwest airlines."'"""
+    from goat.judge import case_only_claims
+    notes = "The intended company value is \u201cSouthwest Airlines,\u201d but the review page shows \u201csouthwest airlines.\u201d"
+    assert case_only_claims(notes) == [("Southwest Airlines", "southwest airlines")]
+    assert case_only_claims("The page shows \u201cAurora, CO\u201d but the posting lists \u201cPalmdale, CA\u201d") == []

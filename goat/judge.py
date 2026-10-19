@@ -42,7 +42,9 @@ JUDGE_INSTRUCTIONS = (
     "You audit a finished draft of an online job application before it is submitted. You get the decision log (every "
     "field the agent set: label, value it read back, the source of that value), the text of the final page and a "
     "screenshot. Decide whether every required field holds the intended value: the value in the log, in the portal's "
-    "own wording where the portal rewords options. How to read the log: a value of 'checked' or 'pressed' on a "
+    "own wording where the portal rewords options. A difference only in letter case, spacing or punctuation ('southwest "
+    "airlines' for 'Southwest Airlines') is the same value, never a wrong one (Life Fitness, 2026-10-19). "
+    "How to read the log: a value of 'checked' or 'pressed' on a "
     "radio, checkbox or toggle means the option named in that label was selected (the label carries the choice, e.g. "
     "'Authorized to work / Yes'); a value equal to a 'Label* Value' read-back is the portal echoing the label in front "
     "of the pick; '(set)' is a password or code that is never shown. When the log holds several decisions for the same "
@@ -217,6 +219,21 @@ _SHOWN = re.compile(r"\b(shows?|showing|displays?|displaying|reads?|holds?|conta
                     r"[^“\"\n]{0,40}[“\"]([^”\"\n]{2,160})[”\"]", re.I)
 
 
+_QUOTED = re.compile(r"[“\"]([^”\"\n]{2,160})[”\"]")
+
+
+def case_only_claims(notes: str | None) -> list[tuple[str, str]]:
+    """Pairs of quoted values in the judge's notes that differ only in case, spacing or punctuation."""
+    from .answers import norm
+    vals = [m.group(1).strip().rstrip(".,;:") for m in _QUOTED.finditer(notes or "")]
+    out = []
+    for i, a in enumerate(vals):
+        for b in vals[i + 1:]:
+            if a != b and norm(a) and norm(a) == norm(b) and (a, b) not in out:
+                out.append((a, b))
+    return out
+
+
 def phantom_claims(notes: str | None, page: str) -> list[str]:
     """Quoted values the judge's notes say the page shows that the page outline and text do not contain."""
     from .answers import norm
@@ -282,7 +299,17 @@ async def judge_page(job: dict, ctx, ex, *, shot: str = "shadow", fact_check: bo
         # A failing verdict that says the page shows a value the page does not contain is asked once more: Northrop
         # Grumman's Review page showed "Aurora, CO" and the judge failed it for showing "Anywhere in the United
         # States" (2026-10-19)
-        ghost = phantom_claims(verdict.get("notes") if verdict and verdict.get("verdict") != "pass" else "", outline + "\n" + text)
+        failing = verdict.get("notes") if verdict and verdict.get("verdict") != "pass" else ""
+        ghost = phantom_claims(failing, outline + "\n" + text)
+        same = case_only_claims(failing)
+        if same and not ghost:
+            db.event(job_id, "judge:case_only", {"pairs": same[:4]})
+            again = await judge.judge(job_id, decisions, png, text, getattr(ctx, "gate_result", None), outline=outline,
+                                      correction=("Your previous verdict failed values that differ only in letter case, spacing or "
+                                                  "punctuation (" + "; ".join(f"{a!r} / {b!r}" for a, b in same[:4]) + "). Those are "
+                                                  "the same value: judge the draft again without counting such differences."), **kwargs)
+            if again is not None:
+                verdict = again
         if ghost:
             db.event(job_id, "judge:phantom", {"claims": ghost[:4]})
             again = await judge.judge(job_id, decisions, png, text, getattr(ctx, "gate_result", None), outline=outline,
