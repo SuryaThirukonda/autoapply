@@ -105,7 +105,7 @@ async def test_credentials_park_is_allowed_at_once_without_a_mail_helper(store):
     job = _job()
     d, ctx = _with_ex(job, SignInEx("Wrong email address or password"))
     ctx.mail = None
-    ctx.park_attempts = 2
+    ctx.park_attempts = 4
     with pytest.raises(Parked):
         await d.t_park("credentials_unknown: no way to reset")
 
@@ -148,7 +148,7 @@ async def test_an_unreachable_mailbox_never_breaks_a_park(store):
             raise RuntimeError("Gmail list failed (SSLError)")
     ctx.mail = BrokenMail()
     ctx.reset_link_tried = True
-    ctx.park_attempts = 2
+    ctx.park_attempts = 4
     with pytest.raises(Parked) as e:
         await d.t_park("credentials_unknown: verification email never arrived")
     assert e.value.reason.startswith("credentials_unknown")

@@ -382,7 +382,7 @@ async def test_park_waits_on_questions_still_open(store):
     job = _job()
     ctx = RunContext(job={**job, "resume_file": None}, ex=PlainPage(), budget=Budget(job["id"], "greenhouse"), classifier=FakeClassifier())
     ctx.asked_keys = ["q.some_open_question", "identity.middle_name"]     # the second one has a stored answer
-    ctx.park_attempts = 2                                                  # past the gate re-check
+    ctx.park_attempts = 4                                                  # past the gate re-check
     with pytest.raises(Parked) as e:
         await ToolDispatcher(ctx).t_park("no_standing_answer: permanent address")
     assert e.value.blocked_on == ["q.some_open_question"]
@@ -595,7 +595,7 @@ async def test_stalled_portal_parks_as_portal_error_after_one_retry(store):
     with pytest.raises(Parked) as e:
         await d.t_park("automation_prohibited: portal navigation failed to load after Apply Manually")
     assert e.value.reason.startswith("portal_error:")
-    ctx.park_attempts = 2
+    ctx.park_attempts = 4
     with pytest.raises(Parked) as e2:
         await d.t_park("automation_prohibited: something odd happened")
     assert e2.value.reason.startswith("stuck:")

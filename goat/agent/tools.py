@@ -735,7 +735,11 @@ class ToolDispatcher:
                 self.ctx.readback_open[page] = left
             else:
                 self.ctx.readback_open.pop(page, None)
-        return {"summary": f"{set_n} set, {len(results) - set_n} failed", "results": results}, None
+        kept_n = sum(1 for r in results if r.get("status") == "kept")
+        # "kept" (the page already shows his answer, now recorded) is not a failure: "0 set, 4 failed" for four kept
+        # answers sent T-Mobile's model back over fields that were right (2026-10-19).
+        return {"summary": f"{set_n} set, {kept_n} kept, {len(results) - set_n - kept_n} failed" if kept_n else
+                f"{set_n} set, {len(results) - set_n} failed", "results": results}, None
 
     SENSITIVE_KEYS = re.compile(r"^(self_id\.|compliance\.(date_of_birth|criminal|disciplined|debarment)|bank\.(gender|race|ethnic|veteran|disab|transgender|sexual))", re.I)
 
@@ -905,7 +909,10 @@ class ToolDispatcher:
         new_url = self.ctx.ex.url
         if info.get("tag") in ("button", "a") and label.lower().strip() in self.NEXT_LABELS:
             self.ctx.page_no += 1
-        out = {"clicked": info.get("label") or label, "url": new_url}
+        # The snapshot's label first: the click script's own label falls back to the nearest heading, and T-Mobile's
+        # "Save and Continue" came back as the enrollment question above it, so the model went back to redo a page
+        # that had saved (2026-10-19).
+        out = {"clicked": (item.get("label") if item else None) or info.get("label") or label, "url": new_url}
         if note:
             out["note"] = note
         # After a Sign In / Create Account click the harness reads the outcome itself: a failed sign-in with the
@@ -1769,9 +1776,11 @@ class ToolDispatcher:
             not stoppers or (bool(self.RFY_GIVE_UP.search(reason)) and not real_challenge))
         hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch", "needs_you")) \
             and not rfy_soft
-        if not hard and self.ctx.park_attempts < 2:
+        if not hard and self.ctx.park_attempts < 4:
             # An eager park: run the gate first. If it passes, the right move is submit; if it blocks,
-            # the model gets the concrete blockers instead of giving up.
+            # the model gets the concrete blockers instead of giving up. Four checks, not two: Epic Games spent both
+            # within 30 s (one on the posting page before Apply opened the form) and its third park went through
+            # with "requires an unavailable resume attachment" on a form whose blockers were all fillable (2026-10-19).
             self.ctx.park_attempts += 1
             snap = await snapmod.take(self.ctx.ex)
             self.ctx.last_snapshot = snap
@@ -1785,6 +1794,9 @@ class ToolDispatcher:
             if gate.result == "blocked" and low.startswith("portal_error") and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons):
                 pass   # nothing to fix: the page is a portal error or has nothing to submit, so the park stands
             elif gate.result == "blocked":
-                return {"error": "not parked yet: the gate names concrete blockers. Fix them, then call submit; park only if one truly has no stored answer.",
+                hint = ""
+                if any(re.search(r"resume|résumé|\bcv\b", r, re.I) for r in gate.reasons):
+                    hint = " The résumé is on file: call upload_resume on the Resume/CV slot."
+                return {"error": "not parked yet: the gate names concrete blockers. Fix them, then call submit; park only if one truly has no stored answer." + hint,
                         "blockers": gate.reasons}, None
         raise Parked(reason, state, blocked_on=pending if state == "hold" else None)
