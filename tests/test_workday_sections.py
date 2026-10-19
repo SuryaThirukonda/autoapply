@@ -1,4 +1,6 @@
 """The deterministic Workday My Experience filler: stored entries, company matching, Review completeness."""
+import pytest
+
 from goat.adapters import workday_sections as ws
 
 
@@ -107,3 +109,52 @@ def test_a_programming_language_chip_counts_as_the_skill():
     assert fill._chip_matches("C++ Programming Language", ["C++"])
     assert fill._chip_matches("Java Programming Language", ["Java"])
     assert not fill._chip_matches("C Programming Language", ["C++"])
+
+
+
+CERT_PAGE = """<html><body><h3>Certifications</h3>
+<div id="blk"><div><input id="certifications-1--certification" type="text" value="" aria-label="Certification*">
+<input id="certifications-1--issuedDate-dateSectionMonth-input" type="text" value="06"></div>
+<button type="button" onclick="document.getElementById('blk').remove()">Delete</button></div>
+<button data-automation-id="add-button" type="button">Add</button></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_an_unoffered_certification_block_is_deleted_and_not_added_again(tmp_path):
+    """Axiom Space / Northrop Grumman (2026-10-19): the certification list lacks his Cloud Practitioner; the harness
+    deletes the empty block after the failed pick and refuses another Add Certification on that host."""
+    from types import SimpleNamespace
+    from goat import db
+    from goat.agent.tools import RunContext, ToolDispatcher
+    from goat.browser import snapshot as snapmod
+    from goat.browser.executor import Executor, HostPolicy
+    from goat.budget import Budget
+    db.reset_for_tests(tmp_path / "t.db")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('l1','Axiom Space','Intern','https://x.example/job','workday')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,priority) VALUES(1,'l1','filling','account',0)")
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.set_content(CERT_PAGE)
+        job = {"id": 1, "company": "Axiom Space", "listing_id": "l1", "resume_file": None, "ats": "workday"}
+        ctx = RunContext(job=job, ex=ex, budget=Budget(1, "workday"), classifier=None)
+        d = ToolDispatcher(ctx)
+        snap = await snapmod.take(ex)
+        ctx.last_snapshot = snap
+        ref = next(i["ref"] for i in snap.items if (i.get("label") or "").startswith("Certification"))
+
+        async def failing_choose(*a, **k):
+            return {"ref": ref, "status": "failed", "error": "no option matched"}, None
+        d._t_choose = failing_choose
+        out, _ = await d.t_choose(ref, "background.certifications_variants", [], "Certification", None)
+        assert "deleted" in out.get("note", ""), out
+        assert await ex.page.evaluate("() => document.getElementById('blk') === null")
+        assert d._cert_unavailable()
+        snap = await snapmod.take(ex)
+        ctx.last_snapshot = snap
+        add = next(i["ref"] for i in snap.items if (i.get("label") or "") == "Add")
+        out, _ = await d.t_click(add, "Add Certification")
+        assert out.get("error", "").startswith("not clicked")
+    finally:
+        await ex.close(close_browser=True)

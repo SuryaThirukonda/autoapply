@@ -744,6 +744,51 @@ class ToolDispatcher:
     SENSITIVE_KEYS = re.compile(r"^(self_id\.|compliance\.(date_of_birth|criminal|disciplined|debarment)|bank\.(gender|race|ethnic|veteran|disab|transgender|sexual))", re.I)
 
     async def t_choose(self, ref: str, answer_key: str | None, options: list[str], label: str, source: str | None):
+        out, img = await self._t_choose(ref, answer_key, options, label, source)
+        if answer_key and answer_key.startswith("background.certification") and self.ctx.portal == "workday" \
+                and isinstance(out, dict) and out.get("status") == "failed":
+            try:
+                note = await self._drop_unoffered_certification(ref)
+            except Exception as e:  # noqa: BLE001 - best effort; the model still has the failure
+                db.event(self.ctx.job_id, "cert:drop_error", {"error": f"{type(e).__name__}: {e}"[:200]})
+                note = None
+            if note:
+                out = {**out, "note": note}
+        return out, img
+
+    def _cert_unavailable(self) -> bool:
+        """This tenant's certification list was found without his AWS Certified Cloud Practitioner (this run or an
+        earlier one on the same host)."""
+        if self.ctx.control_failures.get("cert:unavailable"):
+            return True
+        host = re.sub(r"^https?://([^/]+).*$", r"\1", self.ctx.ex.url or "").lower()
+        if not host:
+            return False
+        row = db.connect().execute("SELECT 1 FROM events WHERE kind='cert:unavailable' AND detail LIKE ? LIMIT 1",
+                                   (f'%"{host}"%',)).fetchone()
+        return bool(row)
+
+    async def _drop_unoffered_certification(self, ref: str) -> str | None:
+        """Axiom Space and Northrop Grumman list other AWS exams but not his Cloud Practitioner; the model kept adding a
+        certification block, failing the pick and parking over the empty required box (2026-10-19). The harness deletes
+        that block itself, remembers the host, and refuses another Add Certification there."""
+        from ..adapters.workday_sections import WorkdaySections
+        ws = WorkdaySections(self.ctx.ex, self.ctx.job, self.ctx.page_no)
+        info = await ws.scan()
+        certs = [e for e in info["entries"] if re.search(r"certif|licen", e["kind"], re.I)]
+        blk = next((e for e in certs if any(f.get("ref") == ref for f in e["fields"].values())), None)
+        if blk is None and len(certs) == 1:
+            blk = certs[0]
+        if blk is None or not await ws._delete_entry(blk):
+            return None
+        host = re.sub(r"^https?://([^/]+).*$", r"\1", self.ctx.ex.url or "").lower()
+        db.event(self.ctx.job_id, "cert:unavailable", {"host": host, "block": f'{blk["kind"]}-{blk["idx"]}'})
+        self.ctx.control_failures["cert:unavailable"] = 1
+        return ("this tenant's Certification list does not offer his AWS Certified Cloud Practitioner, so the harness deleted "
+                "that certification block (certifications are optional). Do not add one again: a Review showing "
+                "'Certifications: No Response' is correct. Continue with Save and Continue.")
+
+    async def _t_choose(self, ref: str, answer_key: str | None, options: list[str], label: str, source: str | None):
         if answer_key and self.SENSITIVE_KEYS.match(answer_key) and options:
             # Surya's self-identification answers are his stored chain and nothing else; a model-supplied
             # fallback ("Asian (...)" next to "Decline to self-identify") is never tried.
@@ -874,6 +919,10 @@ class ToolDispatcher:
         item = snap.find(ref) if snap else None
         if item and item.get("submitish"):
             return {"error": "that is a submit control; call submit instead"}, None
+        if re.search(r"\badd\b", label or "", re.I) and re.search(r"certif|licen", label or "", re.I) and self._cert_unavailable():
+            return {"error": "not clicked: this tenant's Certification list does not offer his AWS Certified Cloud Practitioner "
+                             "(checked on this portal already). Certifications are optional: leave the section empty; a Review "
+                             "showing 'Certifications: No Response' is correct."}, None
         if item and SOCIAL_SIGNIN.search(item.get("label") or label or ""):
             return {"error": "never sign in through Google, LinkedIn, Apple, Microsoft or Facebook. Click 'Sign in with email' "
                              "(or the email / password form), then call `credentials`."}, None

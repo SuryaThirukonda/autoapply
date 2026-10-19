@@ -38,7 +38,7 @@ class FakeJudge:
     def __init__(self, client=None, model=None):
         pass
 
-    async def judge(self, job_id, decisions, png, text, gate=None, outline="", *, profile="", unconfirmed=None, posting=""):
+    async def judge(self, job_id, decisions, png, text, gate=None, outline="", *, profile="", unconfirmed=None, posting="", resume=""):
         FakeJudge.calls.append({"job_id": job_id, "profile": profile, "unconfirmed": unconfirmed, "gate": gate, "posting": posting})
         return dict(FakeJudge.canned)
 
