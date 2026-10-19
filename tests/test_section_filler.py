@@ -260,3 +260,31 @@ async def test_an_entry_whose_company_was_typed_over_gets_his_company_back(store
         assert "Southwest Airlines" in rep.updated and rep.added == [a for a in rep.added if a.startswith(("http", "skill"))]
     finally:
         await ex.close(close_browser=True)
+
+
+
+@pytest.mark.asyncio
+async def test_untouched_workday_entries_are_re_added_when_another_one_changes(stored):
+    """Ryan (2026-10-19): on a resumed Workday draft, Save keeps only the entries the visit touched. When one entry is
+    fixed, the four untouched ones are deleted and added again so that all five belong to this visit."""
+    ex = await _open(FIX / "workday" / "sections.html")
+    try:
+        f = _filler("workday", ex)
+        await snapshot.take(ex)
+        await f.run()
+        await ex.page.evaluate("""() => {
+          const el = Array.from(document.querySelectorAll('input')).find(i => i.value === 'Southwest Airlines');
+          const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          set.call(el, 'Aggie Data Science Club'); el.dispatchEvent(new Event('input', {bubbles: true}));
+        }""")
+        f2 = _filler("workday", ex)
+        rep = await f2.run()
+        readded = [u for u in rep.updated if "re-added" in u]
+        assert len(readded) == 4, rep.summary()
+        info = await f2.scan()
+        vals = _vals(info["entries"])
+        assert set(vals) == {e["company"] for e in ENTRIES} and len(_work(info["entries"])) == 5
+        rep3 = await _filler("workday", ex).run()                         # nothing changes now: nothing is re-added
+        assert not [u for u in rep3.updated if "re-added" in u]
+    finally:
+        await ex.close(close_browser=True)

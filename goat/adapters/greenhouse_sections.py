@@ -83,6 +83,8 @@ _MONTHS = ["January", "February", "March", "April", "May", "June", "July", "Augu
 
 
 class GreenhouseSections(WorkdaySections):
+    REBUILD_UNTOUCHED = False
+
     async def scan(self) -> dict:
         try:
             d = await self.ex.eval(JS_GH_SECTIONS)

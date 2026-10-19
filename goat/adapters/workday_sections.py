@@ -148,6 +148,9 @@ def _date_month_ref(entry: dict, which: str) -> str | None:
 
 
 class WorkdaySections:
+    # Workday saves only the entries a visit touched; Greenhouse keeps the whole form in one session.
+    REBUILD_UNTOUCHED = True
+
     def __init__(self, ex, job: dict, page_no: int):
         self.ex, self.job, self.page_no = ex, job, page_no
         self.company = job.get("company", "")
@@ -284,6 +287,7 @@ class WorkdaySections:
         existing = [e for e in info["entries"] if e["kind"] in WORK_KINDS]
         seen = {f'{e["kind"]}-{e["idx"]}' for e in info["entries"]}
         matched: set[str] = set()
+        untouched: list[tuple[dict, dict]] = []      # (block, stored entry) left exactly as they were
         for ent in stored:
             comp = _field_value(existing, ent["company"])
             if comp is None:
@@ -298,6 +302,7 @@ class WorkdaySections:
                     self.report.updated.append(f'{ent["company"]}{"" if ok else " (partial)"}')
                 else:
                     self.report.present.append(ent["company"])
+                    untouched.append((comp, ent))
                 continue
             # a blank block (pre-rendered by the tenant, or left by an earlier Add) is filled before another Add
             new = next((e for e in existing if f'{e["kind"]}-{e["idx"]}' not in matched and _is_blank_work(e)), None)
@@ -310,6 +315,25 @@ class WorkdaySections:
             matched.add(f'{new["kind"]}-{new["idx"]}')
             ok = await self.fill_work_entry(new, ent)
             self.report.added.append(f'{ent["company"]}{"" if ok else " (partial)"}')
+        # A resumed Workday draft keeps, on Save, only the entries this visit added or changed and drops the untouched
+        # ones (Ryan, T-Mobile, Nike 2026-10-19: the five entries flipped between two halves on every pass). So when any
+        # entry was added or changed, every untouched one is deleted and added again: all five are then this visit's.
+        work_changed = [a for a in self.report.added + self.report.updated if not a.startswith(("skill ", "http", "removed "))]
+        if self.REBUILD_UNTOUCHED and work_changed and untouched:
+            for blk, ent in untouched:
+                if not await self._delete_entry(blk):
+                    self.report.skipped.append(f'{ent["company"]}: no Delete button to re-add it')
+                    continue
+                new = await self._click_add(work_heading, seen, WORK_KINDS)
+                if not new:
+                    self.report.failed.append(f'{ent["company"]}: deleted to re-add, but no new entry appeared')
+                    continue
+                seen.add(f'{new["kind"]}-{new["idx"]}')
+                matched.add(f'{new["kind"]}-{new["idx"]}')
+                ok = await self.fill_work_entry(new, ent)
+                if ent["company"] in self.report.present:
+                    self.report.present.remove(ent["company"])
+                self.report.updated.append(f'{ent["company"]} (re-added so Workday keeps it){"" if ok else " (partial)"}')
         # Leftover blank blocks go; entries holding a company that is not on his résumé are reported, never deleted.
         info = await self.scan()
         for e in [x for x in info["entries"] if x["kind"] in WORK_KINDS]:
