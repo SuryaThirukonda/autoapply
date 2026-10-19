@@ -55,6 +55,19 @@ def loose_title(title: str) -> str:
     return " ".join(re.findall(r"[a-z0-9+#]+", t))
 
 
+# A posting's id in its link or title: Workday "_R69136" / "(R68679)", "REQ-12794", "JR10261", Oracle "job/260818",
+# or any 7+ digit number (Greenhouse 8175510, gh_jid=8193731).
+_POSTING_ID = re.compile(r"(?<![a-z0-9])(?:r|req|jr|job|requisition)[-_ /]?(\d{4,})|(\d{7,})", re.I)
+
+
+def posting_ids(*texts: str) -> set[str]:
+    out: set[str] = set()
+    for t in texts:
+        for m in _POSTING_ID.finditer(t or ""):
+            out.add((m.group(1) or m.group(2)).lstrip("0") or "0")
+    return out
+
+
 def _host(key: str) -> str:
     return (key or "").split("/", 1)[0].split("?", 1)[0]
 
@@ -71,21 +84,20 @@ def already_applied(company: str, title: str, url: str) -> bool:
     ck = norm(company)
     if not ck:
         return False
-    job_ids = set(re.findall(r"\d{7,}", url or ""))
+    ids = posting_ids(url, title)
     lt = loose_title(title)
     exact_c = f"c:{ck}|{norm(title)}" if norm(title) else None
     for row in con.execute("SELECT key, company, title, url FROM applied_keys"):
         if norm(row["company"]) != ck:
             continue
-        hay = f"{row['title'] or ''} {row['url'] or ''}"
-        if any(j in hay for j in job_ids):
-            return True
-        other_ids = set(re.findall(r"\d{7,}", row["url"] or ""))
-        if job_ids and other_ids and not (job_ids & other_ids):
-            continue          # both links name their posting, and the ids differ: another posting of this company
+        row_ids = posting_ids(row["url"] or "", row["title"] or "")
+        if ids & row_ids:
+            return True       # the same posting id
+        if ids and row_ids:
+            continue          # both name their posting and the ids differ (Motorola R69136 vs the tracker's R68679)
         other = url_key(row["url"] or "")
         if uk and other and other != uk and _host(other) == _host(uk):
-            continue          # one portal names them by different links (Workday R68363 vs R67362): different postings
+            continue          # one portal names them by different links: different postings
         if (exact_c and row["key"] == exact_c) or (lt and loose_title(row["title"]) == lt):
             return True
     return False

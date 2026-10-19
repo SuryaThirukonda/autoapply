@@ -40,3 +40,18 @@ def test_different_links_on_one_portal_are_different_postings(tmp_path):
     assert not ledger.already_applied("Motorola Solutions", "Android Platform Software Engineering Intern", b)
     assert ledger.already_applied("Motorola Solutions", "Android Platform Software Engineering Intern", a + "/apply/applyManually")
     assert ledger.url_key(a + "/apply/autofillWithResume") == ledger.url_key(a)
+
+
+
+def test_posting_ids_in_links_and_titles_tell_postings_apart(tmp_path):
+    from goat import db
+    db.reset_for_tests(tmp_path / "t.db")
+    assert ledger.posting_ids("https://x.wd5.myworkdayjobs.com/Careers/job/Plantation-FL/Software-Engineering-Intern---Summer-2027_R69136") == {"69136"}
+    assert ledger.posting_ids("", "Software Engineer Intern - Summer 2027 (R68679)") == {"68679"}
+    assert ledger.posting_ids("https://fa-x.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/260818") == {"260818"}
+    assert ledger.posting_ids("", "2027 Summer Internship - Software Engineer (REQ-12794)") == {"12794"}
+    assert ledger.posting_ids("", "Summer 2027 Class of 2028") == set()
+    ledger.record_application(None, "Motorola Solutions", "Software Engineer Intern - Summer 2027 (R68679)", "", "tracker")
+    url = "https://motorolasolutions.wd5.myworkdayjobs.com/Careers/job/Plantation-FL/Software-Engineering-Intern---Summer-2027_R69136"
+    assert not ledger.already_applied("Motorola Solutions", "Software Engineer Intern - Summer 2027", url)
+    assert ledger.already_applied("Motorola Solutions", "Software Engineer Intern", "https://x.example/careers?job=R68679")
