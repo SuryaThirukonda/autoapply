@@ -1957,8 +1957,14 @@ class ToolDispatcher:
             if gate.passed:
                 return {"error": "not parked: the code gate PASSES on this page. Call submit now (the gate decides; in shadow mode it stops before the click)."}, None
             from ..gate import NOT_APPLICATION
-            if gate.result == "blocked" and low.startswith("portal_error") and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons):
-                pass   # nothing to fix: the page is a portal error or has nothing to submit, so the park stands
+            if gate.result == "blocked" and low.startswith("portal_error") and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons)                     and any("error or maintenance notice" in r for r in gate.reasons):
+                pass   # the page shows the portal's own error or maintenance notice: the park stands
+            elif gate.result == "blocked" and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons):
+                # a mid-form page (no submit control) is no portal error: Northrop Grumman parked on My Information after
+                # Workday sent it back there with the last attempt's values (2026-10-19)
+                return {"error": "not parked: this is a form page, not a portal error. Re-set its fields from their answer_keys "
+                                 "(values the last attempt left are fine once sourced), then Save and Continue forward to Review "
+                                 "and call submit."}, None
             elif gate.result == "blocked":
                 hint = ""
                 if any(re.search(r"resume|résumé|\bcv\b", r, re.I) for r in gate.reasons):
