@@ -766,7 +766,13 @@ class ToolDispatcher:
                                 "error": f"too long: {len(str(val))} characters, and this box allows {cap}. Shorten it to at most {cap} "
                                          "characters (keep the facts; guardcheck it again), then fill it again"})
                 continue
-            plan.append({"ref": f["ref"], "value": val, "_src": src, "_label": f.get("label", ""), "_text": not is_choice})
+            dec_label = f.get("label", "")
+            opt = str((item or {}).get("label") or "").strip()
+            if item and (item.get("type") or "").lower() in ("radio", "checkbox") and opt and                     answers.norm(opt) not in answers.norm(dec_label):
+                # a radio / checkbox decision names its option ("Were you previously employed at ABA? / No"): logged as
+                # the bare question with 'checked', ABA's judge read it as Yes (2026-10-19)
+                dec_label = f"{dec_label[:120]} / {opt[:60]}"
+            plan.append({"ref": f["ref"], "value": val, "_src": src, "_label": dec_label, "_text": not is_choice})
         if plan:
             res = await fill.fill_batch(self.ctx.ex, [{"ref": p["ref"], "value": p["value"]} for p in plan])
             by = {r.ref: r for r in res}
