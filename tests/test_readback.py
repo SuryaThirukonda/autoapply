@@ -219,3 +219,13 @@ def test_a_newer_toggle_pick_supersedes_its_sibling():
     decs = [_dec("Need sponsorship in Austria? / No", "pressed", "e35"), _dec("Need sponsorship in Austria? / Yes", "pressed", "e34")]
     assert readback.diff(decs, snap, 1) == []
     assert readback.diff([_dec("Need sponsorship in Austria? / No", "pressed", "e35")], snap, 1) != []
+
+
+
+def test_the_outline_says_when_it_shows_only_the_start_of_a_long_answer():
+    from goat.browser import snapshot as snapmod
+    snap = _snap([{"ref": "e38", "tag": "textarea", "label": "What drew you to IEX?", "value": "x" * 300, "value_len": 452}])
+    out = snapmod.render(snap)
+    assert "the box holds all 452 characters" in out
+    snap2 = _snap([{"ref": "e39", "tag": "textarea", "label": "Short", "value": "fine"}])
+    assert "the box holds all" not in snapmod.render(snap2)

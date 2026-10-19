@@ -74,7 +74,11 @@ def _fmt_item(i: dict) -> str:
         val = i.get("shown") or i.get("value") or ""
         combo = " combobox" if i.get("combo") else ""
         ph = f' placeholder="{i["placeholder"][:40]}"' if i.get("placeholder") and not val else ""
-        return f'[{i["ref"]}] {kind}{combo} "{label}"{fl} value="{val}"{ph} {pos}'
+        # The outline keeps the first 300 characters of a value; a longer answer is NOT cut in the box (IEX, IXL
+        # 2026-10-19: the judge read "...when p" as a truncated essay that the box held in full).
+        more = (f' (the box holds all {i["value_len"]} characters; the outline shows the first {len(val)})'
+                if i.get("value_len") and int(i["value_len"]) > len(val) else "")
+        return f'[{i["ref"]}] {kind}{combo} "{label}"{fl} value="{val}"{more}{ph} {pos}'
     if tag == "select":
         opts = i.get("options") or []
         more = f" (+{i.get('noptions', 0) - len(opts)} more)" if i.get("noptions", 0) > len(opts) else ""

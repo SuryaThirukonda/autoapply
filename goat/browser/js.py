@@ -171,7 +171,7 @@ JS_SNAPSHOT = r"""
           if (item.name && !/resume|cv|cover|transcript/i.test(item.label)) item.label = item.name + ' (' + (item.label || 'file') + ')';
         }
         else if (type === 'checkbox' || type === 'radio') { item.checked = el.checked; }
-        else item.value = (el.value || '').slice(0, 300);
+        else { item.value = (el.value || '').slice(0, 300); if ((el.value || '').length > 300) item.value_len = (el.value || '').length; }
         if (!item.value) {
           const ms = el.closest('[data-automation-id="multiSelectContainer"]');
           const picked = ms ? Array.from(ms.querySelectorAll('[data-automation-id="selectedItem"]')).map(x => txt(x)).filter(Boolean) : [];
