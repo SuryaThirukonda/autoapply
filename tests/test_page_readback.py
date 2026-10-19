@@ -228,3 +228,69 @@ async def test_a_stored_answer_with_a_bracketed_note_names_its_option(store, tmp
         assert await ex.page.evaluate("() => document.getElementById('s28').checked") is True
     finally:
         await ex.close(close_browser=True)
+
+
+RACE = """<!doctype html><html><body style="margin:20px">
+<fieldset><legend>Please identify your race (select all that apply)</legend>
+  <label><input type="checkbox" id="ai"> American Indian or Alaska Native (United States of America)</label>
+  <label><input type="checkbox" id="as"> Asian (United States of America)</label>
+  <label><input type="checkbox" id="bl"> Black or African American (United States of America)</label>
+  <label><input type="checkbox" id="dn"> I Do Not Wish to Answer</label></fieldset>
+</body></html>"""
+
+RACE_NO_DECLINE = RACE.replace('<label><input type="checkbox" id="dn"> I Do Not Wish to Answer</label>', "")
+
+
+async def _race(tmp_path, html, name):
+    page = tmp_path / name
+    page.write_text(html, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+    return ex
+
+
+@pytest.mark.asyncio
+async def test_an_ordered_chain_ticks_only_its_first_offered_option(store, tmp_path):
+    """HCSC (2026-10-19): 'decline; ...; Asian' ticked both 'I Do Not Wish to Answer' and 'Asian'."""
+    job = _job()
+    answers.save_answer("self_id.race_ethnicity", "decline; I do not wish to answer; Prefer not to say; Asian; Asian (United States of America)",
+                        answer_type="choice_chain", source="questionnaire")
+    ex = await _race(tmp_path, RACE, "race.html")
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        refs = {o["label"].strip()[:5]: o["ref"] for g in snap.groups for o in g["options"]}
+        key = "self_id.race_ethnicity"
+        out, _ = await d.t_fill_batch([{"ref": refs["Asian"], "answer_key": key, "value": None, "source": None, "label": "Race"},
+                                       {"ref": refs["I Do "], "answer_key": key, "value": None, "source": None, "label": "Race"}])
+        st = {r["ref"]: r for r in out["results"]}
+        assert st[refs["Asian"]]["status"] == "failed" and "I Do Not Wish to Answer" in st[refs["Asian"]]["error"]
+        assert st[refs["I Do "]]["status"] == "set"
+        assert await ex.page.evaluate("() => document.getElementById('as').checked") is False
+        assert await ex.page.evaluate("() => document.getElementById('dn').checked") is True
+    finally:
+        await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_without_a_decline_option_the_chain_falls_through_to_his_own_answer(store, tmp_path):
+    job = _job()
+    answers.save_answer("self_id.race_ethnicity", "decline; I do not wish to answer; Asian; Asian (United States of America)",
+                        answer_type="choice_chain", source="questionnaire")
+    ex = await _race(tmp_path, RACE_NO_DECLINE, "race2.html")
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        refs = {o["label"].strip()[:5]: o["ref"] for g in snap.groups for o in g["options"]}
+        out, _ = await d.t_fill_batch([{"ref": refs["Asian"], "answer_key": "self_id.race_ethnicity", "value": None, "source": None, "label": "Race"}])
+        assert out["results"][0]["status"] == "set"
+        out, _ = await d.t_fill_batch([{"ref": refs["Black"], "answer_key": "self_id.race_ethnicity", "value": None, "source": None, "label": "Race"}])
+        assert out["results"][0]["status"] == "failed"
+    finally:
+        await ex.close(close_browser=True)

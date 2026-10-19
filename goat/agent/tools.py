@@ -583,6 +583,19 @@ class ToolDispatcher:
                 a = answers.get(f["answer_key"], self.ctx.job.get("company", ""), self.ctx.portal)
                 if a is not None and a.answer_type == "choice_chain":
                     val = str(val).split(";")[0].strip()
+            # An ordered preference chain ("decline; ...; Asian") picks ONE option per question: the first entry the
+            # question offers. Ticking every option that matched some entry ticked both "I Do Not Wish to Answer" and
+            # "Asian" on HCSC's race checkboxes (2026-10-19).
+            if is_choice and item and item.get("type") in ("radio", "checkbox") and f.get("answer_key") and ";" in str(val):
+                a_chain = answers.get(f["answer_key"], self.ctx.job.get("company", ""), self.ctx.portal)
+                parts0 = [x.strip() for x in str(val).split(";") if x.strip()]
+                if a_chain is not None and a_chain.answer_type == "choice_chain" and answers.norm(parts0[0]) not in SELECT_ALL:
+                    chosen = self._chain_pick(f["ref"], parts0)
+                    if chosen is not None and chosen.get("ref") != f["ref"]:
+                        results.append({"ref": f["ref"], "status": "failed",
+                                        "error": f"the stored answer is an ordered preference: in this question it picks "
+                                                 f"'{str(chosen.get('label') or '')[:60]}' [{chosen.get('ref')}]; tick only that option"})
+                        continue
             # Checkbox/radio with a text answer: check it when the option's own label matches the answer
             # ("Available May 2027" with answer "May 2027"); refuse when it plainly does not.
             label_matched = False
@@ -891,6 +904,24 @@ class ToolDispatcher:
         self.ctx.last_snapshot = None   # a different page: snapshot again before using refs
         out["note"] = "call snapshot before using any ref on this page"
         return out, None
+
+    def _chain_pick(self, ref: str, parts: list[str]) -> dict | None:
+        """The option an ordered chain picks in the radio / checkbox group holding `ref`: the first chain entry (its
+        bracket note dropped as a second try) that some option's label matches. None when `ref` is in no group or no
+        entry matches."""
+        snap = self.ctx.last_snapshot
+        group = next((g for g in (getattr(snap, "groups", None) or []) if any(o.get("ref") == ref for o in g.get("options", []))), None)
+        if group is None:
+            return None
+        opts = [(o, answers.norm(o.get("label") or "")) for o in group.get("options", [])]
+        for part in parts:
+            for cand in (answers.norm(part), answers.norm(re.sub(r"\s*\([^)]*\)", "", part))):
+                if not cand:
+                    continue
+                for o, lab in opts:
+                    if cand == lab or (len(cand) >= 4 and cand in lab):
+                        return o
+        return None
 
     async def t_upload_resume(self, ref: str, document: str):
         if document == "transcript":
