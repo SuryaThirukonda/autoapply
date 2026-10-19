@@ -1531,6 +1531,10 @@ class ToolDispatcher:
         except (TypeError, ValueError):
             kw = {}
         handle = await asyncio.to_thread(fetch, self.ctx.portal, self.ctx.portal_host, after_ts, **kw)
+        if handle is None and not self.ctx.code_requested_at:
+            # the code may predate this run by more than 15 minutes (a held job retried later): one wider look; an expired
+            # code is refused by the page, and the model then asks the portal for a new one
+            handle = await asyncio.to_thread(fetch, self.ctx.portal, self.ctx.portal_host, db.now() - 3600, **kw)
         if handle is None:
             with db.tx() as con:
                 con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))
