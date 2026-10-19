@@ -196,6 +196,8 @@ def _in_resume(value: str) -> bool:
 
 NEGATED = re.compile(r"^(not |no |none|i do not|i am not|unwilling|unable|never|decline|prefer not)", re.I)
 AFFIRMATIVE = {"yes", "true", "checked", "on", "y"}
+# an option label that says yes in its own words ("Yes, I am authorized", "I agree", "I am a U.S. citizen")
+AFFIRM_LABEL = re.compile(r"^(yes\b|i (agree|consent|accept|acknowledge|certify|confirm|understand)\b|i am (authori[sz]ed|eligible|a )|i have\b|i will\b|agree\b|accept\b)", re.I)
 
 
 # Yes/no questions about where Surya works or worked, industries, affiliations and relationships.
@@ -576,6 +578,33 @@ class ToolDispatcher:
                     results.append({"ref": f["ref"], "status": "failed",
                                     "error": f"stored answer {str(val)[:40]!r} does not match this option's label {item.get('label', '')[:40]!r}; pick the option whose label matches, or leave it"})
                     continue
+            # A yes/no answer on a RADIO option ticks only the option that says the same thing. A radio cannot be
+            # unticked, so "No" sent to the "Yes" option used to tick Yes (American Family, 2026-10-18).
+            if is_choice and item and item.get("type") == "radio" and not label_matched:
+                v = str(val).strip().lower()
+                opt_label = (item.get("label") or "").strip()
+                says_no = answers.norm(opt_label) in ("no", "false", "n") or bool(NEGATED.match(opt_label))
+                says_yes = answers.norm(opt_label) in ("yes", "true", "y") or bool(AFFIRM_LABEL.match(opt_label))
+                if v in ("no", "false", "off", "unchecked", "n"):
+                    if says_no:
+                        val = "true"
+                        label_matched = True
+                    else:
+                        results.append({"ref": f["ref"], "status": "failed",
+                                        "error": f"the stored answer is No but this option reads '{opt_label[:50]}'; tick the No option of this "
+                                                 "question instead (a radio cannot be unticked)"})
+                        continue
+                elif v in AFFIRMATIVE and says_no:
+                    results.append({"ref": f["ref"], "status": "failed",
+                                    "error": f"the stored answer is Yes but this option reads '{opt_label[:50]}'; tick the Yes option instead"})
+                    continue
+                elif v in AFFIRMATIVE and not says_yes and answers.norm(opt_label) and f.get("answer_key"):
+                    a_ = answers.get(f["answer_key"], self.ctx.job.get("company", ""), self.ctx.portal)
+                    if a_ is not None and answers.norm(str(a_.answer)) in ("yes", "no"):
+                        # a plain Yes/No answer only ticks a Yes-like option, never "Maybe" / "Prefer not to say"
+                        results.append({"ref": f["ref"], "status": "failed",
+                                        "error": f"the stored answer is Yes but this option reads '{opt_label[:50]}'; tick the Yes option instead"})
+                        continue
             # A "Yes" answer must not land on a negated option ("Not willing to relocate").
             if is_choice and item and item.get("type") in ("radio", "checkbox") and not label_matched:
                 opt_label = (item.get("label") or "")

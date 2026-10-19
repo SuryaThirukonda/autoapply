@@ -127,6 +127,14 @@ def diff(decisions: list[dict], snap: Snapshot, page_no: int = 0) -> list[str]:
     """Mismatch messages, one per control whose NEWEST decision differs from what it shows now (decisions
     come oldest first; a control re-set later in the run is judged by its last decision)."""
     latest: dict[str, dict] = {}
+    # In a radio group only the newest pick counts: ticking No supersedes an earlier Yes on the sibling option
+    # (American Family, 2026-10-18), so older decisions on other options of the same group are not compared.
+    newest_in_group: dict[str, str] = {}
+    for d in decisions:
+        r = d.get("ref") or ""
+        it = snap.refs.get(r) if r else None
+        if it and (it.get("type") or "").lower() == "radio" and it.get("group") and (not page_no or int(d.get("page") or 0) == page_no):
+            newest_in_group[str(it.get("group"))] = r
     for d in decisions:
         ref = d.get("ref") or ""
         same_page = not page_no or int(d.get("page") or 0) == page_no
@@ -149,6 +157,8 @@ def diff(decisions: list[dict], snap: Snapshot, page_no: int = 0) -> list[str]:
         item = d["_item"]
         if item.get("type") in ("file", "password", "hidden") or item.get("tag") in ("button", "a"):
             continue
+        if (item.get("type") or "").lower() == "radio" and item.get("group") and newest_in_group.get(str(item.get("group"))) not in (None, key):
+            continue          # superseded by a newer pick on another option of the same radio group
         kind = _kind_for(item, str(val))
         page_value = _page_value(item)
         label = (item.get("label") or d.get("field_label") or "")

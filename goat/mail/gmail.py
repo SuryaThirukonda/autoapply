@@ -441,24 +441,43 @@ class GmailClient:
             self._service = _build_service()
         return self._service
 
+    RETRIES = 2
+
+    @staticmethod
+    def _transient(e: Exception) -> bool:
+        """A dropped or stale connection (SSLError after an idle spell, reset, timeout) or a 429/5xx answer."""
+        status = getattr(getattr(e, "resp", None), "status", None)
+        if status is not None:
+            try:
+                return int(status) == 429 or int(status) >= 500
+            except (TypeError, ValueError):
+                return False
+        return True
+
+    def _execute(self, make_request, what: str):
+        """Run one API call; on a transient failure rebuild the service (a fresh connection: the cached one goes
+        stale while idle and the next call fails with an SSLError, 2026-10-18) and try again."""
+        last: Exception | None = None
+        for attempt in range(self.RETRIES + 1):
+            try:
+                return make_request(self._svc()).execute()
+            except MailUnavailable:
+                raise
+            except Exception as e:  # noqa: BLE001 - classified below
+                last = e
+                if attempt == self.RETRIES or not self._transient(e):
+                    break
+                log.info("mail: Gmail %s failed (%s); retrying on a fresh connection", what, type(e).__name__)
+                self._service = None
+                time.sleep(0.5 * (attempt + 1))
+        raise MailUnavailable(f"Gmail {what} failed ({type(last).__name__})") from None
+
     def list_messages(self, q: str, max_results: int = 10) -> list[dict]:
-        try:
-            resp = (self._svc().users().messages()
-                    .list(userId="me", q=q, maxResults=max_results).execute())
-        except MailUnavailable:
-            raise
-        except Exception as e:
-            raise MailUnavailable(f"Gmail list failed ({type(e).__name__})") from None
+        resp = self._execute(lambda s: s.users().messages().list(userId="me", q=q, maxResults=max_results), "list")
         return list(resp.get("messages") or [])
 
     def get_message(self, msg_id: str) -> dict:
-        try:
-            return (self._svc().users().messages()
-                    .get(userId="me", id=msg_id, format="full").execute())
-        except MailUnavailable:
-            raise
-        except Exception as e:
-            raise MailUnavailable(f"Gmail get failed ({type(e).__name__})") from None
+        return self._execute(lambda s: s.users().messages().get(userId="me", id=msg_id, format="full"), "get")
 
 
 _default_client: MailClient | None = None

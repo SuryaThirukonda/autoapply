@@ -266,3 +266,44 @@ def test_fetch_password_reset_link_prefers_the_reset_url():
     assert res.url == "https://alliance.wd3.myworkdayjobs.com/en-US/nissanjobs/resetPassword?token=xyz"
     none = gmail.fetch_password_reset_link("workday", me, 1_700_000_000, timeout_s=0, poll_s=0, client=FakeMailClient([[]]))
     assert none == gmail.LinkResult("not_received", None, None)
+
+
+def test_a_stale_connection_is_rebuilt_and_retried(monkeypatch):
+    """The cached Gmail service went stale while idle and the next call raised an SSLError (2026-10-18): the client
+    rebuilds the service and retries; a permanent error (4xx) is not retried."""
+    import ssl
+    from types import SimpleNamespace
+    built = []
+    calls = {"n": 0}
+
+    def make_service():
+        built.append(1)
+
+        class Req:
+            def execute(self):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise ssl.SSLError("EOF occurred in violation of protocol")
+                return {"messages": [{"id": "m1"}]}
+        msgs = SimpleNamespace(list=lambda **k: Req(), get=lambda **k: Req())
+        return SimpleNamespace(users=lambda: SimpleNamespace(messages=lambda: msgs))
+    monkeypatch.setattr(gmail, "_build_service", make_service)
+    monkeypatch.setattr(gmail.time, "sleep", lambda s: None)
+    c = gmail.GmailClient()
+    assert c.list_messages("from:x") == [{"id": "m1"}]
+    assert len(built) == 2 and calls["n"] == 2
+
+    class Http4xx(Exception):
+        resp = SimpleNamespace(status=403)
+
+    def make_forbidden():
+        class Req:
+            def execute(self):
+                raise Http4xx("forbidden")
+        msgs = SimpleNamespace(list=lambda **k: Req())
+        return SimpleNamespace(users=lambda: SimpleNamespace(messages=lambda: msgs))
+    monkeypatch.setattr(gmail, "_build_service", make_forbidden)
+    c2 = gmail.GmailClient()
+    import pytest as _pt
+    with _pt.raises(gmail.MailUnavailable):
+        c2.list_messages("from:x")

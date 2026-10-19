@@ -513,7 +513,11 @@ JS_FILL_BATCH = r"""
     try {
       if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
         const want = (f.value === true || /^(true|yes|on|checked|1)$/i.test(String(f.value)));
-        if (type === 'radio') { if (!el.checked) el.click(); }
+        if (type === 'radio') {
+          // a radio cannot be unticked: a false value is refused instead of clicking the option anyway
+          if (!want) { res.error = 'a radio option cannot be unticked: tick the option that matches the answer instead'; res.readback = el.checked ? 'checked' : 'unchecked'; out.push(res); continue; }
+          if (!el.checked) el.click();
+        }
         else if (el.checked !== want) el.click();
         res.readback = el.checked ? 'checked' : 'unchecked'; res.ok = (type === 'radio') ? el.checked : (el.checked === want);
       } else if (tag === 'select') {

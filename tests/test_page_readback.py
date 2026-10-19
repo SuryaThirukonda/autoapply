@@ -99,3 +99,61 @@ async def test_a_radio_decision_names_the_option_that_was_ticked(store, tmp_path
         assert dec["field_label"] == "Were you previously employed at ABA? / No" and dec["value"] == "checked"
     finally:
         await ex.close(close_browser=True)
+
+
+def test_a_newer_pick_in_a_radio_group_supersedes_the_older_sibling():
+    """American Family (2026-10-18): Yes was ticked, then corrected to No; the stale Yes decision is not a mismatch."""
+    from goat.browser.snapshot import Snapshot
+    groups = [{"kind": "radio", "label": "Previously employed?", "options": [{"ref": "e4", "label": "Yes", "checked": False},
+                                                                              {"ref": "e5", "label": "No", "checked": True}]}]
+    s = Snapshot(url="u", title="t", headings=[], items=[], groups=groups, errors={}, challenge={})
+    for g in groups:
+        for o in g["options"]:
+            s.refs[o["ref"]] = {**o, "tag": "input", "type": "radio", "group": g["label"]}
+    decs = [_dec("Previously employed? / Yes", "checked", "e4"), _dec("Previously employed? / No", "checked", "e5")]
+    assert readback.diff(decs, s, 1) == []
+    # the newest pick still has to hold: if the page shows Yes after No was decided, that is a mismatch
+    s.refs["e5"]["checked"] = False
+    s.refs["e4"]["checked"] = True
+    assert readback.diff(decs, s, 1) == ["field No [e5] shows '' but decision was 'checked'"]
+
+
+@pytest.mark.asyncio
+async def test_a_yes_no_answer_ticks_only_the_matching_radio_option(store, tmp_path):
+    """A stored No sent to the Yes option is refused (it used to tick Yes); sent to the No option it ticks No;
+    a stored Yes is refused on the No option."""
+    job = _job()
+    answers.save_answer("background.previously_employed_at_this_company", "No", answer_type="text", source="questionnaire")
+    answers.save_answer("work_authorization.authorized_to_work_in_us", "Yes", answer_type="text", source="questionnaire")
+    ex = await _open(tmp_path)
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        opts = {o["label"].strip(): o["ref"] for g in snap.groups for o in g["options"]}
+        key = "background.previously_employed_at_this_company"
+        out, _ = await d.t_fill_batch([{"ref": opts["Yes"], "answer_key": key, "value": None, "source": None, "label": "Previously employed?"}])
+        assert out["results"][0]["status"] == "failed" and "tick the No option" in out["results"][0]["error"]
+        assert await ex.page.evaluate("() => document.getElementById('py').checked") is False
+        out, _ = await d.t_fill_batch([{"ref": opts["No"], "answer_key": key, "value": None, "source": None, "label": "Previously employed?"}])
+        assert out["results"][0]["status"] == "set"
+        assert await ex.page.evaluate("() => document.getElementById('pn').checked") is True
+        out, _ = await d.t_fill_batch([{"ref": opts["No"], "answer_key": "work_authorization.authorized_to_work_in_us", "value": None, "source": None, "label": "x"}])
+        assert out["results"][0]["status"] == "failed" and "tick the Yes option" in out["results"][0]["error"]
+    finally:
+        await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_the_fill_script_never_clicks_a_radio_for_a_false_value(tmp_path):
+    from goat.browser import fill
+    ex = await _open(tmp_path)
+    try:
+        snap = await snapshot.take(ex)
+        yes_ref = next(o["ref"] for g in snap.groups for o in g["options"] if o["label"].strip() == "Yes")
+        r = (await fill.fill_batch(ex, [{"ref": yes_ref, "value": "No"}]))[0]
+        assert not r.ok and "cannot be unticked" in r.error
+        assert await ex.page.evaluate("() => document.getElementById('py').checked") is False
+    finally:
+        await ex.close(close_browser=True)
