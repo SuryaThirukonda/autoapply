@@ -49,7 +49,9 @@ JUDGE_INSTRUCTIONS = (
     "intent. The log's format is never a defect by itself. 'pass' only when nothing is missing or wrong on the page. "
     "Put the single most important problem in `bucket` and name the fields. Never invent values; judge only what the "
     "log, outline, page text and screenshot show. A value typed inside a box appears in the OUTLINE (value=\"…\"), "
-    "not in the page text, so a box is blank only when the outline shows it empty."
+    "not in the page text, so a box is blank only when the outline shows it empty. A control the outline marks disabled "
+    "holds the portal's own value (an end date while 'still a student' is ticked) and cannot be changed: never call it "
+    "wrong or missing."
 )
 
 FACT_CHECK_INSTRUCTIONS = (

@@ -190,6 +190,10 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     for it in snapshot.items:
         if it.get("tag") not in ("input", "textarea", "select", "dropdown", "richtext", "toggle") or it.get("type") in ("file", "password", "hidden", "submit", "button"):
             continue
+        if it.get("disabled"):
+            # A disabled control cannot be changed or set (ibotta, 2026-10-18: "Still Student" disables the end-date
+            # year, which keeps a default 2026): its value is the portal's, not a decision.
+            continue
         val = it.get("shown") or it.get("value") or ""
         if it.get("type") == "checkbox":
             val = "checked" if it.get("checked") else ""

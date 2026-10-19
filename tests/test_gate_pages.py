@@ -112,3 +112,17 @@ def test_a_workday_review_page_saying_he_is_not_fluent_in_english_is_blocked(sto
     ok = run_gate(job=job, snapshot=snap, page_text=text.replace("language\nNo", "language\nYes"), expected_resume=None,
                   free_text_answers=[], portal="workday", page_no=1)
     assert not any("fluent" in r for r in ok.reasons)
+
+
+def test_a_disabled_control_with_a_default_value_needs_no_decision(store):
+    """ibotta (2026-10-18): 'Still Student' disables Ashby's end-date year, which keeps a default 2026."""
+    job = _job()
+    items = [{"ref": "e38", "tag": "select", "label": "End Date", "value": "2026", "disabled": True},
+             {"ref": "e1", "tag": "button", "label": "Submit Application", "submitish": True}]
+    g = run_gate(job=job, snapshot=_snap(items), page_text="Education\nStill Student\nSubmit Application", expected_resume=None,
+                 free_text_answers=[], portal="ashby", page_no=1)
+    assert g.result == "pass_shadow", g.reasons
+    items[0]["disabled"] = False
+    g = run_gate(job=job, snapshot=_snap(items), page_text="Education\nSubmit Application", expected_resume=None,
+                 free_text_answers=[], portal="ashby", page_no=1)
+    assert g.result == "blocked" and "End Date" in g.reasons[0]
