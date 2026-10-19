@@ -344,6 +344,9 @@ JS_PAGE_ERRORS = r"""
       if (el.children.length > 2) continue;
       if (!vis(el)) continue;
       if (el.tagName === 'LABEL' || (el.closest && el.closest('label'))) continue;
+      // a block that WRAPS a field (label + control) is the question, not a message about it: CoVar's
+      // "Are you a US citizen? ... clearance is required ..." plus its picked value was read as an error (2026-10-18)
+      if (el.querySelector && el.querySelector('label, input, select, textarea, button, [role="combobox"]')) continue;
       if (el.closest && el.closest('.apply-flow-block__header')) continue;
       const t = txt(el);
       if (!t || t.length > 300 || SKIP.test(t)) continue;
