@@ -708,7 +708,8 @@ class ToolDispatcher:
                     # The stored text names this option ("Not Specified"), negated or not: only when the label
                     # starts with it, so "willing" never ticks "Not willing to relocate".
                     label_matched = any(lab.startswith(x) for x in [nv, *parts] if x)
-                elif item.get("type") == "checkbox" and parts and parts[0] in SELECT_ALL and not NEGATED.match((item.get("label") or "").strip()):
+                elif item.get("type") == "checkbox" and parts and (parts[0] in SELECT_ALL or re.match(r"^(select|pick|choose|tick|check) (every|all)", parts[0]))                         and not NEGATED.match((item.get("label") or "").strip()):
+                    # ("Select every location offered (multi-select)..." in his bank answer: American Express, 2026-10-19)
                     # "All offered locations; ..." on a multi-select group: every box is ticked (Surya, 2026-10-18)
                     val = "true"
                     label_matched = True
