@@ -54,7 +54,11 @@ JUDGE_INSTRUCTIONS = (
     "holds the portal's own value (an end date while 'still a student' is ticked) and cannot be changed: never call it "
     "wrong or missing. A form-level banner from an earlier submit click ('Your form needs corrections', 'Missing entry for "
     "required field: X') stays on screen until the next click: when the outline shows X holding its value now, the banner "
-    "is stale; judge the field, not the banner (the portal re-checks on the next click)."
+    "is stale; judge the field, not the banner (the portal re-checks on the next click). "
+    "Consents, acknowledgments and attestations a form requires to apply (privacy notice, terms, data use, 'I have read "
+    "and understood', a policy to follow, an e-signature with his name and date) are delegated: Surya authorized the "
+    "agent to accept them on his behalf, so a ticked acknowledgment is the intended value, never a defect (Waymo, "
+    "2026-10-19). Marketing, job-alert and talent-community opt-ins stay unticked."
 )
 
 FACT_CHECK_INSTRUCTIONS = (
