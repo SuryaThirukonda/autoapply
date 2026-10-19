@@ -863,6 +863,11 @@ class ToolDispatcher:
             stored_wants = _plain_wordings(val)
             if variants and variants.has_value:
                 stored_wants += _plain_wordings(variants.answer)
+            # "June" and "2026" for a stored "06/01/2026" on a month or year picker are his answer in the picker's words:
+            # Coinbase's employment months were recorded as judgment and the fact check failed them (2026-10-19)
+            stored_wants += [w for w in fill.date_wants(stored_wants)
+                             + (fill.month_numbers(stored_wants) if re.search(r"month", label or "", re.I) else [])
+                             if w not in stored_wants]
             if answer_key.endswith("_variants"):
                 # The variants are the portal spellings tried AFTER the answer itself: picked by the variants key,
                 # Epic Games' school search got only "Texas A & M University"-style wordings, all unknown to it,

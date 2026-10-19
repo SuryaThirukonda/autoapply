@@ -136,8 +136,12 @@ def unconfirmed_answers(job_id: int, company: str = "", ats: str = "", limit: in
             continue
         # The question may have an answer Surya confirmed (the questionnaire's "No" to accommodation needs) even when the
         # agent wrote the box itself: give the fact check that answer as evidence.
+        # A decision whose source names its key ("judgment:experience.work.2.start") already carries that answer as
+        # evidence; a label lookup on "DeKalb start date month" found bank.start-date (his internship start) and the
+        # contradiction failed Coinbase's check (2026-10-19).
         try:
-            stored = answers.lookup(str(d.get("field_label") or ""), company, ats)
+            stored = None if str(d.get("source") or "").startswith("judgment:") else \
+                answers.lookup(str(d.get("field_label") or ""), company, ats)
         except Exception:
             stored = None
         if stored is not None and stored.has_value and not answers.unconfirmed_source(f"standing:{stored.key}", company, ats)[0]:
