@@ -174,3 +174,11 @@ def test_background_legal_amount_and_willingness_questions_never_default_to_no(q
 def test_the_fact_check_is_told_silence_does_not_back_background_answers():
     from goat.judge import FACT_CHECK_INSTRUCTIONS
     assert "silence supports a No only" in FACT_CHECK_INSTRUCTIONS and "security-clearance history" in FACT_CHECK_INSTRUCTIONS
+
+
+def test_services_or_a_badge_at_the_company_is_an_affiliation_question():
+    """Northrop Grumman (2026-10-19): the contractor / contingent-worker / security-badge wording went to Surya."""
+    from goat.agent.tools import is_affiliation_question
+    q = ("Have you ever performed services for Northrop Grumman as a contractor/contingent worker, or been issued a "
+         "Northrop Grumman security badge?")
+    assert is_affiliation_question(q, ["Select One", "Yes", "No"])

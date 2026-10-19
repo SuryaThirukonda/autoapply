@@ -218,7 +218,10 @@ AFFILIATION = re.compile(
     r"conflict of interest|financial interest|\bown (stock|shares)|\bvendors?\b|\bsuppliers?\b|\bcustomers?\b|\bclients?\b|"
     r"\bcompetitors?\b|subsidiar|parent company|former employee|current employee|independent contractor|consultant (for|to)|"
     r"\bindustry\b|close personal relation|domestic partner|significant other|\bkin\b|know anyone|acquaint|royal family|"
-    r"political (party|office)|candidate for (political )?office|government (entity|employee|official)|member of your (family|household))", re.I)
+    r"political (party|office)|candidate for (political )?office|government (entity|employee|official)|member of your (family|household)|"
+    # Northrop Grumman (2026-10-19): "performed services for Northrop Grumman as a contractor/contingent worker, or been
+    # issued a Northrop Grumman security badge" went to Surya
+    r"perform(ed)? services (for|to)|provided services (for|to)|contingent worker|security badge)", re.I)
 # Never a default No, even when they mention relatives, a spouse or customers (Penn State, 2026-10-18: "spouse or relatives
 # who are foreign nationals; foreign travel; counseling; police records" was answered No by the affiliation rule):
 # background-investigation, legal, financial and medical history, amounts of experience, and statements of willingness.
