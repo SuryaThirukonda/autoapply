@@ -981,6 +981,12 @@ class ToolDispatcher:
                 continue
             if f.get("_force_true"):
                 val = "true"
+            # A text box that says "if no / none, type N/A" takes N/A for a No answer (Fannie Mae, 2026-10-20: the relatives
+            # answer was No, the model typed N/A as its own text, that was refused, and the run held).
+            if item and item.get("tag") in ("input", "textarea") and item.get("type") not in ("radio", "checkbox") \
+                    and str(val).strip().lower() in ("no", "none", "n/a", "na") \
+                    and re.search(r"\bn/?a\b", f"{f.get('label') or ''} {item.get('label') or ''}", re.I):
+                val = "N/A"
             # A text box that asks for the posting's own locations gets every one of them (he is open to all), whatever
             # location key was named (Northrop Grumman, 2026-10-19).
             posting_locs: list[str] = []

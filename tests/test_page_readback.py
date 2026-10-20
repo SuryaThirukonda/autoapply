@@ -483,3 +483,29 @@ async def test_a_tick_dropped_by_a_rerender_in_the_same_batch_is_restored(store,
         assert db.connect().execute("SELECT COUNT(*) FROM events WHERE kind='fill:reticked'").fetchone()[0] == 1
     finally:
         await ex.close(close_browser=True)
+
+
+
+NABOX = """<!doctype html><html><body style="margin:20px">
+<label for="fam">If yes, please list the family member name(s) and relationship(s). If no, type N/A</label><br>
+<input id="fam" type="text" style="width:400px">
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_no_answer_types_na_where_the_box_asks_for_it(store, tmp_path):
+    """Fannie Mae (2026-10-20): 'If no, type N/A' after the relatives answer No."""
+    job = _job()
+    answers.save_answer("bank.relatives", "No", answer_type="choice", source="questionnaire")
+    ex = await _race(tmp_path, NABOX, "na.html")
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        ref = next(i["ref"] for i in snap.items if "family member" in (i.get("label") or ""))
+        out, _ = await d.t_fill_batch([{"ref": ref, "answer_key": "bank.relatives", "value": None, "source": None, "label": "Family members"}])
+        assert out["results"][0]["status"] == "set", out
+        assert await ex.page.evaluate("() => document.getElementById('fam').value") == "N/A"
+    finally:
+        await ex.close(close_browser=True)
