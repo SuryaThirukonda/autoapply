@@ -229,3 +229,10 @@ def test_fact_check_knows_his_citizenship():
     """Tencent (2026-10-20): No to citizenship or residency in restricted countries was called unsupported."""
     from goat.judge import FACT_CHECK_INSTRUCTIONS
     assert "restricted or sanctioned countries, is supported" in FACT_CHECK_INSTRUCTIONS
+
+
+
+def test_fact_check_default_no_covers_relationships_with_clients_and_investors():
+    """Invesco (2026-10-20): No to a relationship with Invesco's investors, clients or government officials was flagged."""
+    from goat.judge import FACT_CHECK_INSTRUCTIONS
+    assert "relationship with its investors, clients" in FACT_CHECK_INSTRUCTIONS
