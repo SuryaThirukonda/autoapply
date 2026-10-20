@@ -381,9 +381,18 @@ async def _type_and_enter(ex: Executor, ref: str, wants: list[str], baseline_key
             await asyncio.sleep(1.2)
         except Exception as e:
             return False, f"click on {pick['text']!r} failed: {type(e).__name__}"
-        for c in await chips_now():
-            if c not in chips_before and _chip_matches(c, [pick["text"], *wants]):
-                return True, c
+        for attempt in range(2):
+            for c in await chips_now():
+                if c not in chips_before and _chip_matches(c, [pick["text"], *wants]):
+                    return True, c
+            if attempt == 0:
+                # an expanded prompt shows its chips only once the popup closes; read too early, a good pick looked
+                # missing and was removed again (Nissan's How Did You Hear, 2026-10-19)
+                try:
+                    await ex.page.keyboard.press("Escape")
+                except Exception:
+                    pass
+                await asyncio.sleep(0.8)
         await _remove_wrong_chips(ex, ref, keep=chips_before)
     try:
         await ex.page.keyboard.press("Escape")
