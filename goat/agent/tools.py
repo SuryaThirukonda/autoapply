@@ -1101,6 +1101,26 @@ class ToolDispatcher:
                     if rb and len(rb) >= 290 and len(full) > len(rb) and squash(full).startswith(squash(rb)[:250]):
                         rb = full
                     records.record_decision(self.ctx.job_id, self.ctx.page_no, p["_label"], rb, p["_src"], p["ref"])
+            # A form that re-renders while the batch is typed can drop a tick made earlier in the same batch: DFW's
+            # disability form turned 'required' once the name was typed and lost its 'No, I do not have a disability'
+            # tick, and the run parked over it (2026-10-20). Re-tick, once, every box this batch ticked that lost it.
+            if any(not p["_text"] for p in plan) and any(p["_text"] for p in plan):
+                await asyncio.sleep(1.2)          # the re-render follows the portal's save of the typed text
+                lost = []
+                for p in plan:
+                    r = by.get(p["ref"])
+                    if p["_text"] or not (r and r.ok) or str(p["value"]).strip().lower() not in ("true", "checked", "yes", "on"):
+                        continue
+                    try:
+                        now = await self.ctx.ex.read_ref(p["ref"])
+                    except Exception:
+                        continue
+                    if now.get("found") and str(now.get("value") or "").lower() not in ("checked", "true", "on"):
+                        lost.append(p)
+                if lost:
+                    again = await fill.fill_batch(self.ctx.ex, [{"ref": p["ref"], "value": p["value"]} for p in lost])
+                    db.event(self.ctx.job_id, "fill:reticked", {"refs": [p["ref"] for p in lost],
+                                                                "ok": [r.ref for r in again if r.ok]})
         self.ctx.budget.step()
         set_n = sum(1 for r in results if r.get("status") == "set")
         # A field set again after a page's read-back complained is the fix for that complaint: drop it, so a mismatch
@@ -2144,6 +2164,11 @@ class ToolDispatcher:
             return {"status": status, "hint": "no reset email came and the account exists: park credentials_unknown"}, None
         return {"status": status, "next": CREATE_STEPS}, None
 
+    ALREADY_APPLIED_PAGE = re.compile(
+        r"(you(\u2019|')?ve already applied|you have already applied|already applied (for|to) this|"
+        r"(an )?application (for this (job|position|role) )?has already been submitted|already submitted an application|"
+        r"you (have )?previously applied|application (status|submitted)[^.\n]{0,40}(under review|in review|submitted on))", re.I)
+
     SAVE_PASSWORD_LABEL = re.compile(r"^\s*(submit|save|save password|reset password|set password|change password|update password|"
                                      r"continue|confirm|done)\s*$", re.I)
 
@@ -2578,6 +2603,18 @@ class ToolDispatcher:
         # address, work experience, education, remaining questions, and e-signature", 2026-10-19) is never final.
         # A CAPTCHA counts only when the page has one: Epic Games parked "complete the required CAPTCHA/human
         # verification if presented; required fields remain: phone, ..." on a form with no challenge (2026-10-19).
+        # The portal itself says the application is in (Thrivent, 2026-10-20: "You've already applied for this job", and My
+        # Applications listed it as submitted on September 29; the park was bounced as 'a form page' until the model
+        # stopped answering). Such a park stands when the page says so.
+        if low.startswith("already_applied"):
+            try:
+                text_aa = await self.ctx.ex.page_text(30000)
+            except Exception:
+                text_aa = ""
+            m_aa = self.ALREADY_APPLIED_PAGE.search(text_aa or "")
+            if m_aa:
+                db.event(self.ctx.job_id, "park:already_applied", {"quote": m_aa.group(0)[:120]})
+                raise Parked(f"already_applied: the portal says {m_aa.group(0)[:100]!r}", "hold")
         snap0 = self.ctx.last_snapshot
         real_challenge = bool(snap0 is not None and (getattr(snap0, "challenge", None) or {}).get("challenge"))
         stoppers = [m.group(0) for m in self.RFY_REASON.finditer(reason)

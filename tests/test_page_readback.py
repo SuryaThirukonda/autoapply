@@ -445,3 +445,41 @@ async def test_a_long_answer_is_logged_in_full(store, tmp_path):
         assert row["value"] == long_text and len(long_text) > 300
     finally:
         await ex.close(close_browser=True)
+
+
+
+RERENDER = """<!doctype html><html><body style="margin:20px">
+<label for="nm">Name</label><input id="nm" type="text"><br><br>
+<label><input type="checkbox" id="no"> No, I do not have a disability and have not had one in the past</label>
+<script>
+  // the form re-renders its boxes once the name is typed (they become required), dropping any tick
+  const drop = () => { const c = document.getElementById('no');
+    if (!c.dataset.rerendered && document.getElementById('nm').value) { c.dataset.rerendered = '1';
+      setTimeout(() => { c.checked = false; c.required = true; }, 400); } };
+  ['input', 'change', 'blur', 'keyup'].forEach(ev => document.getElementById('nm').addEventListener(ev, drop));
+</script>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_tick_dropped_by_a_rerender_in_the_same_batch_is_restored(store, tmp_path):
+    """DFW (2026-10-20): the disability tick was lost when the name typed after it made the form re-render."""
+    job = _job()
+    answers.save_answer("self_id.disability", "No", answer_type="choice", source="questionnaire")
+    answers.save_answer("identity.legal_name", "Surya Thirukonda", answer_type="text", source="questionnaire")
+    ex = await _race(tmp_path, RERENDER, "rerender.html")
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        refs = {(i.get("label") or "")[:20]: i["ref"] for i in snap.items}
+        box = next(r for l, r in refs.items() if l.startswith("No, I do not"))
+        name = next(r for l, r in refs.items() if l.startswith("Name"))
+        out, _ = await d.t_fill_batch([{"ref": box, "answer_key": "self_id.disability", "value": None, "source": None, "label": "Disability"},
+                                       {"ref": name, "answer_key": "identity.legal_name", "value": None, "source": None, "label": "Name"}])
+        await ex.page.wait_for_timeout(200)
+        assert await ex.page.evaluate("() => document.getElementById('no').checked") is True, out
+        assert db.connect().execute("SELECT COUNT(*) FROM events WHERE kind='fill:reticked'").fetchone()[0] == 1
+    finally:
+        await ex.close(close_browser=True)

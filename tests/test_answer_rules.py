@@ -1302,3 +1302,19 @@ async def test_a_found_it_at_a_campus_event_question_is_no(store):
     assert out["answer"] == "No"
     from goat.agent.tools import OTHER_SOURCE_QUESTION
     assert not OTHER_SOURCE_QUESTION.search("How did you hear about this opportunity?")
+
+
+
+@pytest.mark.asyncio
+async def test_an_already_applied_park_stands_when_the_page_says_so(store):
+    """Thrivent (2026-10-20): "You've already applied for this job" was bounced as a form page."""
+    from goat.budget import Parked
+    job = _job()
+    d, ctx = _dispatcher(job)
+
+    async def page_text(n=0):
+        return "Careers You've already applied for this job. View My Applications"
+    ctx.ex.page_text = page_text
+    with pytest.raises(Parked) as e:
+        await d.t_park("already_applied: Thrivent says an application was submitted")
+    assert e.value.reason.startswith("already_applied")
