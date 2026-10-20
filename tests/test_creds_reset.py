@@ -501,3 +501,20 @@ async def test_a_sign_in_page_after_a_reset_is_signed_into(store):
     ctx.creds_mode = "set_password"
     out, _ = await d.t_park("credentials_unknown: sign-in status needs inspection")
     assert "password was reset" in out["error"] and "login_universal" in out["error"]
+
+
+
+@pytest.mark.asyncio
+async def test_a_park_on_the_create_account_form_names_the_boxes(store):
+    """AspenTech (2026-10-20): on the Create Account form the run parked 'password entry is not authorized'."""
+    job = _job()
+    d, ctx = _with_ex(job, ProbeEx("Create Account", {"pw": 2, "heads": ["Create Account"], "title": "Create Account"}))
+    ctx.last_snapshot = SimpleNamespace(items=[{"ref": "e5", "label": "Email Address*", "type": "text"},
+                                               {"ref": "e6", "label": "Password*", "type": "password"},
+                                               {"ref": "e7", "label": "Verify New Password*", "type": "password"}],
+                                        find=lambda ref: None)
+    ctx.mail = object()
+    ctx.verify_link_tried = ctx.reset_link_tried = ctx.reset_not_received = True
+    ctx.control_failures["creds:create_bounce"] = 1
+    out, _ = await d.t_park("credentials_unknown: account creation requires password entry, which is not authorized")
+    assert "credentials mode 'create'" in out["error"] and "email_ref 'e5'" in out["error"] and "confirm_password_ref 'e7'" in out["error"]

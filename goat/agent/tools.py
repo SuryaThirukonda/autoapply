@@ -2510,6 +2510,23 @@ class ToolDispatcher:
                 return {"error": "not parked: the new password is typed but not saved. Click the reset page's save button with "
                                  "`click` (on Workday it is labelled 'Submit': it only saves the password, it is not the application's "
                                  "submit), then sign in with credentials login_universal."}, None
+            if not self.ctx.create_tried and not self.ctx.account_exists and (probe.get("pw") or 0) >= 2 \
+                    and any(re.search(r"create account|sign up|register", h or "", re.I) for h in (probe.get("heads") or []) + [probe.get("title") or ""]) \
+                    and self.ctx.control_failures.get("creds:create_form_bounce", 0) < 2:
+                # AspenTech (2026-10-20): on the Create Account form the run parked 'password entry is not authorized'.
+                self.ctx.control_failures["creds:create_form_bounce"] = self.ctx.control_failures.get("creds:create_form_bounce", 0) + 1
+                snap_c = self.ctx.last_snapshot
+                items_c = list(getattr(snap_c, "items", None) or [])
+                em = next((i.get("ref") for i in items_c if re.search(r"e-?mail", str(i.get("label") or ""), re.I)
+                           and (i.get("type") or "").lower() != "password"), "")
+                pw = [i.get("ref") for i in items_c if (i.get("type") or "").lower() == "password"]
+                refs = (f" (email_ref '{em}', password_ref '{pw[0]}', confirm_password_ref '{pw[1]}')"
+                        if em and len(pw) >= 2 else "")
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "create form showing"})
+                return {"error": "not parked: this is the Create Account form and creating the account is authorized (Surya "
+                                 "allows account creation on the listing's portal). Call credentials mode 'create'" + refs + ": "
+                                 "the helper types the email and his one application password, you never see it. Tick the "
+                                 "terms box if there is one, then click Create Account."}, None
             if self.ctx.creds_mode == "set_password" and sign_in_page(probe) \
                     and self.ctx.control_failures.get("creds:after_reset_bounce", 0) < 2:
                 # Q2 (2026-10-20): the reset page said 'Password has been reset' and went to Sign In; the run parked.
