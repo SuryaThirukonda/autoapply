@@ -2192,10 +2192,17 @@ class ToolDispatcher:
         """On the reset page the password link opened: type the application password into both boxes and click the
         page's save button. Returns {'saved': True} when the reset form is gone afterwards."""
         try:
-            await self.ctx.ex.settle(quiet_ms=500)
-            snap = await snapmod.take(self.ctx.ex)
-            self.ctx.last_snapshot = snap
-            pws = [i for i in snap.items if (i.get("type") or "").lower() == "password" and i.get("ref")]
+            # Workday renders the reset form a few seconds after the link opens (Q2, 2026-10-20: read at once, the page
+            # had no password box yet): wait for both boxes.
+            pws = []
+            for _ in range(10):
+                await self.ctx.ex.settle(quiet_ms=500)
+                snap = await snapmod.take(self.ctx.ex)
+                self.ctx.last_snapshot = snap
+                pws = [i for i in snap.items if (i.get("type") or "").lower() == "password" and i.get("ref")]
+                if len(pws) >= 2:
+                    break
+                await asyncio.sleep(1.0)
             if len(pws) < 2:
                 return {"saved": False, "why": f"{len(pws)} password box(es) on the page"}
             out, _ = await self.t_credentials("set_password", "", pws[0]["ref"], pws[1]["ref"])
@@ -2500,6 +2507,13 @@ class ToolDispatcher:
                 return {"error": "not parked: the new password is typed but not saved. Click the reset page's save button with "
                                  "`click` (on Workday it is labelled 'Submit': it only saves the password, it is not the application's "
                                  "submit), then sign in with credentials login_universal."}, None
+            if self.ctx.creds_mode == "set_password" and sign_in_page(probe) \
+                    and self.ctx.control_failures.get("creds:after_reset_bounce", 0) < 2:
+                # Q2 (2026-10-20): the reset page said 'Password has been reset' and went to Sign In; the run parked.
+                self.ctx.control_failures["creds:after_reset_bounce"] = self.ctx.control_failures.get("creds:after_reset_bounce", 0) + 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "sign in after reset"})
+                return {"error": "not parked: the password was reset in this run and the portal shows Sign In. Call credentials "
+                                 "mode 'login_universal' with this form's email and password refs and click Sign In."}, None
             if self.ctx.creds_mode == "create" and not self.ctx.create_clicked and not self.ctx.account_exists \
                     and (probe.get("pw") or 0) >= 2 and self.ctx.control_failures.get("creds:create_click_bounce", 0) < 2:
                 # GE Vernova (2026-10-20): the Create Account form was filled and the run parked without clicking it.

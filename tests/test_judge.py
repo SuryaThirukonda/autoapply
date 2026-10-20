@@ -199,3 +199,12 @@ def test_fact_check_knows_his_desired_pay():
     """GDIT (2026-10-20): '$0 - $50,000' holds his $41,600 a year and was called unsupported."""
     from goat.judge import FACT_CHECK_INSTRUCTIONS
     assert "$41,600 a year" in FACT_CHECK_INSTRUCTIONS
+
+
+
+def test_a_ticked_option_is_shown_to_the_judge_as_the_answer():
+    """Mastercard (2026-10-20): the label was cut at 80 characters, losing '/ No', and 'checked' was read as Yes."""
+    from goat.judge import Judge
+    text = Judge._log_text([{"page": 11, "field_label": "Have you ever worked for Mastercard as an employee or provided services as a "
+                             "contingent worker? / No", "value": "checked", "source": "bank:worked-here-before"}])
+    assert "= 'No' (the option ticked" in text and "checked" not in text

@@ -488,3 +488,16 @@ async def test_the_harness_sets_and_saves_the_password_after_the_reset_link(stor
         assert await ex.page.evaluate("() => document.querySelector('h2').textContent") == "Sign In"
     finally:
         await ex.close(close_browser=True)
+
+
+
+@pytest.mark.asyncio
+async def test_a_sign_in_page_after_a_reset_is_signed_into(store):
+    """Q2 (2026-10-20): 'Password has been reset' on the Sign In page, and the run parked credentials_unknown."""
+    job = _job()
+    d, ctx = _with_ex(job, ProbeEx("Sign In Password has been reset", {"pw": 1, "heads": ["Sign In"], "title": "Careers"}))
+    ctx.mail = object()
+    ctx.verify_link_tried = ctx.reset_link_tried = True
+    ctx.creds_mode = "set_password"
+    out, _ = await d.t_park("credentials_unknown: sign-in status needs inspection")
+    assert "password was reset" in out["error"] and "login_universal" in out["error"]

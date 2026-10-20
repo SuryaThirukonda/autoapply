@@ -158,7 +158,14 @@ class Judge:
         for d in decisions[-150:]:
             v = str(d.get('value') or '')
             v = v if len(v) <= 2000 else v[:2000] + " …[cut for length]"
-            lines.append(f"- page {d.get('page')}: {str(d.get('field_label') or '')[:80]} = {v!r} (source {d.get('source')})")
+            label = str(d.get('field_label') or '')
+            if v.strip().lower() in ("checked", "pressed") and " / " in label:
+                # "Question / No" = checked is the answer No. Mastercard's 101-character label was cut at 80, the "/ No"
+                # was lost, and the judge read 'checked' as Yes (2026-10-20).
+                question, option = label.rsplit(" / ", 1)
+                lines.append(f"- page {d.get('page')}: {question[:200]} = {option.strip()!r} (the option ticked; source {d.get('source')})")
+                continue
+            lines.append(f"- page {d.get('page')}: {label[:200]} = {v!r} (source {d.get('source')})")
         if lines:
             return "\n".join(lines)
         # A resumed draft (Workday reopens at Review) records nothing new: the previous attempt's archive is the intent.
