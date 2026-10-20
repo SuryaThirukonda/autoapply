@@ -128,3 +128,21 @@ async def test_a_forms_own_footer_buttons_are_in_the_snapshot():
         assert "Privacy" not in labels and "Careers home" not in labels, labels
     finally:
         await ex.close()
+
+
+
+async def test_a_stalled_screenshot_falls_back_to_chromes_own_capture():
+    """Walmart (2026-10-20): Page.screenshot timed out waiting for fonts and the run crashed."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content("<html><body><h1>Hello</h1></body></html>")
+
+        async def stalled(*a, **k):
+            raise TimeoutError("Page.screenshot: Timeout 30000ms exceeded.")
+        ex.page.screenshot = stalled
+        png = await ex.screenshot_png()
+        assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 100
+    finally:
+        await ex.close()

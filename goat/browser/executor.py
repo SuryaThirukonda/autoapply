@@ -399,7 +399,23 @@ class Executor:
 
     async def screenshot_png(self) -> bytes:
         assert self.page
-        return await self.page.screenshot(type="png", full_page=False)
+        try:
+            return await self.page.screenshot(type="png", full_page=False, timeout=20000)
+        except Exception as first:
+            # Playwright waits for web fonts before it captures; a busy page stalled that past 30 s and the exception
+            # ended Walmart's run (2026-10-20). Chrome's own capture does not wait for fonts.
+            try:
+                cdp = await self.page.context.new_cdp_session(self.page)
+                try:
+                    res = await cdp.send("Page.captureScreenshot", {"format": "png"})
+                finally:
+                    try:
+                        await cdp.detach()
+                    except Exception:
+                        pass
+                return base64.b64decode(res["data"])
+            except Exception:
+                raise first
 
     async def screenshot_data_url(self) -> str:
         png = await self.screenshot_png()
