@@ -247,3 +247,19 @@ def test_a_scholarship_from_the_company_is_a_default_no():
     from goat.agent.tools import default_no_choice, is_affiliation_question
     q = "Have you received a scholarship from TC Energy?"
     assert is_affiliation_question(q, ["Yes", "No"]) and default_no_choice(q, ["Yes", "No"]) == "No"
+
+
+
+def test_membership_in_named_organizations_he_never_mentions_is_a_default_no(monkeypatch):
+    """Cleveland-Cliffs (2026-10-20): 'Are you a member of AIST or Material Advantage?' (AIST / Material Advantage / Both / None)."""
+    from goat import profile
+    from goat.agent import tools
+    monkeypatch.setattr(profile, "text", lambda: "Turtle Robotics member. Aggie Data Science Club. Ignitors Rocketry.")
+    q = "Are you a member of AIST or Material Advantage?"
+    opts = ["AIST", "Material Advantage", "Both", "None"]
+    assert tools.is_affiliation_question(q, opts) and tools.default_no_choice(q, opts) == "None"
+    assert tools.is_affiliation_question("Are you a member of the Society of Women Engineers?", ["Yes", "No"])
+    # clubs he belongs to, and generic memberships, are never defaulted
+    assert not tools.membership_default_no("Are you a member of Turtle Robotics?", ["Yes", "No"])
+    assert not tools.membership_default_no("Are you a member of any student organizations?", ["Yes", "No"])
+    assert not tools.membership_default_no("Are you a member of a professional association?", ["Yes", "No"])

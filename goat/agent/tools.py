@@ -503,8 +503,48 @@ PROGRAM_LIST = re.compile(
     re.I)
 
 
+# "Are you a member of AIST or Material Advantage?" with the associations and None as options (Cleveland-Cliffs,
+# 2026-10-20): a membership in NAMED organizations his profile never mentions takes the negative option. A generic one
+# ("a student organization", "a professional association") is never defaulted: he belongs to several clubs.
+MEMBERSHIP_Q = re.compile(r"\b(are|is|were|have) you (been )?(currently )?(a |an )?(current |active |registered )?"
+                          r"(member|members|affiliated)\b.{0,12}\b(of|with|in)\b\s*(?P<org>[^?]{2,80})", re.I)
+GENERIC_ORG = re.compile(r"\b(any|a|an)\s+(student|professional|campus|honor|community|social)?\s*(organi[sz]ation|association|"
+                         r"club|society|group|union|fraternity|sorority)s?\b|\b(organi[sz]ations?|associations?|clubs?|societies)\b\s*$", re.I)
+
+
+def _profile_names_any(names: list[str]) -> bool:
+    try:
+        body = profile.text().lower()
+    except Exception:
+        return True                     # cannot tell: never default
+    for n in names:
+        k = re.sub(r"\s+", " ", (n or "").strip().lower())
+        if len(k) >= 3 and re.search(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", body):
+            return True
+    return False
+
+
+def membership_default_no(question: str, options: list[str] | None) -> bool:
+    m = MEMBERSHIP_Q.search(question or "")
+    if not m:
+        return False
+    opts = [o.strip() for o in (options or []) if o and o.strip() and not re.match(r"^(select|choose|please select)", o.strip(), re.I)]
+    if not any(_NEGATIVE_OPTION.match(o) for o in opts):
+        return False
+    named = [o for o in opts if not _NEGATIVE_OPTION.match(o) and not re.match(r"^(both|all( of the above)?|other|yes)\b", o, re.I)]
+    if named:
+        return not _profile_names_any(named)
+    org = m.group("org").strip()
+    if GENERIC_ORG.search(org) or not re.search(r"\b[A-Z][A-Za-z&]+|\b[A-Z]{2,}\b", org):
+        return False
+    parts = [x.strip() for x in re.split(r",|\bor\b|\band\b", org) if x.strip()]
+    return not _profile_names_any(parts)
+
+
 def is_affiliation_question(question: str, options: list[str] | None) -> bool:
     """A yes/no question in the employer/industry/affiliation family (options empty, or Yes/No-like)."""
+    if membership_default_no(question, options) and not NOT_AFFILIATION.search(question or ""):
+        return True
     if not AFFILIATION.search(question or "") or NOT_AFFILIATION.search(question or ""):
         return False
     if PROGRAM_LIST.search(question or "") and any(_NEGATIVE_OPTION.match((o or "").strip()) for o in (options or [])):
