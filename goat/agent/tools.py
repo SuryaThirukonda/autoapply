@@ -294,7 +294,10 @@ AFFILIATION = re.compile(
     r"political (party|office)|candidate for (political )?office|government (entity|employee|official)|member of your (family|household)|"
     # Northrop Grumman (2026-10-19): "performed services for Northrop Grumman as a contractor/contingent worker, or been
     # issued a Northrop Grumman security badge" went to Surya
-    r"perform(ed)? services (for|to)|provided services (for|to)|contingent worker|security badge)", re.I)
+    r"perform(ed)? services (for|to)|provided services (for|to)|contingent worker|security badge|"
+    # GM Financial (2026-10-19): "Did you participate in the General Motors 2023 Voluntary Separation Package?" is a former-
+    # employee question
+    r"voluntary separation|separation (package|program|agreement)|severance (package|program|agreement)|early retirement)", re.I)
 # Never a default No, even when they mention relatives, a spouse or customers (Penn State, 2026-10-18: "spouse or relatives
 # who are foreign nationals; foreign travel; counseling; police records" was answered No by the affiliation rule):
 # background-investigation, legal, financial and medical history, amounts of experience, and statements of willingness.
