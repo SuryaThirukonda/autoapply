@@ -400,6 +400,10 @@ AFFILIATION = re.compile(
     # GM Financial (2026-10-19): "Did you participate in the General Motors 2023 Voluntary Separation Package?" is a former-
     # employee question
     r"voluntary separation|separation (package|program|agreement)|severance (package|program|agreement)|early retirement|"
+    # GDIT (2026-10-20): "Have you ever been retained by the U.S. Government to provide assistance on any particular matter
+    # that relates to GDIT?" went to Surya; he has never worked for or been retained by the federal government
+    r"retained by (the )?(u\.?\s?s\.?|united states|federal) government|(u\.?\s?s\.?|united states|federal) government "
+    r"(employee|employment|official|contract(or|s)?)|"
     # Northwestern Mutual (2026-10-20): "Are you currently participating in any of the listed partnership programs?"
     # (All in Milwaukee, College Possible, MARS Returnship, ...) went to Surya; he is in none of them
     r"participat(e|es|ed|ing) in (any of )?(the |these |those )?(listed |following |above )?(partner(ship)?|pipeline|community|"
@@ -1601,6 +1605,10 @@ class ToolDispatcher:
             options = sib if isinstance(sib, list) else []
         if len(options) < 2:
             return None
+        if parts and answers.norm(parts[0]) == "decline":
+            dec = [o for o in options if fill.DECLINE_OPT.search(str(o.get("label") or ""))]
+            if dec:
+                return dec[0]
         opts = [(o, answers.norm(o.get("label") or "")) for o in options]
         for part in parts:
             for cand in (answers.norm(part), answers.norm(re.sub(r"\s*\([^)]*\)", "", part))):
@@ -2117,8 +2125,17 @@ class ToolDispatcher:
             await self.ctx.ex.goto(res.url)
             self.ctx.budget.step()
             db.event(self.ctx.job_id, "creds:reset_link_opened", {"host": self.ctx.portal_host})
-            return {"status": "opened", "url": self.ctx.ex.url,
-                    "next": "snapshot, then credentials mode 'set_password' with the new-password and confirm refs (email_ref ''), click the save button, then sign in with login_universal"}, None
+            # The harness sets the password and saves it itself: 7-Eleven, GDIT and Mastercard (2026-10-20) opened the link
+            # and parked, taking Workday's 'Submit' (the reset page's save button) for the application's submit.
+            done = await self._finish_password_reset()
+            if done.get("saved"):
+                return {"status": "password_set", "url": self.ctx.ex.url,
+                        "next": "the new password is set and saved. Take a snapshot; on the Sign In form call credentials "
+                                "login_universal and click Sign In, then continue the application."}, None
+            return {"status": "opened", "url": self.ctx.ex.url, "auto": done,
+                    "next": "snapshot, then credentials mode 'set_password' with the new-password and confirm refs (email_ref ''), "
+                            "click the save button (on Workday it is labelled 'Submit': it only saves the password and `click` "
+                            "takes it), then sign in with login_universal"}, None
         if status == "host_mismatch":
             raise Parked("host_mismatch: the reset link pointed at another host", "hold")
         self.ctx.reset_not_received = True
@@ -2126,6 +2143,37 @@ class ToolDispatcher:
         if self.ctx.create_tried or self.ctx.account_exists:
             return {"status": status, "hint": "no reset email came and the account exists: park credentials_unknown"}, None
         return {"status": status, "next": CREATE_STEPS}, None
+
+    SAVE_PASSWORD_LABEL = re.compile(r"^\s*(submit|save|save password|reset password|set password|change password|update password|"
+                                     r"continue|confirm|done)\s*$", re.I)
+
+    async def _finish_password_reset(self) -> dict:
+        """On the reset page the password link opened: type the application password into both boxes and click the
+        page's save button. Returns {'saved': True} when the reset form is gone afterwards."""
+        try:
+            await self.ctx.ex.settle(quiet_ms=500)
+            snap = await snapmod.take(self.ctx.ex)
+            self.ctx.last_snapshot = snap
+            pws = [i for i in snap.items if (i.get("type") or "").lower() == "password" and i.get("ref")]
+            if len(pws) < 2:
+                return {"saved": False, "why": f"{len(pws)} password box(es) on the page"}
+            out, _ = await self.t_credentials("set_password", "", pws[0]["ref"], pws[1]["ref"])
+            if not str((out or {}).get("status", "")).startswith("filled"):
+                return {"saved": False, "why": f"set_password: {str(out)[:120]}"}
+            btns = [i for i in snap.items if i.get("ref") and (i.get("tag") in ("button", "a") or i.get("type") in ("submit", "button"))
+                    and self.SAVE_PASSWORD_LABEL.match(str(i.get("label") or ""))]
+            if not btns:
+                return {"saved": False, "why": "no save button found"}
+            clicked, _ = await self.t_click(btns[0]["ref"], str(btns[0].get("label") or "Submit"))
+            if isinstance(clicked, dict) and clicked.get("error"):
+                return {"saved": False, "why": f"click: {clicked['error'][:120]}"}
+            await self.ctx.ex.settle(quiet_ms=800)
+            probe = await self._account_probe()
+            saved = not probe or (probe.get("pw") or 0) < 2 or sign_in_page(probe)
+            db.event(self.ctx.job_id, "creds:reset_saved" if saved else "creds:reset_not_saved", {"host": self.ctx.portal_host})
+            return {"saved": bool(saved)}
+        except Exception as e:  # noqa: BLE001 - the model can still finish by hand
+            return {"saved": False, "why": f"{type(e).__name__}: {str(e)[:120]}"}
 
     async def t_open_verification_link(self, timeout_s: float | None = None):
         if self.ctx.mail is None:

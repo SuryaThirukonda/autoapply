@@ -192,3 +192,10 @@ def test_long_logged_values_are_marked_when_cut():
     """Motorola (2026-10-20): a 300-character log entry made the page's full answer look 'longer than the logged value'."""
     from goat.judge import JUDGE_INSTRUCTIONS
     assert "cut for length" in JUDGE_INSTRUCTIONS
+
+
+
+def test_fact_check_knows_his_desired_pay():
+    """GDIT (2026-10-20): '$0 - $50,000' holds his $41,600 a year and was called unsupported."""
+    from goat.judge import FACT_CHECK_INSTRUCTIONS
+    assert "$41,600 a year" in FACT_CHECK_INSTRUCTIONS

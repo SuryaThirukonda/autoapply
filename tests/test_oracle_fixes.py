@@ -224,3 +224,17 @@ async def test_a_click_reaches_a_button_under_a_password_managers_menu(tmp_path)
         assert await ex.page.evaluate("() => window.__reset || 0") == 1
     finally:
         await ex.close()
+
+
+
+def test_a_decline_chain_takes_any_declining_wording():
+    """GDIT (2026-10-20): 'I do not wish to disclose (United States of America)' was offered and the chain picked Asian."""
+    from goat.browser.fill import best_option
+    chain = ["decline", "Decline to self-identify", "I do not wish to answer", "Asian", "Asian (United States of America)"]
+    opts = [{"text": t} for t in ["American Indian or Alaska Native (United States of America)", "Asian (Not Hispanic or Latino) (United States of America)",
+                                   "White (United States of America)", "I do not wish to disclose (United States of America)"]]
+    assert best_option(opts, chain)["text"] == "I do not wish to disclose (United States of America)"
+    no_decline = [o for o in opts if "wish" not in o["text"]]
+    assert best_option(no_decline, chain + ["Asian (Not Hispanic or Latino) (United States of America)"])["text"].startswith("Asian")
+    # a chain that does not start with 'decline' is untouched
+    assert best_option([{"text": "Male"}, {"text": "I do not wish to disclose"}], ["Male", "Man"])["text"] == "Male"

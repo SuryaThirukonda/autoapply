@@ -91,6 +91,8 @@ FACT_CHECK_INSTRUCTIONS = (
     "A term or season picked for a date ('Summer 2028' for a May 2028 graduation) is supported when the form's own "
     "definition of that term covers the month (Datadog, 2026-10-20: the form defines Summer as April-July, so May 2028 is "
     "Summer 2028 there); without such a definition, May is Spring. "
+    "His desired pay is $20 an hour, $41,600 a year (stored compensation.desired_annual, his standing answer): a salary or "
+    "pay-range option that contains that amount is supported (GDIT, 2026-10-20: '$0 - $50,000'). "
     "A statement about the company, its products or the role is supported when the JOB POSTING says it (IXL, 2026-10-18: "
     "the role's duties came from the posting). "
     "A statement about what his résumé contains (a link to his GitHub or project samples, a listed project, skill or "

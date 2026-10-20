@@ -230,3 +230,12 @@ def test_a_listed_partnership_programs_question_is_a_default_no():
     opts = ["All in Milwaukee", "Boys & Girls Club Grad Plus", "College Possible", "i.c.stars Milwaukee", "MARS Returnship", "No"]
     assert is_affiliation_question(q, opts)
     assert default_no_choice(q, opts) == "No"
+
+
+
+def test_retained_by_the_us_government_is_a_default_no():
+    """GDIT (2026-10-20): 'Have you ever been retained by the U.S. Government to provide assistance on any particular
+    matter that relates to GDIT?'"""
+    from goat.agent.tools import default_no_choice, is_affiliation_question
+    q = "Have you ever been retained by the U.S. Government to provide assistance on any particular matter that relates to GDIT?"
+    assert is_affiliation_question(q, ["Yes", "No"]) and default_no_choice(q, ["Yes", "No"]) == "No"

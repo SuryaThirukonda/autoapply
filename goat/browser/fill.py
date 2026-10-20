@@ -482,12 +482,31 @@ def gpa_option(options: list[dict], wants: list[str]) -> dict | None:
     return max(hold, key=lambda ob: ob[1][0])[0]
 
 
+# A self-identification chain starts with 'decline' (Surya: decline whenever the form offers it). Forms word the decline
+# their own way; GDIT's 'I do not wish to disclose (United States of America)' matched none of the stored wordings and
+# the chain fell through to his race (2026-10-20).
+DECLINE_OPT = re.compile(
+    r"\b(decline[sd]?|do not wish|don.?t wish|prefer not|choose not|chose not|elect not|opt not|"
+    r"not (wish|want) to|rather not|not to (disclose|answer|say|identify|self[- ]?identify|respond|specify|provide)|"
+    r"undisclosed|not (specified|declared|disclosed|provided))\b", re.I)
+
+
+def decline_option(options: list[dict], wants: list[str]) -> dict | None:
+    if not wants or _norm(wants[0]) != "decline":
+        return None
+    dec = [o for o in options if DECLINE_OPT.search(str(o.get("text") or ""))]
+    return dec[0] if dec else None
+
+
 def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
     """Exact match first. A prefix/contains match is accepted only when it is UNambiguous: if several
     options share the prefix (Texas A&M University - College Station / - Commerce / - Kingsville) the
     caller must name the exact one. Picking the shortest would silently choose the wrong campus."""
     seen: set[str] = set()
     options = [o for o in options if not (_norm(o.get("text")) in seen or seen.add(_norm(o.get("text"))))]
+    dec = decline_option(options, wants)
+    if dec is not None:
+        return dec
     gpa_hit = gpa_option(options, wants)
     if gpa_hit is not None:
         return gpa_hit

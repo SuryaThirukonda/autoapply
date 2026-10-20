@@ -443,3 +443,48 @@ async def test_a_typed_new_password_is_saved_before_a_credentials_park(store):
     ctx.creds_mode = "set_password"
     out, _ = await d.t_park("credentials_unknown: the save control is labelled Submit")
     assert "not saved" in out["error"] and "Submit" in out["error"]
+
+
+
+RESET_FORM = """<!doctype html><html><body style="margin:20px">
+<h2>Reset Password</h2>
+<label for="p1">Password</label><input id="p1" type="password"><br><br>
+<label for="p2">Verify New Password</label><input id="p2" type="password"><br><br>
+<button type="button" id="go" onclick="if (document.getElementById('p1').value && document.getElementById('p1').value === document.getElementById('p2').value) { document.body.innerHTML = '<h2>Sign In</h2><label for=e>Email Address</label><input id=e type=text><label for=pw>Password</label><input id=pw type=password><button>Sign In</button>'; }">Submit</button>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_the_harness_sets_and_saves_the_password_after_the_reset_link(store, tmp_path):
+    """7-Eleven, GDIT, Mastercard (2026-10-20): the reset link opened and the run parked over the page's 'Submit'."""
+    from goat.browser.executor import Executor, HostPolicy
+    page = tmp_path / "reset.html"
+    page.write_text(RESET_FORM, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add("")
+        job = _job()
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+
+        async def goto(u):
+            await ex.page.goto(url)
+        ex.goto = goto
+        ctx.mail = SimpleNamespace(fetch_password_reset_link=lambda portal, host, after, **k: SimpleNamespace(status="reset_link", url=url))
+        secret = "Test#Pass123"
+
+        def fill_credentials(host, email, type_email, type_pw, mode):
+            type_pw(secret)
+            return "filled_universal"
+
+        def fill_confirm_password(host, type_pw2):
+            type_pw2(secret)
+            return "filled"
+        ctx.creds = SimpleNamespace(fill_credentials=fill_credentials, fill_confirm_password=fill_confirm_password)
+        out, _ = await d.t_open_password_reset_link()
+        assert out["status"] == "password_set", out
+        assert await ex.page.evaluate("() => document.querySelector('h2').textContent") == "Sign In"
+    finally:
+        await ex.close(close_browser=True)
