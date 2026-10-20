@@ -319,6 +319,65 @@ JS_ELEMENT_AT = r"""
 }
 """
 
+# Whether a click at (x, y) reaches the element [data-goat-ref=ref]: 'ok', 'covered:<tag>' (something else is on top,
+# such as a password manager's inline menu), or 'missing' (not in this document, e.g. inside a frame).
+JS_HIT_TARGET = r"""
+([ref, x, y]) => {
+  const t = document.querySelector('[data-goat-ref="' + ref + '"]');
+  if (!t) return 'missing';
+  let at = document.elementFromPoint(x, y);
+  let hops = 0;
+  while (at && at.shadowRoot && hops < 5) { const inner = at.shadowRoot.elementFromPoint(x, y); if (!inner || inner === at) break; at = inner; hops++; }
+  if (!at) return 'none';
+  if (at === t || t.contains(at) || at.contains(t)) return 'ok';
+  const lab = at.closest ? at.closest('label') : null;
+  if (lab && (lab.control === t || lab.contains(t))) return 'ok';
+  const root = t.getRootNode ? t.getRootNode() : null;
+  if (root && root.host && (root.host === at || at.contains(root.host))) return 'ok';
+  // The page's own control on top is part of the page: Workday lays a transparent 'Submit' button exactly over
+  // 'Sign In', and that button is what signs in. The normal click (with its submit guard) handles it.
+  for (let p = at, i = 0; p && i < 4; i++, p = p.parentElement) {
+    const tag = (p.tagName || '').toLowerCase();
+    const role = (p.getAttribute && p.getAttribute('role')) || '';
+    if (['button', 'a', 'input', 'select', 'textarea', 'label'].includes(tag) || role === 'button' || role === 'link') return 'ok:control';
+  }
+  return 'covered:' + (at.tagName || '').toLowerCase() + (at.id ? '#' + at.id : '');
+}
+"""
+
+# The submit / captcha rules of JS_ELEMENT_AT applied to the element [data-goat-ref=ref] itself (for a click that
+# cannot go through the point because something covers it).
+JS_TARGET_GUARD = r"""
+(ref) => {
+""" + _COMMON + r"""
+  const SUBMIT = /^(submit|submit application|submit my application|send application|finish|complete application|complete|send)$/i;
+  const APPLY = /^(apply|apply now|apply for this job|apply to this job)$/i;
+  const ACCOUNT = /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|verify email|send code|resend|back|reset password|send reset link|submit)$/i;
+  const t = document.querySelector('[data-goat-ref="' + ref + '"]');
+  if (!t) return JSON.stringify({ found: false });
+  const filledInputs = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]), textarea')).filter(i => (i.value || '').trim()).length;
+  const formFilled = filledInputs >= 3;
+  const accountPage = Array.from(document.querySelectorAll('input[type=password]')).some(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+    || /forgot password|reset password|create account|sign in/i.test(document.title + ' ' + Array.from(document.querySelectorAll('h1,h2,h3')).map(h => txt(h)).join(' '));
+  let submit = false, captcha = false, why = '';
+  for (let p = t, i = 0; p && i < 8; i++, p = p.parentElement) {
+    const tag = p.tagName.toLowerCase();
+    const type = (p.getAttribute('type') || '').toLowerCase();
+    const isBtn = tag === 'button' || tag === 'a' || p.getAttribute('role') === 'button' || (tag === 'input' && (type === 'submit' || type === 'button'));
+    if (isBtn) {
+      const label = (tag === 'input' ? (p.value || '') : (txt(p) || p.getAttribute('aria-label') || '')).replace(/\s+/g, ' ').trim();
+      if (accountPage && ACCOUNT.test(label)) break;
+      if (/^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|back)$/i.test(label)) break;
+      if (accountPage) break;
+      if (SUBMIT.test(label) || (APPLY.test(label) && formFilled) || (type === 'submit' && formFilled)) { submit = true; why = 'submit control: ' + label; }
+      break;
+    }
+    if (/g-recaptcha|h-captcha|cf-turnstile|captcha|challenge/i.test((p.className || '').toString() + ' ' + (p.id || ''))) { captcha = true; why = 'captcha widget'; }
+  }
+  return JSON.stringify({ found: true, submit, captcha, why, text: txt(t).slice(0, 80) });
+}
+"""
+
 # --------------------------------------------------------------------------- page errors (Hermes, proven)
 JS_PAGE_ERRORS = r"""
 () => {

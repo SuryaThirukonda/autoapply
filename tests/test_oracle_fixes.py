@@ -188,3 +188,39 @@ def test_a_gpa_answer_picks_the_bucket_that_holds_his_gpa():
     assert best_option(opts("5 - 10 years", "5+"), ["5+"])["text"] == "5+"
     # years chains (whole numbers) keep their text matching
     assert best_option(opts("0-1 years", "1-3 years", "3-5 years"), ["1", "1 year", "1-3 years"])["text"] == "1-3 years"
+
+
+
+COVERED = """<!doctype html><html><body style="margin:20px">
+<h2>Forgot Password</h2>
+<label for="em">Email Address</label><br><input id="em" type="text" style="width:320px"><br><br>
+<button type="button" id="go" onclick="window.__reset = (window.__reset || 0) + 1">Reset Password</button>
+<div id="menu" style="display:none;position:absolute;z-index:99;background:#fff;border:1px solid #888">Unlock your account to view autofill suggestions</div>
+<script>
+  const em = document.getElementById('em'), m = document.getElementById('menu');
+  em.addEventListener('focus', () => { const r = em.getBoundingClientRect(); const b = document.getElementById('go').getBoundingClientRect();
+    m.style.display = 'block'; m.style.left = r.left + 'px'; m.style.top = (r.bottom + 2) + 'px'; m.style.width = '340px';
+    m.style.height = (b.bottom - r.bottom + 10) + 'px'; });
+  em.addEventListener('blur', () => { m.style.display = 'none'; });
+</script>
+</body></html>"""
+
+
+async def test_a_click_reaches_a_button_under_a_password_managers_menu(tmp_path):
+    """Northwestern Mutual (2026-10-20): Bitwarden's inline menu under the focused email box covered Reset Password."""
+    from goat.browser import snapshot
+    page = tmp_path / "forgot.html"
+    page.write_text(COVERED, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        snap = await snapshot.take(ex)
+        btn = next(i["ref"] for i in snap.items if (i.get("label") or "").startswith("Reset Password"))
+        await ex.page.focus("#em")
+        assert await ex.page.evaluate("() => getComputedStyle(document.getElementById('menu')).display") == "block"
+        await ex.click_ref(btn)
+        assert await ex.page.evaluate("() => window.__reset || 0") == 1
+    finally:
+        await ex.close()

@@ -452,11 +452,46 @@ class Executor:
         await asyncio.sleep(0.25)
         return el
 
+    async def _hit(self, ref: str, x: int, y: int) -> str:
+        try:
+            out = await self.eval(js.JS_HIT_TARGET, [ref, x, y])
+        except Exception:
+            return "unknown"
+        return out if isinstance(out, str) else "unknown"
+
     async def click_ref(self, ref: str, allow_submit: bool = False) -> dict:
         info = await self.read_ref(ref)
         if not info.get("found"):
             raise ClickRefused(f"ref {ref} not found on the page")
-        await self.click_xy(int(info["x"]), int(info["y"]), allow_submit=allow_submit)
+        x, y = int(info["x"]), int(info["y"])
+        hit = await self._hit(ref, x, y)
+        if hit.startswith("covered"):
+            # Something sits over the target. Bitwarden's inline menu ("Unlock your account to view autofill suggestions")
+            # opens under a focused email or password box and covered Workday's Reset Password and Create Account
+            # buttons: the click landed on the menu, so no reset email was ever sent (Northwestern Mutual, Analog
+            # Devices, 2026-10-20). Leaving the box closes the menu; Escape closes most others.
+            await self.eval("() => { const a = document.activeElement; if (a && a !== document.body && a.blur) a.blur(); return true; }")
+            await asyncio.sleep(0.35)
+            info2 = await self.read_ref(ref)
+            if info2.get("found"):
+                info, x, y = info2, int(info2["x"]), int(info2["y"])
+            hit = await self._hit(ref, x, y)
+        if hit.startswith("covered"):
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.35)
+            hit = await self._hit(ref, x, y)
+        if hit.startswith("covered"):
+            g = await self.eval(js.JS_TARGET_GUARD, ref)
+            g = g if isinstance(g, dict) else {}
+            if g.get("captcha"):
+                raise ClickRefused(f"refused: click target is inside a human-verification challenge ({g.get('why')})")
+            if g.get("submit") and not allow_submit:
+                raise ClickRefused(f"refused: click target is a submit control ({g.get('text') or g.get('why')}); only submit() may submit")
+            await self.eval("(ref) => { const t = document.querySelector('[data-goat-ref=\"' + ref + '\"]'); if (t) t.click(); return !!t; }", ref)
+            self._log("click", {"ref": ref, "direct": True, "covered_by": hit[8:60]})
+            await asyncio.sleep(0.25)
+            return {**info, "covered_by": hit[8:60]}
+        await self.click_xy(x, y, allow_submit=allow_submit)
         return info
 
     async def move(self, x: int, y: int) -> None:

@@ -192,6 +192,19 @@ def company_sender_tokens(company: str) -> list[str]:
     return [sq] if len(sq) >= 3 else []
 
 
+def workday_tenant_tokens(portal: str | None, portal_host: str) -> list[str]:
+    """A Workday tenant that mails from its own domain (Invesco: 'Verify your candidate account' from
+    Workday@invesco.com, 2026-10-20, never found because only Workday's domains were searched): the tenant name from
+    the host ('invesco' in invesco.wd1.myworkdayjobs.com) as an extra sender."""
+    ph = (portal_host or "").lower().strip()
+    if (portal or "").lower() != "workday" and not ph.endswith(("myworkdayjobs.com", "myworkday.com")):
+        return []
+    tenant = ph.split(".")[0] if ph else ""
+    if len(tenant) < 3 or re.fullmatch(r"wd\d+|www|careers|jobs|apply|myworkday|myworkdayjobs|workday", tenant):
+        return []
+    return [tenant]
+
+
 def sender_allowed(from_header: str, portal: str | None, portal_host: str, extra: tuple[str, ...] | list[str] = ()) -> bool:
     """Known portal: From must be one of the portal's sender domains/addresses. Unknown portal:
     From domain must share the portal host's registrable domain. `extra`: the employer's own mail domain
@@ -689,15 +702,17 @@ def fetch_verification_link(
     client = client or default_client()
     timeout_s = SETTINGS.budgets.code_wait_s if timeout_s is None else timeout_s
     poll_s = SETTINGS.mail.poll_interval_s if poll_s is None else poll_s
-    query = build_code_query(portal, portal_host, after_ts)
+    extra = workday_tenant_tokens(portal, portal_host)
+    query = build_code_query(portal, portal_host, after_ts, extra)
 
     def _has_portal_link(m: Message) -> bool:
         return any(link_host_ok(u, portal_host, portal) for u in (extract_links(m.raw) or extract_links(m.text)))
 
     # Keep waiting past emails for other tenants/hosts: the newest email is not always ours.
-    msg = _poll_newest(client, query, portal, portal_host, after_ts, timeout_s, poll_s, _sleep, accept=_has_portal_link)
+    msg = _poll_newest(client, query, portal, portal_host, after_ts, timeout_s, poll_s, _sleep, accept=_has_portal_link,
+                       extra_senders=extra)
     if msg is None:
-        other = _poll_newest(client, query, portal, portal_host, after_ts, 0, poll_s, _sleep)
+        other = _poll_newest(client, query, portal, portal_host, after_ts, 0, poll_s, _sleep, extra_senders=extra)
         return LinkResult("host_mismatch" if other is not None else "not_received", None, other.id if other else None)
     links = extract_links(msg.raw) or extract_links(msg.text)
     ok = [u for u in links if link_host_ok(u, portal_host, portal)]
@@ -713,9 +728,10 @@ def fetch_verification_link(
 RESET_PATH_HINT_RE = re.compile(r"(?i)(reset|password|forgot|recover|token)")
 
 
-def build_reset_query(portal: str, portal_host: str, after_ts: int) -> str:
+def build_reset_query(portal: str, portal_host: str, after_ts: int, extra_senders: tuple[str, ...] | list[str] = ()) -> str:
     spec = PORTALS.get((portal or "").lower())
-    senders = spec["senders"] if spec else [registrable_domain(portal_host)]
+    senders = list(spec["senders"]) if spec else [registrable_domain(portal_host)]
+    senders += [t for t in extra_senders if t and t not in senders]
     q = f"from:({' OR '.join(senders)}) after:{int(after_ts)} newer_than:1d"
     return q + " (" + " OR ".join(f"subject:{_quote(h)}" for h in ("password", "reset", "Reset", "Forgot")) + ")"
 
@@ -736,12 +752,14 @@ def fetch_password_reset_link(
     client = client or default_client()
     timeout_s = SETTINGS.budgets.code_wait_s if timeout_s is None else timeout_s
     poll_s = SETTINGS.mail.poll_interval_s if poll_s is None else poll_s
-    query = build_reset_query(portal, portal_host, after_ts)
+    extra = workday_tenant_tokens(portal, portal_host)
+    query = build_reset_query(portal, portal_host, after_ts, extra)
 
     def _has_portal_link(m: Message) -> bool:
         return any(link_host_ok(u, portal_host, portal) for u in (extract_links(m.raw) or extract_links(m.text)))
 
-    msg = _poll_newest(client, query, portal, portal_host, after_ts, timeout_s, poll_s, _sleep, accept=_has_portal_link, allow_reset=True)
+    msg = _poll_newest(client, query, portal, portal_host, after_ts, timeout_s, poll_s, _sleep, accept=_has_portal_link, allow_reset=True,
+                       extra_senders=extra)
     if msg is None:
         return LinkResult("not_received", None, None)
     links = extract_links(msg.raw) or extract_links(msg.text)

@@ -422,3 +422,21 @@ def test_an_oracle_code_from_the_employers_own_domain_is_found():
     assert not g.sender_allowed(frm, "oracle", "egug.fa.us2.oraclecloud.com")
     assert g.sender_allowed(frm, "oracle", "egug.fa.us2.oraclecloud.com", ["americanexpress"])
     assert not g.sender_allowed("Promo <deals@americanexpressoffers.example>", "oracle", "egug.fa.us2.oraclecloud.com", ["americanexpress"])
+
+
+
+def test_a_workday_tenant_mailing_from_its_own_domain_is_found():
+    """Invesco (2026-10-20): 'Verify your candidate account' came from Workday@invesco.com, outside Workday's domains."""
+    me = "invesco.wd1.myworkdayjobs.com"
+    body = '<a href="https://invesco.wd1.myworkdayjobs.com/invesco/activate/abc123?redirect=x">Verify</a>'
+    m = _msg("v1", 1_700_000_100, "Workday@invesco.com", "Verify your candidate account", body, html=True)
+    client = FakeMailClient([[m]])
+    res = gmail.fetch_verification_link("workday", me, 1_700_000_000, timeout_s=0, poll_s=0, client=client)
+    assert res.status == "verified_link" and "activate/abc123" in res.url
+    assert "invesco" in client.queries[0]
+    assert gmail.workday_tenant_tokens("workday", "wd5.myworkdayjobs.com") == []
+    assert gmail.workday_tenant_tokens("greenhouse", "boards.greenhouse.io") == []
+    # another company's mail is still refused
+    other = _msg("v2", 1_700_000_100, "Workday@acme.com", "Verify your candidate account", body, html=True)
+    res2 = gmail.fetch_verification_link("workday", me, 1_700_000_000, timeout_s=0, poll_s=0, client=FakeMailClient([[other]]))
+    assert res2.status != "verified_link"

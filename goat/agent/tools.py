@@ -277,6 +277,28 @@ def skill_option_matches(option_label: str, skills: list[str]) -> bool:
     return False
 
 
+# "Do you have experience with the following languages? Select all that apply." with technology options: his skills
+# list answers it, one box per skill (General Motors, 2026-10-20: an alias sent it to a one-off derived answer,
+# "Java, SQL, C#, C/C++, Python, etc.", that no checkbox label matched, and the run held).
+SKILLS_QUESTION = re.compile(
+    r"\b(experience|familiar|familiarity|proficien\w*|worked|comfortable|knowledge|skills?)\b.{0,80}\b(languages?|technolog\w+|tools?|"
+    r"frameworks?|databases?|platforms?|software|stack)\b|\bwhich (of the following )?(programming )?(languages?|technolog\w+|tools?|"
+    r"frameworks?|databases?)\b", re.I)
+
+
+def skills_question_key(question: str, options: list[str] | None) -> str | None:
+    """experience.skills_list for a multi-option technology question whose options name his skills, else None."""
+    opts = [o for o in (options or []) if o and not NEGATED.match(o.strip())]
+    if len(opts) < 3 or not SKILLS_QUESTION.search(question or ""):
+        return None
+    a = answers.get("experience.skills_list")
+    if a is None or not a.answer:
+        return None
+    skills = his_skills(a.answer)
+    hits = sum(1 for o in opts if skill_option_matches(o, skills))
+    return "experience.skills_list" if hits >= 2 else None
+
+
 def his_skills(chain_value) -> list[str]:
     """His skills list plus the languages he stored years or proficiency for (R, from the questionnaire)."""
     skills = [x.strip() for x in str(chain_value or "").split(";") if x.strip()]
@@ -1689,6 +1711,17 @@ class ToolDispatcher:
             return {"miss": True, "key": k, "hint": "this form counts public / state universities as government entities, and Surya worked in a "
                     "Texas A&M research group (a public university). His stored No to government employment covers federal government only: "
                     "call ask_user with this question and its choices."}, None
+        sk = skills_question_key(question, options)
+        if sk:
+            a_sk = answers.get(sk, self.ctx.job.get("company", ""), self.ctx.portal)
+            if a_sk is not None and a_sk.has_value:
+                out = self._present(a_sk, via="skills_rule")
+                skills = his_skills(a_sk.answer)
+                out["tick"] = [o for o in options if skill_option_matches(o, skills)]
+                out["note"] = ("his skills list: tick EVERY option in `tick` (fill_batch, one entry per box, answer_key "
+                               "experience.skills_list) and leave the others unticked")
+                db.event(self.ctx.job_id, "answer:skills_rule", {"question": question[:160], "tick": out["tick"][:20]})
+                return out, None
         a = answers.lookup(question, self.ctx.job.get("company", ""), self.ctx.portal)
         if a is not None and a.has_value:
             return self._present(a), None
@@ -2279,6 +2312,13 @@ class ToolDispatcher:
                 return {"error": "not parked: this run opened the portal's verification link, so the account's email is confirmed "
                                  "('Invalid Token' only means the link was used already). Call credentials mode 'login_universal' with "
                                  "this Sign In form's email and password refs and click Sign In."}, None
+            if self.ctx.creds_mode == "create" and not self.ctx.create_clicked and not self.ctx.account_exists \
+                    and (probe.get("pw") or 0) >= 2 and self.ctx.control_failures.get("creds:create_click_bounce", 0) < 2:
+                # GE Vernova (2026-10-20): the Create Account form was filled and the run parked without clicking it.
+                self.ctx.control_failures["creds:create_click_bounce"] = self.ctx.control_failures.get("creds:create_click_bounce", 0) + 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "create not clicked"})
+                return {"error": "not parked: the Create Account form is filled but the account is not created yet. Tick its terms "
+                                 "box if it has one, click the Create Account button and read what the page says after the click."}, None
             if self.ctx.create_clicked and not self.ctx.account_exists and sign_in_page(probe) \
                     and self.ctx.creds_mode == "create":
                 self.ctx.control_failures["creds:signed_in_bounce"] = self.ctx.control_failures.get("creds:signed_in_bounce", 0) + 1
@@ -2366,6 +2406,14 @@ class ToolDispatcher:
         # co-op term: grad_window_excludes judges those (Arconic was held on a window that includes May 2028, 2026-10-19)
         non_grad = " ".join(part for part in re.split(r"[;.]", reason)
                             if not re.search(r"graduat|class of|degree (by|in|before)|completion date", part, re.I))
+        # An eligibility hold names the posting's requirement he does not meet. Motorola (2026-10-20) parked
+        # "eligibility: none" right after its real concern was answered as satisfied.
+        if low.startswith("eligibility") and len(re.sub(r"[^a-z]", "", low[len("eligibility"):])) < 12 \
+                and self.ctx.control_failures.get("park:empty_eligibility", 0) < 2:
+            self.ctx.control_failures["park:empty_eligibility"] = self.ctx.control_failures.get("park:empty_eligibility", 0) + 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "no requirement named"})
+            return {"error": "not parked: an eligibility hold must quote the posting's requirement he does not meet, and this "
+                             "reason names none. If nothing in the posting rules him out, continue the application."}, None
         if low.startswith("eligibility") and self.SATISFIED.search(reason) and not self.DISQUALIFIERS.search(non_grad) \
                 and not self.grad_window_excludes(reason) and self.ctx.park_attempts < 2:
             self.ctx.park_attempts += 1

@@ -1238,3 +1238,45 @@ def test_a_skills_checkbox_question_ticks_every_option_naming_one_of_his_skills(
         assert skill_option_matches(opt, skills), opt
     for opt in ["Scala", "Go", "SAS", "None of the above", "SQL Server", "MATLAB", "Rust", "C#"]:
         assert not skill_option_matches(opt, skills), opt
+
+
+
+def test_a_languages_question_goes_to_his_skills_list(store):
+    """General Motors (2026-10-20): 'Do you have experience with the following languages? Select all that apply.'"""
+    from goat.agent.tools import skills_question_key
+    answers.save_answer("experience.skills_list", "Python; SQL; Java; JavaScript; C++; React; Docker; PostgreSQL",
+                        answer_type="choice_chain", source="questionnaire")
+    opts = ["Python", "C, C#, C++", "Java/JavaScript", "R", "Postgres", "MariaDB", "Oracle", "HQL/SQL", "Spark", "Scala",
+            "Kotlin", "SpringBoot", "None of the above"]
+    assert skills_question_key("Do you have experience with the following languages? Select all that apply.", opts) == "experience.skills_list"
+    assert skills_question_key("Which of the following technologies have you used?", opts) == "experience.skills_list"
+    assert skills_question_key("Do you have experience with the following languages?", ["Yes", "No"]) is None
+    assert skills_question_key("Which office locations would you consider?", ["Dallas", "Austin", "Houston"]) is None
+
+
+@pytest.mark.asyncio
+async def test_lookup_answer_sends_a_languages_checkbox_question_to_the_skills_rule(store):
+    job = _job()
+    d, ctx = _dispatcher(job)
+    answers.save_answer("experience.skills_list", "Python; SQL; Java; JavaScript; C++; PostgreSQL",
+                        answer_type="choice_chain", source="questionnaire")
+    # an older one-off answer the aliases point at must not win
+    answers.save_answer("q.programming_language_and_or_data", "Java, SQL, C#, C/C++, Python, etc.", answer_type="choice",
+                        source="derived", aliases=["Do you have experience with the following languages? Select all that apply."])
+    opts = ["Python", "C, C#, C++", "Java/JavaScript", "Scala", "None of the above"]
+    out, _ = await d.t_lookup_answer("Do you have experience with the following languages? Select all that apply.", opts)
+    assert out["key"] == "experience.skills_list" and out["tick"] == ["Python", "C, C#, C++", "Java/JavaScript"]
+
+
+
+@pytest.mark.asyncio
+async def test_an_eligibility_park_without_a_requirement_is_bounced(store):
+    """Motorola (2026-10-20): 'eligibility: none' was parked after its real concern was answered as satisfied."""
+    job = _job()
+    d, ctx = _dispatcher(job)
+
+    async def page_text(n=0):
+        return "Software Engineering Intern Apply"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("eligibility: none")
+    assert "names none" in out["error"]

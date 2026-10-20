@@ -402,3 +402,16 @@ async def test_a_verification_link_is_opened_once_and_the_run_signs_in(store):
     ctx.reset_link_tried = ctx.reset_not_received = ctx.create_tried = True
     out, _ = await d.t_park("credentials_unknown: Invalid Token after verifying")
     assert "login_universal" in out["error"] and "Invalid Token" in out["error"]
+
+
+
+@pytest.mark.asyncio
+async def test_a_filled_create_form_is_clicked_before_a_credentials_park(store):
+    """GE Vernova (2026-10-20): credentials mode 'create' filled the form and the run parked without clicking it."""
+    job = _job()
+    d, ctx = _with_ex(job, ProbeEx("Create Account", {"pw": 2, "heads": ["Create Account"], "title": "Create Account"}))
+    ctx.mail = object()
+    ctx.verify_link_tried = ctx.reset_link_tried = ctx.reset_not_received = ctx.create_tried = True
+    ctx.creds_mode = "create"
+    out, _ = await d.t_park("credentials_unknown")
+    assert "click the Create Account button" in out["error"]
