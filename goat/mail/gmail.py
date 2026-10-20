@@ -147,17 +147,36 @@ def _from_domain(from_header: str) -> tuple[str, str]:
 
 
 RESET_SUBJECT_RE = re.compile(r"(?i)(password reset|reset your password|reset password|forgot(ten)? password|new password)")
-MONEY_RE = re.compile(r"(?i)(bank|chase|wells fargo|capital one|paypal|venmo|zelle|payment|invoice)")
+MONEY_RE = re.compile(r"(?i)\b(bank|chase|wells fargo|capital one|paypal|venmo|zelle|payment|invoice)\b")
+# The account-security part of FORBIDDEN_RE, without the money words.
+SECURITY_RE = re.compile(r"(?i)(password reset|reset your password|account recovery|recover your account|two-factor|2fa|"
+                         r"sign-in attempt|new login)")
 
 
-def is_forbidden(subject: str | None, snippet: str | None, *, allow_reset: bool = False) -> bool:
+def is_forbidden(subject: str | None, snippet: str | None, *, allow_reset: bool = False, ats_sender: bool = False) -> bool:
     """Mail we never read, whatever a page asks: resets, recovery, money, 2FA, login alerts. The one
     exception: the portal's own password-reset email, read only inside fetch_password_reset_link after the
-    agent itself asked that portal for a reset (allow_reset), and only for links on the portal's host."""
-    text = f"{subject or ''}\n{snippet or ''}"
-    if allow_reset and RESET_SUBJECT_RE.search(text) and not MONEY_RE.search(text):
+    agent itself asked that portal for a reset (allow_reset), and only for links on the portal's host.
+
+    Links are not text: Q2's reset email was dropped because its link's tenant, 'q2ebanking', contains 'bank'
+    (2026-10-20). Mail from the portal's own sender domain (ats_sender: otp.workday.com, greenhouse-mail.io, ...)
+    is account mail, not money mail, even when the employer is a bank or a card company."""
+    text = URL_RE.sub(" ", f"{subject or ''}\n{snippet or ''}")
+    money = bool(MONEY_RE.search(text)) and not ats_sender
+    if allow_reset and RESET_SUBJECT_RE.search(text) and not money:
         return False
+    if ats_sender:
+        return bool(SECURITY_RE.search(text))
     return bool(FORBIDDEN_RE.search(text))
+
+
+def portal_domain_sender(from_header: str, portal: str | None) -> bool:
+    """The message comes from one of the portal's own sender domains (otp.workday.com for Workday)."""
+    spec = PORTALS.get((portal or "").lower())
+    if not spec:
+        return False
+    _addr, domain = _from_domain(from_header)
+    return bool(domain) and any(domain == d or domain.endswith("." + d) for d in spec["senders"] if "@" not in d)
 
 
 GENERIC_LOCALS = {"noreply", "no-reply", "donotreply", "do-not-reply", "workday", "notifications", "notification", "mail",
@@ -603,10 +622,16 @@ def _poll_newest(
                 except MailUnavailable as e:
                     log.info("mail: %s for message id=%s; trying it on the next pass", e, mid)
                     continue
+                ats = portal_domain_sender(m.from_header, portal)
+                allowed = sender_allowed(m.from_header, portal, portal_host, extra_senders)
+                if not allowed and ats and accept is not None and tenant_mismatch(m.from_header, portal_host) and accept(m):
+                    # a tenant that mails under its parent's name (Dow Jones as newscorp@otp.workday.com, 2026-10-20): the
+                    # link on this very portal host decides
+                    allowed = True
                 ok = (
                     m.ts >= int(after_ts)
-                    and not is_forbidden(m.subject, m.snippet, allow_reset=allow_reset)
-                    and sender_allowed(m.from_header, portal, portal_host, extra_senders)
+                    and not is_forbidden(m.subject, m.snippet, allow_reset=allow_reset, ats_sender=ats)
+                    and allowed
                     and (accept is None or accept(m))
                 )
                 if not ok:
@@ -795,7 +820,9 @@ def find_confirmation_email(
         if not mid:
             continue
         m = parse_message(client.get_message(mid))
-        if m.ts < int(after_ts) or is_forbidden(m.subject, m.snippet):
+        # a confirmation from the portal's own domain is account mail even from a bank ('Thank you for applying to
+        # Capital One' from capitalone@myworkday.com)
+        if m.ts < int(after_ts) or is_forbidden(m.subject, m.snippet, ats_sender=portal_domain_sender(m.from_header, portal)):
             continue
         hay = f"{m.from_header}\n{m.subject}\n{m.snippet}\n{m.text}".lower()
         if not (all(t.lower() in hay for t in toks) or toks[0].lower() in (m.from_header or "").lower()):

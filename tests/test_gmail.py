@@ -440,3 +440,31 @@ def test_a_workday_tenant_mailing_from_its_own_domain_is_found():
     other = _msg("v2", 1_700_000_100, "Workday@acme.com", "Verify your candidate account", body, html=True)
     res2 = gmail.fetch_verification_link("workday", me, 1_700_000_000, timeout_s=0, poll_s=0, client=FakeMailClient([[other]]))
     assert res2.status != "verified_link"
+
+
+
+def test_a_reset_email_whose_link_names_a_bank_tenant_is_read():
+    """Q2 (2026-10-20): the link's tenant 'q2ebanking' contains 'bank' and the reset email was dropped."""
+    me = "q2ebanking.wd5.myworkdayjobs.com"
+    link = "https://q2ebanking.wd5.myworkdayjobs.com/Q2/passwordreset/abc123/?redirect=x"
+    m = _msg("r1", 1_700_000_100, '"Workday Notification" <q2ebanking@otp.workday.com>', "Reset your password for your candidate account",
+             f'<a href="{link}">Reset</a>', html=True, snippet=f"Click this link to reset your password {link}")
+    res = gmail.fetch_password_reset_link("workday", me, 1_700_000_000, timeout_s=0, poll_s=0, client=FakeMailClient([[m]]))
+    assert res.status == "reset_link" and "passwordreset" in res.url
+    # a real bank email stays unread
+    assert gmail.is_forbidden("Your Chase statement is ready", "Your bank statement")
+
+
+def test_a_tenant_mailing_under_its_parents_name_is_read_when_its_link_is_ours():
+    """Dow Jones (2026-10-20): the reset came from newscorp@otp.workday.com with a link on dowjones.wd1."""
+    me = "dowjones.wd1.myworkdayjobs.com"
+    link = "https://dowjones.wd1.myworkdayjobs.com/DowJones/passwordreset/xyz/"
+    m = _msg("r2", 1_700_000_100, '"workday.hr newscorp" <newscorp@otp.workday.com>', "Reset your password for your candidate account",
+             f'<a href="{link}">Reset</a>', html=True)
+    res = gmail.fetch_password_reset_link("workday", me, 1_700_000_000, timeout_s=0, poll_s=0, client=FakeMailClient([[m]]))
+    assert res.status == "reset_link"
+    # another tenant's link is still refused
+    other = _msg("r3", 1_700_000_100, '"x" <newscorp@otp.workday.com>', "Reset your password for your candidate account",
+                 '<a href="https://newscorp.wd1.myworkdayjobs.com/x/passwordreset/1/">Reset</a>', html=True)
+    res2 = gmail.fetch_password_reset_link("workday", me, 1_700_000_000, timeout_s=0, poll_s=0, client=FakeMailClient([[other]]))
+    assert res2.status != "reset_link"
