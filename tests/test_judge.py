@@ -208,3 +208,10 @@ def test_a_ticked_option_is_shown_to_the_judge_as_the_answer():
     text = Judge._log_text([{"page": 11, "field_label": "Have you ever worked for Mastercard as an employee or provided services as a "
                              "contingent worker? / No", "value": "checked", "source": "bank:worked-here-before"}])
     assert "= 'No' (the option ticked" in text and "checked" not in text
+
+
+
+def test_fact_check_accepts_his_stored_source():
+    """Dimensional (2026-10-20): 'I first came across Dimensional through LinkedIn' was called unsupported."""
+    from goat.judge import FACT_CHECK_INSTRUCTIONS
+    assert "found or first saw the posting on LinkedIn" in FACT_CHECK_INSTRUCTIONS
