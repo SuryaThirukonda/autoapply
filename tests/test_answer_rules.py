@@ -1141,3 +1141,16 @@ def test_a_one_sided_graduation_bound():
     assert T.grad_window_excludes("eligibility: must graduate by December 2027")
     assert not T.grad_window_excludes("eligibility: must graduate by June 2028")
     assert T.grad_window_excludes("eligibility: graduation between December 2028 and May 2029")
+
+
+
+@pytest.mark.asyncio
+async def test_a_relocation_needs_you_park_is_bounced(store):
+    """AutoZone (2026-10-19): 'needs_you: requires residence in Memphis; relocation assistance depends on family housing'."""
+    d, ctx = _dispatcher({"id": 101, "company": "AutoZone", "ats": "oracle"})
+    async def page_text(n=30000):
+        return "Apply"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("needs_you: This application requires residence in Memphis during the internship; relocation "
+                            "assistance eligibility is unclear (it depends on family housing availability in Memphis).")
+    assert "relocates" in out["error"]

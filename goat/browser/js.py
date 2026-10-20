@@ -130,7 +130,12 @@ JS_SNAPSHOT = r"""
       if ((tag === 'textarea' || (tag === 'input' && /^(text|)$/.test(type))) && el.getAttribute('aria-hidden') === 'true'
           && el.getAttribute('tabindex') === '-1') continue;
       // Site chrome (header/nav menus, account and language switchers) is not part of the form.
-      if (el.closest('header, nav, [role="banner"], [role="navigation"], [data-automation-id="utilityButtonBar"], [data-automation-id="header"], footer, [role="contentinfo"]')) {
+      // A footer or header INSIDE a form, dialog or main area is the form's own (Oracle's apply flow keeps NEXT / CANCEL in
+      // <footer class="apply-flow-pagination__buttons">; dropped as site chrome, AutoZone and American Express had no
+      // NEXT to click, 2026-10-19).
+      const chromeEl = el.closest('header, nav, [role="banner"], [role="navigation"], [data-automation-id="utilityButtonBar"], [data-automation-id="header"], footer, [role="contentinfo"]');
+      const formOwned = !!(chromeEl && chromeEl.closest('form, dialog, [role="dialog"], main, [class*="apply-flow" i]'));
+      if (chromeEl && !formOwned) {
         if (!(tag === 'input' || tag === 'textarea' || tag === 'select')) continue;
       }
       const isFile = type === 'file';

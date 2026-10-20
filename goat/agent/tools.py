@@ -2009,6 +2009,16 @@ class ToolDispatcher:
             return {"error": "not parked: self-identification fields are settled by their self_id.* keys (choose with the key; the chain ends with "
                              "his own answers for forms without a decline option). Whatever the picker shows after that is correct. Move on: "
                              "finish the other sections (Work Experience via go_to_step('My Experience') if the Review shows No Response) and submit."}, None
+        if low.startswith(("needs_you", "ready_for_you")) and re.search(r"relocat|\breside|residence|housing|commut|\blocal\b", low) \
+                and not re.search(r"captcha|human|\bbot\b|unpaid|no pay|volunteer", low) \
+                and self.ctx.control_failures.get("park:relocation", 0) < 2:
+            # Living in the job's city, housing and relocation help are his to arrange: he relocates for a paid summer at
+            # his own expense (AutoZone's "relocation assistance depends on family housing in Memphis", 2026-10-19).
+            self.ctx.control_failures["park:relocation"] = self.ctx.control_failures.get("park:relocation", 0) + 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "relocation": True})
+            return {"error": "not parked: residing in the job's city, housing and relocation (with or without assistance) are Surya's "
+                             "to arrange: he relocates anywhere in the U.S. for the summer at his own expense. A relocation-assistance "
+                             "question takes his stored relocation answers. Continue the application."}, None
         if low.startswith("credentials") and self.ctx.reset_not_received and not self.ctx.create_tried \
                 and not self.ctx.account_exists and self.ctx.control_failures.get("creds:create_bounce", 0) < 1:
             # The reset email never came: the account most likely does not exist here. Create it before giving up.

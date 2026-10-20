@@ -106,3 +106,25 @@ async def test_fill_batch_refuses_to_type_into_an_oracle_picker():
         assert not out[0].ok and out[0].error.startswith("picker:"), out
     finally:
         await ex.close()
+
+
+
+FOOTER = """<html><body><header><nav><a href="/x">Careers home</a></nav></header>
+<main><form><label for="em">Email Address</label><input id="em" type="email">
+<footer class="apply-flow-pagination__buttons"><button type="button">CANCEL</button><button type="button">NEXT</button></footer></form></main>
+<footer><a href="/privacy">Privacy</a></footer></body></html>"""
+
+
+async def test_a_forms_own_footer_buttons_are_in_the_snapshot():
+    """AutoZone (2026-10-19): Oracle's NEXT sits in a <footer> inside the form and was dropped as site chrome."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(FOOTER)
+        snap = await snapshot.take(ex)
+        labels = [i.get("label") for i in snap.items]
+        assert "NEXT" in labels and "CANCEL" in labels, labels
+        assert "Privacy" not in labels and "Careers home" not in labels, labels
+    finally:
+        await ex.close()
