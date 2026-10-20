@@ -222,3 +222,10 @@ def test_judge_accepts_catalog_wording_for_his_major():
     """Dimensional (2026-10-20): 'Computer and Information Science' was called wrong for Computer Science."""
     from goat.judge import JUDGE_INSTRUCTIONS
     assert "'Computer and Information Science'" in JUDGE_INSTRUCTIONS
+
+
+
+def test_fact_check_knows_his_citizenship():
+    """Tencent (2026-10-20): No to citizenship or residency in restricted countries was called unsupported."""
+    from goat.judge import FACT_CHECK_INSTRUCTIONS
+    assert "restricted or sanctioned countries, is supported" in FACT_CHECK_INSTRUCTIONS
