@@ -301,3 +301,29 @@ def test_a_question_mentioning_work_experience_is_no_work_section(stored):
     assert not [g for g in review_gaps(text) if g.startswith("work entry")]
     with_section = text.replace("Websites\n", "Work Experience\nRevio\nWebsites\n")
     assert [g for g in review_gaps(with_section) if g.startswith("work entry")]
+
+
+@pytest.mark.asyncio
+async def test_an_untouched_entry_without_a_delete_button_is_retyped(stored):
+    """Adobe (2026-10-20): the first Workday block had no Delete button, so it was never re-added and Workday dropped
+    it on every Save. Its title is re-typed instead."""
+    ex = await _open(FIX / "workday" / "sections.html")
+    try:
+        f = _filler("workday", ex)
+        await snapshot.take(ex)
+        await f.run()
+        await ex.page.evaluate("""() => {
+          const el = Array.from(document.querySelectorAll('input')).find(i => i.value === 'Southwest Airlines');
+          const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          set.call(el, 'Aggie Data Science Club'); el.dispatchEvent(new Event('input', {bubbles: true}));
+          const first = document.querySelector('input[id$="--jobTitle"]');
+          let node = first; for (let i = 0; i < 14 && node; i++, node = node.parentElement) {
+            const del = Array.from(node.querySelectorAll('button')).find(b => /^delete$/i.test((b.textContent || '').trim()) || /^delete$/i.test(b.getAttribute('aria-label') || ''));
+            if (del) { del.remove(); break; }
+          }
+        }""")
+        rep = await _filler("workday", ex).run()
+        assert any("re-typed" in u for u in rep.updated), rep.summary()
+        assert not any("no Delete button" in x for x in rep.skipped), rep.summary()
+    finally:
+        await ex.close(close_browser=True)

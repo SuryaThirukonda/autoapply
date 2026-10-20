@@ -195,6 +195,21 @@ class WorkdaySections:
                 return new[-1]
         return None
 
+    async def _retouch_entry(self, entry: dict, ent: dict) -> bool:
+        """Type the entry's job title again (cleared first, so the form sees a change) and record it."""
+        f = _field(entry, "jobTitle", "title")
+        if not f or not f.get("ref") or not ent.get("title"):
+            return False
+        try:
+            out = await fill.fill_batch(self.ex, [{"ref": f["ref"], "value": ent["title"]}])
+        except Exception:
+            return False
+        if out and out[0].ok:
+            self._record(f'{entry["kind"]}-{entry["idx"]} title', out[0].readback or ent["title"], f'experience.work.{ent["n"]}.title', f["ref"])
+            self.changed = True
+            return True
+        return False
+
     async def _delete_entry(self, entry: dict) -> bool:
         """Press the Delete button of a blank block (some tenants pre-render one per section)."""
         if not entry.get("delete"):
@@ -327,7 +342,15 @@ class WorkdaySections:
         if self.REBUILD_UNTOUCHED and work_changed and untouched:
             for blk, ent in untouched:
                 if not await self._delete_entry(blk):
-                    self.report.skipped.append(f'{ent["company"]}: no Delete button to re-add it')
+                    # The first block often has no Delete button (Adobe, 2026-10-20: Workday then dropped that entry on
+                    # every Save and the run circled until go_to_step refused): re-type its job title instead, which
+                    # makes this visit count it as changed.
+                    if await self._retouch_entry(blk, ent):
+                        if ent["company"] in self.report.present:
+                            self.report.present.remove(ent["company"])
+                        self.report.updated.append(f'{ent["company"]} (re-typed so Workday keeps it)')
+                    else:
+                        self.report.skipped.append(f'{ent["company"]}: no Delete button to re-add it')
                     continue
                 new = await self._click_add(work_heading, seen, WORK_KINDS)
                 if not new:
