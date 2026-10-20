@@ -236,3 +236,10 @@ def test_fact_check_default_no_covers_relationships_with_clients_and_investors()
     """Invesco (2026-10-20): No to a relationship with Invesco's investors, clients or government officials was flagged."""
     from goat.judge import FACT_CHECK_INSTRUCTIONS
     assert "relationship with its investors, clients" in FACT_CHECK_INSTRUCTIONS
+
+
+
+def test_fact_check_default_no_covers_being_the_companys_client():
+    """Invesco (2026-10-20): No to 'are you a current or prospective Invesco client' was flagged."""
+    from goat.judge import FACT_CHECK_INSTRUCTIONS
+    assert "being its own client, customer, account holder or investor" in FACT_CHECK_INSTRUCTIONS
