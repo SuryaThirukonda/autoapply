@@ -271,3 +271,11 @@ def test_involvement_with_a_named_program_he_never_mentions_is_a_default_no():
     from goat.agent.tools import membership_default_no
     assert membership_default_no("Have you in the past or are you currently involved with the FIRST Robotics program?", ["Yes", "No", "Select One"])
     assert not membership_default_no("Are you currently involved in any student organizations?", ["Yes", "No"])
+
+
+
+def test_contact_from_the_company_is_a_default_no():
+    """Intel (2026-10-20): 'Have you recently been contacted by anyone from Intel?'"""
+    from goat.agent.tools import default_no_choice, is_affiliation_question
+    q = "Have you recently been contacted by anyone from Intel?"
+    assert is_affiliation_question(q, ["Yes", "No"]) and default_no_choice(q, ["Yes", "No"]) == "No"

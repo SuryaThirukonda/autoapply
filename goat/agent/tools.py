@@ -400,6 +400,10 @@ AFFILIATION = re.compile(
     # GM Financial (2026-10-19): "Did you participate in the General Motors 2023 Voluntary Separation Package?" is a former-
     # employee question
     r"voluntary separation|separation (package|program|agreement)|severance (package|program|agreement)|early retirement|"
+    # Intel (2026-10-20): "Have you recently been contacted by anyone from Intel?" went to Surya; no recruiter or employee
+    # of a listed company has contacted him (his profile and mail show none)
+    r"(been )?(contacted|reached out to|approached|recruited|referred) (to you )?by (anyone|someone|a recruiter|an? (employee|recruiter|"
+    r"representative|member))\b|"
     # TC Energy (2026-10-20): "Have you received a scholarship from TC Energy?" went to Surya; a scholarship, grant or
     # fellowship from the employer is a relationship with it, and his profile names none
     r"(received|been awarded|hold|held) (a |an |any )?(scholarship|grant|fellowship|bursary|sponsorship award)s? (from|by|through)\b|"
@@ -2223,6 +2227,13 @@ class ToolDispatcher:
             return {"status": status, "hint": "no reset email came and the account exists: park credentials_unknown"}, None
         return {"status": status, "next": CREATE_STEPS}, None
 
+    SKILL_ONLY = re.compile(r"\b(knowledge|familiar(ity)?|proficien(t|cy)|experience (with|in|using)|skills? (in|with)|"
+                            r"understanding of|exposure to|hands-on)\b", re.I)
+    HARD_REQUIREMENT = re.compile(r"clearance|citizen|green card|permanent resident|graduate (student|program|degree)|master|ph\.?d|"
+                                  r"doctoral|degree (by|in|before)|graduat(e|ion) (date|by|before|between|in)|enrolled|"
+                                  r"\d+\+? years? of (professional|industry|work)|located in|resid(e|ent)|commut|onsite in|"
+                                  r"co-?op term|semester|work term|unpaid|volunteer", re.I)
+
     ALREADY_APPLIED_PAGE = re.compile(
         r"(you(\u2019|')?ve already applied|you have already applied|already applied (for|to) this|"
         r"(an )?application (for this (job|position|role) )?has already been submitted|already submitted an application|"
@@ -2676,6 +2687,15 @@ class ToolDispatcher:
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "no requirement named"})
             return {"error": "not parked: an eligibility hold must quote the posting's requirement he does not meet, and this "
                              "reason names none. If nothing in the posting rules him out, continue the application."}, None
+        # A skill or technology the posting asks for is no eligibility rule (Motorola, 2026-10-20: "requires Android Studio and
+        # Android SDK knowledge, which is not in Surya's stored profile"): he applies, and his résumé shows what he has.
+        if low.startswith("eligibility") and self.SKILL_ONLY.search(reason) and not self.HARD_REQUIREMENT.search(reason) \
+                and not self.DISQUALIFIERS.search(non_grad) and self.ctx.control_failures.get("park:skill_eligibility", 0) < 2:
+            self.ctx.control_failures["park:skill_eligibility"] = self.ctx.control_failures.get("park:skill_eligibility", 0) + 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "skill only"})
+            return {"error": "not parked: a skill, tool or technology the posting asks for (knowledge, familiarity, proficiency) is "
+                             "not an eligibility rule; Surya applies anyway and his résumé shows what he has. Continue the "
+                             "application."}, None
         if low.startswith("eligibility") and self.SATISFIED.search(reason) and not self.DISQUALIFIERS.search(non_grad) \
                 and not self.grad_window_excludes(reason) and self.ctx.park_attempts < 2:
             self.ctx.park_attempts += 1

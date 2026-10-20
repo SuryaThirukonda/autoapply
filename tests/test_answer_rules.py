@@ -1328,3 +1328,20 @@ async def test_a_salary_range_question_takes_his_stored_pay(store):
     answers.save_answer("compensation.desired_annual", "41600", answer_type="text", source="questionnaire")
     out, _ = await d.t_lookup_answer("What is your desired salary range?", ["Up to $40,000", "$40,000-$60,000", "$60,000-$80,000"])
     assert out["key"] == "compensation.desired_annual" and out["pick"] == "$40,000-$60,000"
+
+
+
+@pytest.mark.asyncio
+async def test_a_skill_the_posting_wants_is_not_an_eligibility_hold(store):
+    """Motorola (2026-10-20): 'eligibility: posting requires Android Studio and Android SDK knowledge'."""
+    job = _job()
+    d, ctx = _dispatcher(job)
+
+    async def page_text(n=0):
+        return "Android Platform Software Engineer Intern Apply"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("eligibility: posting requires Android Studio and Android SDK knowledge, which is not in Surya's stored profile")
+    assert "not an eligibility rule" in out["error"]
+    from goat.agent.tools import ToolDispatcher
+    assert ToolDispatcher.HARD_REQUIREMENT.search("eligibility: requires an active Secret clearance")
+    assert ToolDispatcher.HARD_REQUIREMENT.search("eligibility: requires enrollment in a Master's program")
