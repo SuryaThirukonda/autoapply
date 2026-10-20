@@ -659,7 +659,9 @@ class Oracle(Adapter):
              "Name, Job Title, Employer City / Country, then the Start Date and End Date pickers (Month and Year are separate "
              "pickers: choose the month name, then the year), Current Job for the current role, Responsibilities from "
              ".description; then click the form's own ADD EXPERIENCE (or ADD EDUCATION) button to save it as a tile. A form "
-             "left open for an entry that already has a tile is closed with its CANCEL button.")
+             "left open for an entry that already has a tile is closed with its CANCEL button. The resume import can add "
+             "tiles that are not his entries (GM Financial, 2026-10-19: an 'Engineering Honors' education record with a "
+             "required Degree): delete any tile that matches none of his stored entries with its Delete button, then go on.")
 
 
 class ICIMS(Adapter):
