@@ -253,3 +253,16 @@ def test_a_salary_range_is_picked_by_the_amount_it_holds():
     assert best_option(opts("40k-60k", "60k-80k"), ["41600"])["text"] == "40k-60k"
     assert best_option(opts("Yes", "No"), ["41600"]) is None
     assert best_option(opts("2027 - 2028", "2028 - 2029"), ["41600"]) is None
+
+
+
+def test_native_english_takes_the_highest_level_offered():
+    """Ecolab (2026-10-20): the scale topped out at 'Proficient'."""
+    from goat.browser.fill import best_option
+    chain = ["Native", "Native or bilingual", "Native / Bilingual", "Native Speaker", "Fluent", "Expert", "Advanced"]
+    def opts(*xs):
+        return [{"text": x} for x in xs]
+    assert best_option(opts("Beginner", "Intermediate", "Proficient"), chain)["text"] == "Proficient"
+    assert best_option(opts("1 - Elementary", "2 - Limited working", "3 - Professional working", "4 - Full professional"), chain)["text"] == "4 - Full professional"
+    assert best_option(opts("Basic", "Intermediate", "Advanced", "Fluent"), chain)["text"] == "Fluent"
+    assert best_option(opts("Yes", "No"), ["Yes"])["text"] == "Yes"

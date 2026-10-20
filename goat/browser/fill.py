@@ -549,6 +549,26 @@ def money_option(options: list[dict], wants: list[str]) -> dict | None:
     return None
 
 
+_PROFICIENCY_SCALE = ["native", "bilingual", "mother tongue", "fluent", "expert", "superior", "distinguished", "advanced",
+                      "proficient", "full professional", "professional", "upper intermediate", "intermediate", "conversational",
+                      "working", "limited", "elementary", "basic", "beginner", "novice"]
+
+
+def proficiency_option(options: list[dict], wants: list[str]) -> dict | None:
+    """The highest language-proficiency level among the options, for his native-English chain only."""
+    if not wants or _norm(wants[0]) not in ("native", "native or bilingual"):
+        return None
+    best, rank = None, len(_PROFICIENCY_SCALE)
+    for o in options:
+        t = _norm(o.get("text"))
+        for i, w in enumerate(_PROFICIENCY_SCALE):
+            if re.search(r"(?<![a-z])" + re.escape(w) + r"(?![a-z])", t):
+                if i < rank:
+                    best, rank = o, i
+                break
+    return best
+
+
 def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
     """Exact match first. A prefix/contains match is accepted only when it is UNambiguous: if several
     options share the prefix (Texas A&M University - College Station / - Commerce / - Kingsville) the
@@ -626,6 +646,11 @@ def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
                 hits.append(o)
         if len({_norm(h.get("text")) for h in hits}) == 1:
             return hits[0]
+    # His English is native: when none of his wordings is offered, the highest level the form lists is his (Ecolab's
+    # scale topped out at 'Proficient', 2026-10-20).
+    prof = proficiency_option(options, wants)
+    if prof is not None:
+        return prof
     # A Yes/No answer against consent-style options ("I agree to receive SMS...", "Please do not send...").
     for want in wants:
         w = _norm(want)
