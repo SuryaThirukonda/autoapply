@@ -541,7 +541,16 @@ class Executor:
                 if await l2.count():
                     loc = l2
                     break
-        await loc.first.set_input_files(path)
+        try:
+            await loc.first.set_input_files(path)
+        except Exception as e:
+            if "not an HTMLInputElement" not in str(e):
+                raise
+            # A 'Select files' button was named instead of its file input (Auto-Owners' Workday transcript slot,
+            # 2026-10-20): use the file input in the same field or drop zone.
+            box = loc.first.locator("xpath=ancestor::*[.//input[@type='file']][1]")
+            inp = box.locator("input[type=file]").first
+            await inp.set_input_files(path)
         await asyncio.sleep(0.8)
         return await self.read_ref(ref)
 

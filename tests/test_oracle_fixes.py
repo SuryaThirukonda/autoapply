@@ -146,3 +146,25 @@ async def test_a_stalled_screenshot_falls_back_to_chromes_own_capture():
         assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 100
     finally:
         await ex.close()
+
+
+
+UPLOAD = """<html><body><div data-automation-id="formField-transcript"><label>Transcript</label>
+<div class="drop"><button type="button" id="b">Select files</button><input type="file" id="f" style="display:none"></div></div></body></html>"""
+
+
+async def test_a_file_button_uploads_through_its_file_input(tmp_path):
+    """Auto-Owners (2026-10-20): upload_resume was given the 'Select files' button and Playwright refused it."""
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-1.4 test")
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(UPLOAD)
+        await ex.page.evaluate("() => document.getElementById('b').setAttribute('data-goat-ref', 'e9')")
+        await ex.set_file("e9", str(f))
+        name = await ex.page.evaluate("() => document.getElementById('f').files[0] && document.getElementById('f').files[0].name")
+        assert name == "doc.pdf"
+    finally:
+        await ex.close()
