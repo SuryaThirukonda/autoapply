@@ -591,14 +591,31 @@ def consent_question_key(question: str) -> str | None:
 ACK_OPTION = re.compile(r"^\s*(yes\s*[,.:;!-]?\s*)?i (understand|acknowledge|have read|have reviewed|am aware)\b", re.I)
 
 
+# "Do you understand that this is an entry-level, temporary role?" with Yes / No (Cigna, 2026-10-20): the question itself
+# asks for an acknowledgement, so its Yes is one.
+ACK_QUESTION = re.compile(r"^\s*(do you (understand|acknowledge|recogni[sz]e)|are you aware|i (understand|acknowledge))\b.{0,40}\b(that|this|the)\b", re.I)
+
+
 def acknowledgement_key(question: str, options: list[str] | None) -> str | None:
     """The consent key for a question whose choices are 'I understand / I acknowledge / I have read' (and its
-    negation); None for every other question. Affiliation questions and marketing opt-ins never qualify."""
+    negation), or a Yes / No question that itself asks 'Do you understand that ...'; None for every other question.
+    Affiliation questions and marketing opt-ins never qualify."""
     opts = [str(o or "") for o in options or []]
     yes = next((o for o in opts if ACK_OPTION.match(o)), None)
+    if yes is None and ACK_QUESTION.match(question or "") and any(_YES.match(o) for o in opts) \
+            and any(_NEGATIVE_OPTION.match(o) for o in opts) and len(opts) <= 3:
+        yes = "I understand"
     if yes is None or is_affiliation_question(question, opts):
         return None
     return consent_question_key(f"{question} | {yes}")
+
+
+# "Did you find this opportunity through a campus event / a conference / a career fair? If yes, which ...?" (Cigna,
+# 2026-10-20): his source is online (stored How-did-you-hear: LinkedIn, then job boards), so the answer is No.
+OTHER_SOURCE_QUESTION = re.compile(
+    r"\b(did|do) you (find|hear about|learn about|discover|come across) (this|the) (opportunity|position|role|job|posting|internship)\b"
+    r".{0,40}\b(through|via|at|from) (an? |the )?(campus|on-campus|university|college|school|conference|career fair|job fair|"
+    r"hiring event|event|info(rmation)? session|meetup|hackathon|student organi[sz]ation|professor|club)\b", re.I)
 
 
 def is_free_response(question: str, options: list[str] | None, field_type: str = "") -> bool:
@@ -1765,6 +1782,16 @@ class ToolDispatcher:
             return {"miss": True, "key": k, "hint": "this form counts public / state universities as government entities, and Surya worked in a "
                     "Texas A&M research group (a public university). His stored No to government employment covers federal government only: "
                     "call ask_user with this question and its choices."}, None
+        if OTHER_SOURCE_QUESTION.search(question or ""):
+            neg = default_no_choice(question, options) or "No"
+            k_src = answers.key_from_question(question)
+            answers.save_answer(k_src, neg, answer_type="choice" if options else "text", source="default_no",
+                                note="found online (stored How-did-you-hear: LinkedIn, then job boards), not at an event",
+                                aliases=[question])
+            db.event(self.ctx.job_id, "answer:other_source_no", {"key": k_src, "question": question[:160]})
+            return {"key": k_src, "answer": neg, "confidence": 1.0, "via": "source_rule",
+                    "note": "he found this posting online (his stored How-did-you-hear answer: LinkedIn, then job boards), "
+                            "not at a campus event, conference or fair: answer No (a text box: type 'No')"}, None
         sk = skills_question_key(question, options)
         if sk:
             a_sk = answers.get(sk, self.ctx.job.get("company", ""), self.ctx.portal)

@@ -1280,3 +1280,25 @@ async def test_an_eligibility_park_without_a_requirement_is_bounced(store):
     ctx.ex.page_text = page_text
     out, _ = await d.t_park("eligibility: none")
     assert "names none" in out["error"]
+
+
+
+def test_a_do_you_understand_question_is_an_acknowledgement():
+    """Cigna (2026-10-20): 'Do you understand that this is an entry-level, temporary role?' (Yes / No) went to Surya."""
+    from goat.agent.tools import acknowledgement_key
+    assert acknowledgement_key("Do you understand that this is an entry-level, temporary role?", ["Yes", "No"]) == "consent.privacy_notice"
+    assert acknowledgement_key("Do you understand English?", ["Yes", "No"]) is None
+    assert acknowledgement_key("Are you aware of any conflict of interest with this company?", ["Yes", "No"]) is None
+
+
+@pytest.mark.asyncio
+async def test_a_found_it_at_a_campus_event_question_is_no(store):
+    """Cigna (2026-10-20): 'Did you find this opportunity through a campus event? If yes, which college?'"""
+    job = _job()
+    d, ctx = _dispatcher(job)
+    out, _ = await d.t_lookup_answer("Did you find this opportunity through a campus event? If yes, which college or university?", [])
+    assert out["answer"] == "No" and out["via"] == "source_rule"
+    out, _ = await d.t_lookup_answer("Did you find this opportunity through a conference? If yes, which conference?", [])
+    assert out["answer"] == "No"
+    from goat.agent.tools import OTHER_SOURCE_QUESTION
+    assert not OTHER_SOURCE_QUESTION.search("How did you hear about this opportunity?")
