@@ -224,6 +224,7 @@ async def test_credentials_mode_must_match_the_form(store):
 async def test_forgot_password_waits_for_a_failed_sign_in(store):
     job = _job()
     d, ctx = _with_ex(job, SignInEx(""))
+    ctx.last_snapshot = SimpleNamespace(find=lambda ref: {"tag": "a", "label": "Forgot your password?"})
     out, _ = await d.t_click("e14", "Forgot your password?")
     assert "sign in first" in out["error"]
     ctx.reset_needed = True                          # the sign-in failed: now the reset is the right move
@@ -415,3 +416,17 @@ async def test_a_filled_create_form_is_clicked_before_a_credentials_park(store):
     ctx.creds_mode = "create"
     out, _ = await d.t_park("credentials_unknown")
     assert "click the Create Account button" in out["error"]
+
+
+
+@pytest.mark.asyncio
+async def test_the_save_button_on_a_reset_page_is_not_held_back(store):
+    """Motorola (2026-10-20): after set_password the 'Submit' button (called 'Reset password save' by the model) was refused."""
+    job = _job()
+    ex = ProbeEx("Reset Password Password Verify New Password Submit", {"pw": 2, "heads": ["Reset Password"], "title": "Reset Password"})
+    d, ctx = _with_ex(job, ex)
+    ctx.last_snapshot = SimpleNamespace(find=lambda ref: {"tag": "button", "label": "Submit"})
+    ctx.reset_link_tried = True
+    ctx.creds_mode = "set_password"
+    out, _ = await d.t_click("e4", "Reset password save")
+    assert "error" not in out and ex.clicks == ["e4"]

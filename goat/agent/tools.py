@@ -1334,8 +1334,13 @@ class ToolDispatcher:
                              "(or the email / password form), then call `credentials`."}, None
         if item and (item.get("type") in ("radio", "checkbox") or item.get("tag") in ("select", "dropdown", "toggle")):
             return {"error": "that is a choice control; set it with fill_batch (radio/checkbox/toggle, value from an answer_key) or choose (dropdown) so the decision has a source"}, None
-        if re.search(r"forgot (your )?password|reset (your )?password", label, re.I) and not self.ctx.reset_needed \
-                and not re.search(r"^reset password$", label.strip(), re.I) and self.ctx.control_failures.get("creds:forgot_bounce", 0) < 1:
+        # The element's own text decides, not the model's description of it: Motorola's reset page saves the new password
+        # with a 'Submit' button the model called "Reset password save", and this guard refused it (2026-10-20). Once
+        # a reset link was opened in this run the reset is under way.
+        real_label = str((item or {}).get("label") or label or "")
+        if re.search(r"forgot (your )?password|reset (your )?password", real_label, re.I) and not self.ctx.reset_needed \
+                and not self.ctx.reset_link_tried and self.ctx.creds_mode != "set_password" \
+                and not re.search(r"^reset password$", real_label.strip(), re.I) and self.ctx.control_failures.get("creds:forgot_bounce", 0) < 1:
             # A reset only after a sign-in with the universal password failed in this run (Wawa, 2026-10-19).
             self.ctx.control_failures["creds:forgot_bounce"] = 1
             return {"error": "not clicked: sign in first. On the Sign In form call credentials login_universal and click Sign In; "
