@@ -1213,3 +1213,16 @@ def test_a_completed_application_page_is_recognised():
     assert COMPLETED_TEXT.search("Thank you for applying to Acme!")
     assert not COMPLETED_URL.search("https://hyvee.wd1.myworkdayjobs.com/en-US/HyVeeCareers/job/X/apply/applyManually")
     assert not COMPLETED_TEXT.search("Review your application before you submit it")
+
+
+
+def test_a_signed_in_form_is_recognised_from_the_page_probe():
+    """Tencent (2026-10-20): after Create Account the form ('My Information') was open and the run parked credentials."""
+    from goat.agent.tools import sign_in_page, signed_in_form
+    assert signed_in_form({"pw": 0, "heads": ["Cloud Media Services Intern", "My Information", "Name"], "title": "Create Account"}) == "My Information"
+    assert signed_in_form({"pw": 2, "heads": ["Create Account"], "title": "Create Account"}) == ""
+    assert signed_in_form({"pw": 0, "heads": ["Forgot Password"], "title": "Forgot Password"}) == ""
+    assert signed_in_form({}) == ""
+    assert sign_in_page({"pw": 1, "heads": ["Sign In"], "title": "Careers"})
+    assert not sign_in_page({"pw": 2, "heads": ["Create Account"], "title": "Create Account"})
+    assert not sign_in_page({"pw": 0, "heads": ["Sign In"], "title": ""})

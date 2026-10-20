@@ -143,6 +143,8 @@ class RunContext:
     reset_not_received: bool = False  # ...and no reset email came
     create_tried: bool = False     # credentials mode 'create' was used this run
     account_exists: bool = False   # a Create Account click said the account already exists
+    create_clicked: bool = False   # a Create Account click went through after credentials mode 'create'
+    signed_in: bool = False        # the application form showed after an account click
     consent_page_key: str = ""
     resolved: dict = field(default_factory=dict)   # norm(question) -> resolver outcome this run
     control_failures: dict = field(default_factory=dict)   # ref -> failed choose / set_date calls this run
@@ -366,6 +368,38 @@ CREATE_STEPS = ("no reset email came, so this tenant most likely has no account 
                 "password box, confirm_password_ref = the verify-password box), tick the terms box if there is one, click Create Account, "
                 "then call open_verification_link if the portal asks you to verify the email. Park credentials_unknown only if the "
                 "portal says the account already exists.")
+
+
+# What the page shows right now, for credential decisions: visible password boxes, headings and the title. A Workday
+# application step heading ('My Information') with no password box means the account was created or signed in and
+# the form is open (Tencent, Intel, Humana, Hitachi, GlobalFoundries, Elanco, POET, Cleveland-Cliffs, 2026-10-19/20:
+# each was parked credentials_unknown right after a successful Create Account click, with the form on screen).
+JS_ACCOUNT_PROBE = r"""() => {
+  const vis = (el) => { const r = el.getBoundingClientRect(); const cs = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; };
+  const pw = Array.from(document.querySelectorAll('input[type=password]')).filter(vis).length;
+  const heads = Array.from(document.querySelectorAll('h1, h2, h3, [role=heading]')).filter(vis)
+    .map(h => (h.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 40);
+  return JSON.stringify({ pw, heads, title: document.title || '' });
+}"""
+
+
+def signed_in_form(probe: dict) -> str:
+    """The application step heading when the probe shows a signed-in application form, else ''."""
+    if not isinstance(probe, dict) or probe.get("pw"):
+        return ""
+    for h in probe.get("heads") or []:
+        if FORM_STEP_HEADING.search(h or ""):
+            return h[:60]
+    return ""
+
+
+def sign_in_page(probe: dict) -> bool:
+    """A sign-in form: a password box and a 'Sign In' / 'Log In' heading or title."""
+    if not isinstance(probe, dict) or not probe.get("pw"):
+        return False
+    texts = list(probe.get("heads") or []) + [probe.get("title") or ""]
+    return any(re.search(r"^\s*(sign|log) ?in\b", t or "", re.I) for t in texts)
 
 
 def is_affiliation_question(question: str, options: list[str] | None) -> bool:
@@ -1224,7 +1258,38 @@ class ToolDispatcher:
                                    "(Surya resets it by hand)")
                 else:
                     out["next"] = "the account already exists on this tenant: go to Sign In, call credentials login_universal and click Sign In; if that fails, " + RESET_STEPS
+            elif not self.ctx.signed_in:
+                if self.ctx.creds_mode == "create" and re.search(r"create account|sign up|register|continue|submit", f"{clicked} {label or ''}", re.I):
+                    self.ctx.create_clicked = True
+                # The form can take a few seconds to replace the account page: read it until it shows.
+                head = ""
+                if self.ctx.creds_mode == "create" or re.search(r"sign ?in|log ?in|create account|sign up|register", clicked, re.I):
+                    for _ in range(6):
+                        probe = await self._account_probe()
+                        if not probe:              # no page to read (a stub, or the tab is gone)
+                            break
+                        head = signed_in_form(probe)
+                        if head:
+                            break
+                        await asyncio.sleep(1.0)
+                if head:
+                    self.ctx.signed_in = True
+                    db.event(self.ctx.job_id, "creds:signed_in", {"host": self.ctx.portal_host, "heading": head, "mode": self.ctx.creds_mode})
+                    out["signed_in"] = True
+                    out["next"] = (f"signed in: the application form is open ('{head}'). Take a snapshot and fill it; the account step "
+                                   "is done (never park credentials now).")
+                elif self.ctx.creds_mode == "create" and self.ctx.create_clicked:
+                    out["next"] = ("the account was created (no 'already exists' message). Take a snapshot: if it is a Sign In page, "
+                                   "call credentials login_universal and click Sign In; if it asks you to verify the email, call "
+                                   "open_verification_link.")
         return out, None
+
+    async def _account_probe(self) -> dict:
+        try:
+            raw = await self.ctx.ex.page.evaluate(JS_ACCOUNT_PROBE)
+            return json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except Exception:
+            return {}
 
     JS_RAIL_STEP = r"""(name) => {
       const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -2086,6 +2151,21 @@ class ToolDispatcher:
             return {"error": "not parked: residing in the job's city, housing and relocation (with or without assistance) are Surya's "
                              "to arrange: he relocates anywhere in the U.S. for the summer at his own expense. A relocation-assistance "
                              "question takes his stored relocation answers. Continue the application."}, None
+        if low.startswith("credentials") and self.ctx.control_failures.get("creds:signed_in_bounce", 0) < 2:
+            probe = await self._account_probe()
+            head = signed_in_form(probe)
+            if head:
+                self.ctx.control_failures["creds:signed_in_bounce"] = self.ctx.control_failures.get("creds:signed_in_bounce", 0) + 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "signed in", "heading": head})
+                return {"error": f"not parked: you are signed in. The page shows the application form ('{head}') and no password "
+                                 "box, so the account step is done. Take a snapshot and continue the application."}, None
+            if self.ctx.create_clicked and not self.ctx.account_exists and sign_in_page(probe) \
+                    and self.ctx.creds_mode == "create":
+                self.ctx.control_failures["creds:signed_in_bounce"] = self.ctx.control_failures.get("creds:signed_in_bounce", 0) + 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "sign in after create"})
+                return {"error": "not parked: the account was just created (no 'already exists' message) and the portal now shows "
+                                 "Sign In. Call credentials mode 'login_universal' with this page's email and password refs and click "
+                                 "Sign In; if the portal then asks you to verify the email, call open_verification_link."}, None
         if low.startswith("credentials") and self.ctx.reset_not_received and not self.ctx.create_tried \
                 and not self.ctx.account_exists and self.ctx.control_failures.get("creds:create_bounce", 0) < 1:
             # The reset email never came: the account most likely does not exist here. Create it before giving up.

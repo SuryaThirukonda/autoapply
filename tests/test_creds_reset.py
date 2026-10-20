@@ -229,3 +229,72 @@ async def test_forgot_password_waits_for_a_failed_sign_in(store):
     ctx.reset_needed = True                          # the sign-in failed: now the reset is the right move
     out, _ = await d.t_click("e14", "Forgot your password?")
     assert "error" not in out
+
+
+
+class ProbeEx(SignInEx):
+    """A page whose account probe (visible password boxes, headings, title) the test sets."""
+
+    def __init__(self, text, probe):
+        super().__init__(text)
+        import json as _json
+        outer = self
+
+        class _Page:
+            async def evaluate(self, script, *a):
+                return _json.dumps(outer.probe)
+        self.probe = probe
+        self.page = _Page()
+
+
+FORM_OPEN = {"pw": 0, "heads": ["Cloud Media Services Intern", "My Information", "Name"], "title": "Create Account"}
+
+
+@pytest.mark.asyncio
+async def test_a_create_account_click_that_opens_the_form_says_signed_in(store):
+    """Tencent (2026-10-20): Create Account went through and the form opened; the run parked credentials_unknown."""
+    job = _job()
+    d, ctx = _with_ex(job, ProbeEx("My Information How Did You Hear About Us?", FORM_OPEN))
+    ctx.creds_mode = "create"
+    out, _ = await d.t_click("e1", "Create Account")
+    assert out.get("signed_in") and "My Information" in out["next"] and ctx.signed_in and ctx.create_clicked
+    assert db.connect().execute("SELECT COUNT(*) FROM events WHERE kind='creds:signed_in'").fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_credentials_park_on_a_signed_in_form_is_bounced(store):
+    job = _job()
+    d, ctx = _with_ex(job, ProbeEx("My Information", FORM_OPEN))
+    ctx.mail = object()
+    ctx.verify_link_tried = ctx.reset_link_tried = ctx.reset_not_received = ctx.create_tried = True
+    out, _ = await d.t_park("credentials_unknown: account could not be created")
+    assert "you are signed in" in out["error"] and "My Information" in out["error"]
+    out, _ = await d.t_park("credentials_unknown: account could not be created")
+    assert "you are signed in" in out["error"]
+    with pytest.raises(Parked):      # bounced twice at most: a third park stands
+        await d.t_park("credentials_unknown: account could not be created")
+
+
+@pytest.mark.asyncio
+async def test_a_sign_in_page_right_after_a_create_is_signed_into_first(store):
+    """7-Eleven, Mastercard (2026-10-19): Create Account went through, the portal showed Sign In and the run parked."""
+    job = _job()
+    ex = ProbeEx("Sign In Email Address Password", {"pw": 1, "heads": ["Sign In"], "title": "Careers"})
+    d, ctx = _with_ex(job, ex)
+    ctx.mail = object()
+    ctx.verify_link_tried = ctx.reset_link_tried = ctx.reset_not_received = ctx.create_tried = True
+    ctx.creds_mode = "create"
+    out, _ = await d.t_click("e1", "Create Account")
+    assert ctx.create_clicked and not out.get("signed_in") and "login_universal" in out["next"]
+    out, _ = await d.t_park("credentials_unknown: account created but cannot sign in")
+    assert "login_universal" in out["error"] and "just created" in out["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_credentials_park_on_a_create_account_page_still_stands(store):
+    job = _job()
+    d, ctx = _with_ex(job, ProbeEx("Create Account", {"pw": 2, "heads": ["Create Account"], "title": "Create Account"}))
+    ctx.mail = object()
+    ctx.verify_link_tried = ctx.reset_link_tried = ctx.reset_not_received = ctx.create_tried = ctx.account_exists = True
+    with pytest.raises(Parked):
+        await d.t_park("credentials_unknown: account exists, password unknown, no reset email")
