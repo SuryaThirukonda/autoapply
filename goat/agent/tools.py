@@ -2078,7 +2078,11 @@ class ToolDispatcher:
                                  "with the email and password field refs; the helper fills them and you may click Create Account / Sign In (those are not "
                                  "submit controls). Then continue filling."}, None
             reason = "automation_prohibited: " + "; ".join(hits)[:300]
-        if low.startswith("eligibility") and self.SATISFIED.search(reason) and not self.DISQUALIFIERS.search(reason) \
+        # season terms in a GRADUATION window ("expected graduation in Fall 2027, Spring/Summer 2028 or 2029") are no
+        # co-op term: grad_window_excludes judges those (Arconic was held on a window that includes May 2028, 2026-10-19)
+        non_grad = " ".join(part for part in re.split(r"[;.]", reason)
+                            if not re.search(r"graduat|class of|degree (by|in|before)|completion date", part, re.I))
+        if low.startswith("eligibility") and self.SATISFIED.search(reason) and not self.DISQUALIFIERS.search(non_grad) \
                 and not self.grad_window_excludes(reason) and self.ctx.park_attempts < 2:
             self.ctx.park_attempts += 1
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200]})

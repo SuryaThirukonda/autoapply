@@ -1115,3 +1115,17 @@ def test_a_stale_account_title_on_a_form_page_is_recognised():
     assert not STALE_ACCOUNT_TITLE.search("IS Internship - Data Analytics & Data Science")
     assert FORM_STEP_HEADING.search("My Information") and FORM_STEP_HEADING.search("Application Questions 1 of 2")
     assert not FORM_STEP_HEADING.search("Create Account")
+
+
+
+@pytest.mark.asyncio
+async def test_a_graduation_window_naming_fall_2027_is_no_co_op_disqualifier(store):
+    """Arconic (2026-10-19): 'expected graduation date in Fall 2027, Spring/Summer 2028, or Spring/Summer 2029' was held
+    because 'Fall 2027' is in the co-op disqualifier list."""
+    d, ctx = _dispatcher({"id": 91, "company": "Arconic", "ats": "oracle"})
+    async def page_text(n=30000):
+        return "Apply"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("eligibility: The posting requires an expected graduation date in Fall 2027, Spring/Summer 2028, "
+                            "or Spring/Summer 2029. Surya graduates May 2028 and meets this requirement. Proceeding.")
+    assert "SATISFIED" in out["error"]
