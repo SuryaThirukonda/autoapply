@@ -343,6 +343,28 @@ class WorkerControl:
 CONTROL = WorkerControl()
 
 
+SAME_TENANT_HOLD_S = 12 * 3600
+
+
+def same_tenant_credentials_hold(job: dict, now: int | None = None) -> int | None:
+    """Another job on the same portal host held on credentials within SAME_TENANT_HOLD_S: its id, else None.
+    Only account portals (Workday, Oracle, iCIMS, SuccessFactors) share one login per host."""
+    from urllib.parse import urlparse
+    host = (urlparse(str(job.get("url") or "")).hostname or "").lower()
+    if not host or not any(h in host for h in ("myworkdayjobs.com", "myworkdaysite.com", "oraclecloud.com", "icims.com",
+                                                "successfactors.", "sapsf.")):
+        return None
+    now = now or db.now()
+    rows = db.connect().execute(
+        "SELECT j.id, l.url FROM jobs j JOIN listings l ON l.id=j.listing_id WHERE j.id != ? AND j.status=? "
+        "AND j.hold_reason LIKE 'credentials_unknown%' AND j.updated_at > ?",
+        (int(job["id"]), states.HOLD, now - SAME_TENANT_HOLD_S)).fetchall()
+    for r in rows:
+        if (urlparse(str(r["url"] or "")).hostname or "").lower() == host:
+            return int(r["id"])
+    return None
+
+
 async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutcome:
     job_id = int(job["id"])
     portal = job.get("ats") or "other"
@@ -350,6 +372,15 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
     apply_url = job.get("apply_url") or adapter.apply_url(job["url"])
     history = attempt_history(job_id, job["listing_id"])
     budget = Budget(job_id, portal, job.get("steps_used") or 0, job.get("wall_ms_used") or 0, job.get("failed_submits") or 0)
+
+    # A tenant whose sign-in just failed for another job is not tried again the same day: each failed sign-in counts
+    # toward a lockout, and with no reset email the second run ends the same way (Q2, 2026-10-19).
+    other = same_tenant_credentials_hold(job)
+    if other:
+        reason = (f"credentials_unknown: same portal account as job {other}, held on its sign-in in the last 12 hours; "
+                  "retry them together once the account works")
+        set_status(job_id, states.HOLD, reason=reason)
+        return RunOutcome(states.HOLD, reason)
 
     # Boards that cap applications (Waymo 5 per 60 days, ...): hold until the window opens again.
     from . import caps
