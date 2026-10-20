@@ -377,3 +377,28 @@ async def test_the_verify_password_box_is_filled_even_under_a_password_managers_
         assert lens == [len(secret), len(secret)]
     finally:
         await ex.close(close_browser=True)
+
+
+
+@pytest.mark.asyncio
+async def test_a_verification_link_is_opened_once_and_the_run_signs_in(store):
+    """Simon Property Group, Dee Zee (2026-10-20): the park guard opened the activation link, the model opened it again,
+    the sign-in page said 'Invalid Token' and the run parked."""
+    job = _job()
+    ex = ProbeEx("Sign In Invalid Token Email Address Password", {"pw": 1, "heads": ["Sign In"], "title": "Careers"})
+    gone = []
+
+    async def goto(url):
+        gone.append(url)
+    ex.goto = goto
+    ex.url = "https://simon.wd1.myworkdayjobs.com/simon/login"
+    d, ctx = _with_ex(job, ex)
+    link = "https://simon.wd1.myworkdayjobs.com/simon/activate/abc?redirect=x"
+    ctx.mail = SimpleNamespace(fetch_verification_link=lambda portal, host, after, timeout_s=None: SimpleNamespace(status="verified_link", url=link))
+    out, _ = await d.t_open_verification_link()
+    assert out["status"] == "verified" and gone == [link] and "sign in" in out["next"].lower()
+    out, _ = await d.t_open_verification_link()
+    assert out["status"] == "already_verified" and gone == [link]
+    ctx.reset_link_tried = ctx.reset_not_received = ctx.create_tried = True
+    out, _ = await d.t_park("credentials_unknown: Invalid Token after verifying")
+    assert "login_universal" in out["error"] and "Invalid Token" in out["error"]

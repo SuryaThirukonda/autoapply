@@ -145,6 +145,7 @@ class RunContext:
     account_exists: bool = False   # a Create Account click said the account already exists
     create_clicked: bool = False   # a Create Account click went through after credentials mode 'create'
     signed_in: bool = False        # the application form showed after an account click
+    verify_urls: list = field(default_factory=list)   # verification links opened this run (each works once)
     consent_page_key: str = ""
     resolved: dict = field(default_factory=dict)   # norm(question) -> resolver outcome this run
     control_failures: dict = field(default_factory=dict)   # ref -> failed choose / set_date calls this run
@@ -2014,10 +2015,22 @@ class ToolDispatcher:
         res = await asyncio.to_thread(self.ctx.mail.fetch_verification_link, self.ctx.portal, self.ctx.portal_host, after_ts,
                                       timeout_s=timeout_s)
         status = getattr(res, "status", "not_received")
+        if status == "verified_link" and getattr(res, "url", None) and res.url in self.ctx.verify_urls:
+            # A Workday activation link works once: opened a second time it shows 'Invalid Token' on the sign-in
+            # page, and the run parked on that (Simon Property Group, Dee Zee, 2026-10-20).
+            db.event(self.ctx.job_id, "creds:verify_link_reused", {"host": self.ctx.portal_host})
+            return {"status": "already_verified",
+                    "next": "this portal's verification link was already opened in this run, so the email is confirmed (opening "
+                            "it again only shows 'Invalid Token'). Sign in: on the Sign In form call credentials login_universal "
+                            "and click Sign In."}, None
         if status == "verified_link" and getattr(res, "url", None):
+            self.ctx.verify_urls.append(res.url)
             await self.ctx.ex.goto(res.url)
             self.ctx.budget.step()
-            return {"status": "verified", "url": self.ctx.ex.url}, None
+            db.event(self.ctx.job_id, "creds:verify_link_opened", {"host": self.ctx.portal_host})
+            return {"status": "verified", "url": self.ctx.ex.url,
+                    "next": "the email is confirmed: sign in now (credentials login_universal on the Sign In form, then click Sign "
+                            "In). Never open the link again; a 'Invalid Token' note on the sign-in page after it is expected."}, None
         if status == "host_mismatch":
             raise Parked("host_mismatch: verification link pointed at another host", "hold")
         return {"status": status}, None
@@ -2259,6 +2272,13 @@ class ToolDispatcher:
                 db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "signed in", "heading": head})
                 return {"error": f"not parked: you are signed in. The page shows the application form ('{head}') and no password "
                                  "box, so the account step is done. Take a snapshot and continue the application."}, None
+            if self.ctx.verify_urls and sign_in_page(probe) and self.ctx.control_failures.get("creds:verified_bounce", 0) < 2:
+                # The verification link was opened this run: the account is confirmed and signing in is the next step.
+                self.ctx.control_failures["creds:verified_bounce"] = self.ctx.control_failures.get("creds:verified_bounce", 0) + 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "sign in after verify"})
+                return {"error": "not parked: this run opened the portal's verification link, so the account's email is confirmed "
+                                 "('Invalid Token' only means the link was used already). Call credentials mode 'login_universal' with "
+                                 "this Sign In form's email and password refs and click Sign In."}, None
             if self.ctx.create_clicked and not self.ctx.account_exists and sign_in_page(probe) \
                     and self.ctx.creds_mode == "create":
                 self.ctx.control_failures["creds:signed_in_bounce"] = self.ctx.control_failures.get("creds:signed_in_bounce", 0) + 1
