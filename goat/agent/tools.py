@@ -261,6 +261,19 @@ def text_from_chain(entries: list[str], label: str) -> str:
     return ", ".join(picked)
 
 
+def workday_mail_quiet(hours: float = 8.0) -> bool:
+    """Workday's account email stopped reaching his inbox on 2026-10-19 at 06:32 CDT, and every reset then waited its
+    full three minutes for nothing. Three or more missed Workday resets and no opened one in the last `hours`: the
+    waits drop to 45 s (the mail, when it comes, lands within a minute)."""
+    con = db.connect()
+    since = db.now() - int(hours * 3600)
+    miss = con.execute("SELECT COUNT(*) FROM events WHERE ts > ? AND kind='creds:reset_not_received' AND detail LIKE '%myworkday%'",
+                       (since,)).fetchone()[0]
+    opened = con.execute("SELECT COUNT(*) FROM events WHERE ts > ? AND kind='creds:reset_link_opened' AND detail LIKE '%myworkday%'",
+                         (since,)).fetchone()[0]
+    return miss >= 3 and opened == 0
+
+
 # A Workday account view's title left on an application form page (see t_snapshot).
 STALE_ACCOUNT_TITLE = re.compile(r"^\s*(forgot password|reset password|sign in|create account)\b", re.I)
 FORM_STEP_HEADING = re.compile(r"^(my information|my experience|application questions|voluntary disclosures|self identify)\b", re.I)
@@ -1760,8 +1773,11 @@ class ToolDispatcher:
         fetch = getattr(self.ctx.mail, "fetch_password_reset_link", None)
         if fetch is None:
             return {"error": "the mail helper cannot fetch reset links"}, None
-        res = await asyncio.to_thread(fetch, self.ctx.portal, self.ctx.portal_host, after_ts)
+        quiet = self.ctx.portal == "workday" and workday_mail_quiet()
+        res = await asyncio.to_thread(fetch, self.ctx.portal, self.ctx.portal_host, after_ts, **({"timeout_s": 45} if quiet else {}))
         status = getattr(res, "status", "not_received")
+        if quiet and status != "reset_link":
+            db.event(self.ctx.job_id, "creds:mail_quiet", {"host": self.ctx.portal_host, "waited_s": 45})
         if status == "reset_link" and getattr(res, "url", None):
             await self.ctx.ex.goto(res.url)
             self.ctx.budget.step()
@@ -1784,6 +1800,8 @@ class ToolDispatcher:
         # links on THIS portal's host (from this tenant) are ever accepted.
         after_ts = db.now() - 86400
         self.ctx.verify_link_tried = True
+        if timeout_s is None and self.ctx.portal == "workday" and workday_mail_quiet():
+            timeout_s = 45
         res = await asyncio.to_thread(self.ctx.mail.fetch_verification_link, self.ctx.portal, self.ctx.portal_host, after_ts,
                                       timeout_s=timeout_s)
         status = getattr(res, "status", "not_received")
