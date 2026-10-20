@@ -261,6 +261,11 @@ def text_from_chain(entries: list[str], label: str) -> str:
     return ", ".join(picked)
 
 
+# A Workday account view's title left on an application form page (see t_snapshot).
+STALE_ACCOUNT_TITLE = re.compile(r"^\s*(forgot password|reset password|sign in|create account)\b", re.I)
+FORM_STEP_HEADING = re.compile(r"^(my information|my experience|application questions|voluntary disclosures|self identify)\b", re.I)
+
+
 # A work-entry field: its value is Surya's stored entry (experience.work.N.*), never a résumé or generated literal.
 WORK_ENTRY_FIELD = re.compile(r"^\s*(current |most recent |previous )?(company( name)?|employer( name)?|organi[sz]ation( name)?|"
                               r"job title|position title)\s*[*:]?\s*$", re.I)
@@ -534,6 +539,21 @@ class ToolDispatcher:
                 break
             await asyncio.sleep(2.5)
             snap = await snapmod.take(self.ctx.ex, with_text=with_text)
+        # After the password reset, Workday can show the application form while the page is still the "Forgot
+        # Password" (or Sign In / Create Account) view underneath: picks made there do not stick (C&S Wholesale and
+        # Itron's How Did You Hear stayed blank, 2026-10-19; a fresh load fixed C&S). Reload such a page once; the
+        # session and the saved draft survive a reload.
+        if STALE_ACCOUNT_TITLE.search(snap.title or "") and any(FORM_STEP_HEADING.search(h) for h in snap.headings) \
+                and self.ctx.control_failures.get("stale_title:reload", 0) < 1:
+            self.ctx.control_failures["stale_title:reload"] = 1
+            try:
+                await self.ctx.ex.page.reload(wait_until="domcontentloaded")
+                await self.ctx.ex.settle()
+                await asyncio.sleep(2.0)
+                db.event(self.ctx.job_id, "page:stale_title_reload", {"title": (snap.title or "")[:80], "headings": snap.headings[:3]})
+                snap = await snapmod.take(self.ctx.ex, with_text=with_text)
+            except Exception as e:  # noqa: BLE001 - best effort
+                db.event(self.ctx.job_id, "page:stale_title_reload_error", {"error": f"{type(e).__name__}: {e}"[:200]})
         # The consent pass runs on every new page, not only the first one the job opened on.
         page_key = (snap.url or "") + "|" + "|".join(snap.headings[:4])
         if page_key != self.ctx.consent_page_key:

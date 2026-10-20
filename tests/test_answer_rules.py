@@ -1105,3 +1105,13 @@ async def test_go_to_step_allows_the_trip_the_gate_asks_for(store):
     ctx.control_failures["step:my experience"] = 2
     out, _ = await d.t_go_to_step("My Experience")
     assert "already gone back" in out["error"]
+
+
+
+def test_a_stale_account_title_on_a_form_page_is_recognised():
+    """C&S Wholesale and Itron (2026-10-19): title 'Forgot Password - Logo' over the My Information form."""
+    from goat.agent.tools import FORM_STEP_HEADING, STALE_ACCOUNT_TITLE
+    assert STALE_ACCOUNT_TITLE.search("Forgot Password - Logo") and STALE_ACCOUNT_TITLE.search("Create Account - Logo")
+    assert not STALE_ACCOUNT_TITLE.search("IS Internship - Data Analytics & Data Science")
+    assert FORM_STEP_HEADING.search("My Information") and FORM_STEP_HEADING.search("Application Questions 1 of 2")
+    assert not FORM_STEP_HEADING.search("Create Account")
