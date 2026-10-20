@@ -239,3 +239,11 @@ def test_retained_by_the_us_government_is_a_default_no():
     from goat.agent.tools import default_no_choice, is_affiliation_question
     q = "Have you ever been retained by the U.S. Government to provide assistance on any particular matter that relates to GDIT?"
     assert is_affiliation_question(q, ["Yes", "No"]) and default_no_choice(q, ["Yes", "No"]) == "No"
+
+
+
+def test_a_scholarship_from_the_company_is_a_default_no():
+    """TC Energy (2026-10-20): 'Have you received a scholarship from TC Energy?'"""
+    from goat.agent.tools import default_no_choice, is_affiliation_question
+    q = "Have you received a scholarship from TC Energy?"
+    assert is_affiliation_question(q, ["Yes", "No"]) and default_no_choice(q, ["Yes", "No"]) == "No"

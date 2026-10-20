@@ -400,6 +400,9 @@ AFFILIATION = re.compile(
     # GM Financial (2026-10-19): "Did you participate in the General Motors 2023 Voluntary Separation Package?" is a former-
     # employee question
     r"voluntary separation|separation (package|program|agreement)|severance (package|program|agreement)|early retirement|"
+    # TC Energy (2026-10-20): "Have you received a scholarship from TC Energy?" went to Surya; a scholarship, grant or
+    # fellowship from the employer is a relationship with it, and his profile names none
+    r"(received|been awarded|hold|held) (a |an |any )?(scholarship|grant|fellowship|bursary|sponsorship award)s? (from|by|through)\b|"
     # GDIT (2026-10-20): "Have you ever been retained by the U.S. Government to provide assistance on any particular matter
     # that relates to GDIT?" went to Surya; he has never worked for or been retained by the federal government
     r"retained by (the )?(u\.?\s?s\.?|united states|federal) government|(u\.?\s?s\.?|united states|federal) government "
