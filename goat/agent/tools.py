@@ -2022,6 +2022,18 @@ class ToolDispatcher:
             return {"error": "not parked: self-identification fields are settled by their self_id.* keys (choose with the key; the chain ends with "
                              "his own answers for forms without a decline option). Whatever the picker shows after that is correct. Move on: "
                              "finish the other sections (Work Experience via go_to_step('My Experience') if the Review shows No Response) and submit."}, None
+        if low.startswith("bot_check") and self.ctx.control_failures.get("park:no_bot", 0) < 2:
+            # A bot-check park needs a challenge on the page: Walmart parked "bot_check_question: ... encountered no robot
+            # prompt; continue application?" and the hold stood unchecked (2026-10-20).
+            try:
+                ch = await detect_challenge(self.ctx.ex)
+            except Exception:
+                ch = {"challenge": True}
+            if not ch.get("challenge"):
+                self.ctx.control_failures["park:no_bot"] = self.ctx.control_failures.get("park:no_bot", 0) + 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "no_challenge": True})
+                return {"error": "not parked: there is no CAPTCHA or bot check on this page. Continue filling the application "
+                                 "and call submit when it is done."}, None
         if low.startswith(("needs_you", "ready_for_you")) and re.search(r"relocat|\breside|residence|housing|commut|\blocal\b", low) \
                 and not re.search(r"captcha|human|\bbot\b|unpaid|no pay|volunteer", low) \
                 and self.ctx.control_failures.get("park:relocation", 0) < 2:

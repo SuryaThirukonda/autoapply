@@ -1185,3 +1185,20 @@ async def test_a_no_answer_ticks_the_no_box_of_a_checkbox_group(store, monkeypat
     await d.t_fill_batch([{"ref": "e44", "answer_key": "bank.prior-employee", "value": None, "source": None, "label": g}])
     assert str(sent.get("e47")) == "true", sent
     assert str(sent.get("e44")).lower() in ("no", "false"), sent
+
+
+
+@pytest.mark.asyncio
+async def test_a_bot_check_park_without_a_challenge_is_bounced(store, monkeypatch):
+    """Walmart (2026-10-20): 'bot_check_question: ... encountered no robot prompt; continue application?'."""
+    from goat.agent import tools as toolsmod
+    d, ctx = _dispatcher({"id": 135, "company": "Walmart", "ats": "workday"})
+    async def page_text(n=30000):
+        return "My Information"
+    ctx.ex.page_text = page_text
+
+    async def no_challenge(ex):
+        return {"challenge": False, "kinds": []}
+    monkeypatch.setattr(toolsmod, "detect_challenge", no_challenge)
+    out, _ = await d.t_park("bot_check_question: Workday sign-up encountered no robot prompt; continue application?")
+    assert "no CAPTCHA" in out["error"]
