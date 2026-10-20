@@ -170,3 +170,11 @@ def test_values_that_differ_only_in_case_are_found_in_the_notes():
     notes = "The intended company value is \u201cSouthwest Airlines,\u201d but the review page shows \u201csouthwest airlines.\u201d"
     assert case_only_claims(notes) == [("Southwest Airlines", "southwest airlines")]
     assert case_only_claims("The page shows \u201cAurora, CO\u201d but the posting lists \u201cPalmdale, CA\u201d") == []
+
+
+
+def test_fact_check_lets_silence_support_no_to_influencing_the_company():
+    """General Motors (2026-10-20): the fact check rejected the default No to 'could you or an immediate family member
+    influence GM decisions'."""
+    from goat.judge import FACT_CHECK_INSTRUCTIONS
+    assert "in a position to influence its decisions" in FACT_CHECK_INSTRUCTIONS
