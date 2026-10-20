@@ -23,10 +23,18 @@ def _nw(s: str) -> set:
     return {w for w in re.findall(r"[a-z0-9]+", (s or "").lower()) if len(w) > 2}
 
 
+_DAY_PART = re.compile(r"\bday=(\d{1,2})\b", re.I)
+_SETDATE = re.compile(r"\bmonth=\d{1,2}\b.*\byear=\d{4}|\byear=\d{4}\b.*\bmonth=\d{1,2}", re.I)
+
+
 def _date_parts(value: str) -> dict:
     m = _DATE_PARTS.search(value or "")
     if m:
-        return {"month": f"{int(m.group(1)):02d}", "year": m.group(2)}
+        out = {"month": f"{int(m.group(1)):02d}", "year": m.group(2)}
+        dm = _DAY_PART.search(value or "")
+        if dm:
+            out["day"] = f"{int(dm.group(1)):02d}"
+        return out
     p = fill.parse_date(value or "")
     return {k: v for k, v in p.items() if k in ("month", "year")}
 
@@ -79,8 +87,13 @@ def values_equal(decision: str, page: str, kind: str, label: str = "") -> bool:
     p = str(page if page is not None else "")
     if kind in ("checkbox", "toggle"):
         return _truthy_checked(d) == _truthy_checked(p)
+    if _SETDATE.search(d):
+        kind = "date"       # a set_date decision ("day=15 month=5 year=2028") read against one of its boxes
     if kind == "date":
         dd, pp = _date_parts(d), _date_parts(p)
+        if label and re.fullmatch(r"\s*day\s*\*?\s*", label, re.I):
+            # Leidos (2026-10-20): the Day box showed '15' for 'day=15 month=5 year=2028' and verification failed on it
+            return bool(dd.get("day")) and p.strip().isdigit() and int(p.strip()) == int(dd["day"])
         if label and re.fullmatch(r"\s*month\s*\*?\s*", label, re.I):
             return bool(dd.get("month")) and p.strip().zfill(2) == dd["month"]
         if label and re.fullmatch(r"\s*year\s*\*?\s*", label, re.I):

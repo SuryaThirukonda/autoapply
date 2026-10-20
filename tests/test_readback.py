@@ -276,3 +276,16 @@ async def test_a_workday_prompt_reads_its_chips_not_its_search_text():
         assert vals[item["ref"]]["value"] == "AWS Certified Cloud Practitioner - AWS", vals
     finally:
         await ex.close()
+
+
+
+def test_a_day_box_matches_its_part_of_a_set_date_decision():
+    """Leidos (2026-10-20): Day [e71] showed '15' for the decision 'day=15 month=5 year=2028'."""
+    from goat.readback import values_equal
+    d = "day=15 month=5 year=2028"
+    assert values_equal(d, "15", "text", "Day")
+    assert values_equal(d, "15", "date", "Day*")
+    assert values_equal(d, "05", "text", "Month")
+    assert values_equal(d, "2028", "text", "Year")
+    assert not values_equal(d, "16", "text", "Day")
+    assert not values_equal(d, "2027", "text", "Year")
