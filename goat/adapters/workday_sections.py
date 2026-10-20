@@ -653,10 +653,18 @@ def pick_skill(skill: str, options: list[str]) -> str | None:
         so = re.sub(r"[^a-z0-9]", "", fill.lang_safe(o))
         if so in (sq, sq + "js") or (sq.endswith("js") and so == sq[:-2]):
             return o
-    starts = [o for o in options if answers.norm(fill.lang_safe(o)).startswith(w + " ")]
+    # A longer name is the same skill only when the extra words are generic ('Python 3', 'Docker platform'); 'React VR'
+    # and 'React Native' are other technologies (Solar Turbines, Q2, 2026-10-20: both were taken for React).
+    starts = [o for o in options if answers.norm(fill.lang_safe(o)).startswith(w + " ")
+              and all(GENERIC_SKILL_WORD.fullmatch(x) for x in answers.norm(fill.lang_safe(o))[len(w):].split())]
     if len(starts) == 1:
         return starts[0]
     return None
+
+
+GENERIC_SKILL_WORD = re.compile(r"\d+(\.\d+)*|v\d+|programming|language|languages|development|developer|framework|library|"
+                                r"js|api|apis|technology|technologies|software|tools?|platform|scripting|coding|algorithms?|"
+                                r"techniques?|methods?|concepts?|fundamentals|principles|modeling|modelling|engineering", re.I)
 
 
 def _is_blank_work(entry: dict) -> bool:

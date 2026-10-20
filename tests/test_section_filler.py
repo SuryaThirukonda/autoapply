@@ -338,3 +338,15 @@ def test_an_empty_languages_section_on_review_is_a_gap(monkeypatch):
     page = "My Experience\nWork Experience\nRevio\nLanguages\nNo Response\nApplication Questions"
     assert ws.review_gaps(page) == [ws.LANGUAGES_GAP]
     assert ws.review_gaps("My Experience\nLanguages\nEnglish\nFluent") == []
+
+
+
+def test_a_skill_never_takes_another_technology_by_prefix():
+    """Solar Turbines, Q2 (2026-10-20): 'React VR' and 'React Native' were taken for React."""
+    from goat.adapters.workday_sections import pick_skill
+    assert pick_skill("React", ["React VR"]) is None
+    assert pick_skill("React", ["React Native"]) is None
+    assert pick_skill("React", ["React.js", "React Native"]) == "React.js"
+    assert pick_skill("Python", ["Python 3"]) == "Python 3"
+    assert pick_skill("Docker", ["Docker Swarm"]) is None
+    assert pick_skill("SQL", ["Structured Query Language (SQL)", "SQLCLR"]) == "Structured Query Language (SQL)"
