@@ -215,3 +215,10 @@ def test_fact_check_accepts_his_stored_source():
     """Dimensional (2026-10-20): 'I first came across Dimensional through LinkedIn' was called unsupported."""
     from goat.judge import FACT_CHECK_INSTRUCTIONS
     assert "found or first saw the posting on LinkedIn" in FACT_CHECK_INSTRUCTIONS
+
+
+
+def test_judge_accepts_catalog_wording_for_his_major():
+    """Dimensional (2026-10-20): 'Computer and Information Science' was called wrong for Computer Science."""
+    from goat.judge import JUDGE_INSTRUCTIONS
+    assert "'Computer and Information Science'" in JUDGE_INSTRUCTIONS
