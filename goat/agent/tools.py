@@ -399,7 +399,12 @@ AFFILIATION = re.compile(
     r"perform(ed)? services (for|to)|provided services (for|to)|contingent worker|security badge|"
     # GM Financial (2026-10-19): "Did you participate in the General Motors 2023 Voluntary Separation Package?" is a former-
     # employee question
-    r"voluntary separation|separation (package|program|agreement)|severance (package|program|agreement)|early retirement)", re.I)
+    r"voluntary separation|separation (package|program|agreement)|severance (package|program|agreement)|early retirement|"
+    # Northwestern Mutual (2026-10-20): "Are you currently participating in any of the listed partnership programs?"
+    # (All in Milwaukee, College Possible, MARS Returnship, ...) went to Surya; he is in none of them
+    r"participat(e|es|ed|ing) in (any of )?(the |these |those )?(listed |following |above )?(partner(ship)?|pipeline|community|"
+    r"workforce|bridge|returnship|diversity|outreach) (programs?|organi[sz]ations?|initiatives?)|"
+    r"(member|participant|alum(nus|na|ni)?) of (any of )?(the |these )?(listed |following )?(partner(ship)?|pipeline) (programs?|organi[sz]ations?))", re.I)
 # Never a default No, even when they mention relatives, a spouse or customers (Penn State, 2026-10-18: "spouse or relatives
 # who are foreign nationals; foreign travel; counseling; police records" was answered No by the affiliation rule):
 # background-investigation, legal, financial and medical history, amounts of experience, and statements of willingness.
@@ -481,10 +486,21 @@ def sign_in_page(probe: dict) -> bool:
     return any(re.search(r"^\s*(sign|log) ?in\b", t or "", re.I) for t in texts)
 
 
+# "Are you currently participating in any of the listed partnership programs?" with the programs named as options and a
+# "No" among them (Northwestern Mutual, 2026-10-20): he is in none of them, so the negative option is the answer.
+PROGRAM_LIST = re.compile(
+    r"participat(e|es|ed|ing) in (any of )?(the |these |those )?(listed |following |above )?(partner(ship)?|pipeline|community|"
+    r"workforce|bridge|returnship|diversity|outreach) (programs?|organi[sz]ations?|initiatives?)|"
+    r"(member|participant|alum(nus|na|ni)?) of (any of )?(the |these )?(listed |following )?(partner(ship)?|pipeline) (programs?|organi[sz]ations?)",
+    re.I)
+
+
 def is_affiliation_question(question: str, options: list[str] | None) -> bool:
     """A yes/no question in the employer/industry/affiliation family (options empty, or Yes/No-like)."""
     if not AFFILIATION.search(question or "") or NOT_AFFILIATION.search(question or ""):
         return False
+    if PROGRAM_LIST.search(question or "") and any(_NEGATIVE_OPTION.match((o or "").strip()) for o in (options or [])):
+        return True
     if re.search(r"(if (yes|so)|please (explain|describe|list|provide)|who\b|which\b|name of|names of)", question, re.I) and not options:
         return False
     if not options and FREE_RESPONSE.search(question or ""):
@@ -1067,6 +1083,39 @@ class ToolDispatcher:
             else:
                 self.ctx.readback_open.pop(page, None)
         kept_n = sum(1 for r in results if r.get("status") == "kept")
+        # A skills checkbox ticked from his skills list completes the set: every other option of the same group that names
+        # one of his skills is ticked too (General Motors, 2026-10-20: the model looked up five of the boxes one by one
+        # and never reached HQL/SQL).
+        also: list[dict] = []
+        if not getattr(self, "_completing_skills", False):
+            done_refs = {f.get("ref") for f in fields}
+            for f in fields:
+                if f.get("answer_key") not in SET_VALUED_KEYS:
+                    continue
+                r0 = next((r for r in results if r.get("ref") == f.get("ref")), None)
+                if not r0 or r0.get("status") not in ("set", "kept"):
+                    continue
+                try:
+                    sib = await self.ctx.ex.eval(js.JS_CHOICE_SIBLINGS, f["ref"])
+                except Exception:
+                    sib = []
+                a_sk = answers.get(f["answer_key"], self.ctx.job.get("company", ""), self.ctx.portal)
+                skills = his_skills(a_sk.answer if a_sk is not None else "")
+                for o in (sib if isinstance(sib, list) else []):
+                    if o.get("ref") and o["ref"] not in done_refs and skill_option_matches(o.get("label") or "", skills):
+                        done_refs.add(o["ref"])
+                        also.append({"ref": o["ref"], "answer_key": f["answer_key"], "value": None, "source": None,
+                                     "label": o.get("label") or ""})
+            if also:
+                self._completing_skills = True
+                try:
+                    more, _ = await self.t_fill_batch(also)
+                finally:
+                    self._completing_skills = False
+                extra = [{**r, "note": "also ticked: it names one of his skills"} for r in (more or {}).get("results", [])]
+                results = results + extra
+                set_n += sum(1 for r in extra if r.get("status") == "set")
+                kept_n += sum(1 for r in extra if r.get("status") == "kept")
         # "kept" (the page already shows his answer, now recorded) is not a failure: "0 set, 4 failed" for four kept
         # answers sent T-Mobile's model back over fields that were right (2026-10-19).
         return {"summary": f"{set_n} set, {kept_n} kept, {len(results) - set_n - kept_n} failed" if kept_n else

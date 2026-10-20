@@ -220,3 +220,13 @@ def test_taking_part_in_the_hiring_process_is_his_consent():
     assert not is_affiliation_question(q, ["Yes", "No"])
     assert consent_question_key("Are you able to attend an in-person interview in Detroit?") == "consent.hiring_process"
     assert consent_question_key("Are you willing to relocate?") != "consent.hiring_process"
+
+
+
+def test_a_listed_partnership_programs_question_is_a_default_no():
+    """Northwestern Mutual (2026-10-20): 'Are you currently participating in any of the listed partnership programs?'"""
+    from goat.agent.tools import default_no_choice, is_affiliation_question
+    q = "Are you currently participating in any of the listed partnership programs?"
+    opts = ["All in Milwaukee", "Boys & Girls Club Grad Plus", "College Possible", "i.c.stars Milwaukee", "MARS Returnship", "No"]
+    assert is_affiliation_question(q, opts)
+    assert default_no_choice(q, opts) == "No"

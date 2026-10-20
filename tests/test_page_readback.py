@@ -394,3 +394,26 @@ async def test_his_skills_list_ticks_every_matching_language_box(store, tmp_path
         assert sorted(ticked) == sorted(["py", "cc", "jv", "rr", "pg", "sq"])
     finally:
         await ex.close(close_browser=True)
+
+
+
+@pytest.mark.asyncio
+async def test_one_skills_box_ticked_completes_the_rest_of_the_group(store, tmp_path):
+    """General Motors (2026-10-20): five boxes were looked up one by one and HQL/SQL was never ticked."""
+    job = _job()
+    answers.save_answer("experience.skills_list", "Python; SQL; Java; JavaScript; C++; React; Docker; PostgreSQL",
+                        answer_type="choice_chain", source="questionnaire")
+    answers.save_answer("skills.r_years", "1; 1 year", answer_type="choice_chain", source="questionnaire")
+    ex = await _race(tmp_path, LANGS, "langs2.html")
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        refs = {o["label"].strip(): o["ref"] for g in snap.groups for o in g["options"]}
+        out, _ = await d.t_fill_batch([{"ref": refs["Python"], "answer_key": "experience.skills_list", "value": None,
+                                        "source": None, "label": "Python"}])
+        ticked = await ex.page.evaluate("() => Array.from(document.querySelectorAll('input:checked')).map(i => i.id)")
+        assert sorted(ticked) == sorted(["py", "cc", "jv", "rr", "pg", "sq"]), out
+    finally:
+        await ex.close(close_browser=True)
