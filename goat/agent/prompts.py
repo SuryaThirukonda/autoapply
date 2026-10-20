@@ -79,7 +79,11 @@ def job_brief(job: dict, attempt_history: list[str]) -> str:
         f"attempt: {job.get('attempts', 0) + 1}",
     ]
     if attempt_history:
-        lines.append("PRIOR ATTEMPTS ON THIS LISTING (fix the named thing first; never repeat a recorded failure):")
+        # "never repeat a recorded failure" read as "do not try again": AutoZone parked on its address in 80 s quoting an
+        # earlier attempt, after the harness had been fixed for exactly that field (2026-10-19)
+        lines.append("PRIOR ATTEMPTS ON THIS LISTING (the harness may have been fixed since: try the named step again "
+                     "first, the same way once and then a different way; a hold recorded here is history, not a reason "
+                     "to stop):")
         lines += [f"- {h}" for h in attempt_history[-6:]]
     return "\n".join(lines)
 
