@@ -274,6 +274,29 @@ def workday_mail_quiet(hours: float = 8.0) -> bool:
     return miss >= 3 and opened == 0
 
 
+# The portal's own "you applied" page: Workday's jobTasks/completed/application with "Application Submitted", or a page
+# that thanks him for applying.
+COMPLETED_URL = re.compile(r"/jobTasks/completed/application|/application[-_]?submitted|/applicationConfirmation|/confirmation\b", re.I)
+COMPLETED_TEXT = re.compile(r"\b(application (submitted|received|complete)|thank(s| you) for (applying|your application)|"
+                            r"your application (has been|was) (submitted|received))\b", re.I)
+
+
+async def completed_application_page(ex) -> str:
+    """What shows that the application is in ('url: ...' or 'text: ...'), else ''."""
+    try:
+        url = ex.url or ""
+    except Exception:
+        url = ""
+    if COMPLETED_URL.search(url):
+        return f"url: {url[:160]}"
+    try:
+        text = await ex.page_text(6000)
+    except Exception:
+        text = ""
+    m = COMPLETED_TEXT.search(text or "")
+    return f"text: {m.group(0)}" if m else ""
+
+
 # A Workday account view's title left on an application form page (see t_snapshot).
 STALE_ACCOUNT_TITLE = re.compile(r"^\s*(forgot password|reset password|sign in|create account)\b", re.I)
 FORM_STEP_HEADING = re.compile(r"^(my information|my experience|application questions|voluntary disclosures|self identify)\b", re.I)
@@ -1883,7 +1906,18 @@ class ToolDispatcher:
                 raise Parked("review_needed: " + v.summary(), "hold")
             db.event(ctx.job_id, "auto_submit:verified", {"unconfirmed": v.unconfirmed, "judge": (v.verdict or {}).get("verdict")})
             ctx.auto_submitted = True
-        res = await do_submit(ctx.ex, ctx.job_id, label=button_label or "")
+        try:
+            res = await do_submit(ctx.ex, ctx.job_id, label=button_label or "")
+        except Exception as e:
+            # The click may have gone through before the tool broke (Hy-Vee, 2026-10-20: the page moved to 'Application
+            # Submitted' and a scan crashed on the navigation; the job was held while the application was in). A page
+            # that now says the application is complete is a submission; anything else stays an error.
+            done = await completed_application_page(ctx.ex)
+            if not done:
+                raise
+            from ..browser.submit import SubmitResult
+            res = SubmitResult("submitted", signal=f"completed_page: {done} (after {type(e).__name__})", url=ctx.ex.url or "",
+                               clicked_label=button_label or "")
         db.event(ctx.job_id, f"submit:{res.status}", res.as_dict())
         if res.status == "submitted":
             ctx.submitted = res.as_dict()

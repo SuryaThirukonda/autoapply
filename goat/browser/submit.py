@@ -79,11 +79,27 @@ async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: f
             return SubmitResult("submitted", signal="form_and_submit_button_gone", url=last.get("url", ""),
                                 clicked_label=found.get("text", ""))
         # A page that shows a new error after the click is a definite failure: stop waiting.
-        after_scan = await scan_errors(ex)
+        try:
+            after_scan = await scan_errors(ex)
+        except Exception:
+            # the page navigated away under the scan (Hy-Vee's submit went through and the scan crashed the tool,
+            # 2026-10-20): that is movement; the next signal check reads the new page
+            await asyncio.sleep(1.0)
+            continue
         refused = why_blocked(after_scan) + [f"form summary: {x.get('text')}" for x in (after_scan.get("summaries") or [])]
         if refused:
             return SubmitResult("failed", why=refused, url=after_scan.get("url", ""), clicked_label=found.get("text", ""))
 
-    after = await scan_errors(ex)
+    try:
+        after = await scan_errors(ex)
+    except Exception:
+        after = {}
+        try:
+            last = await submit_signal(ex)
+        except Exception:
+            last = {}
+        if last.get("url") and before.get("url") and last["url"] != before["url"]:
+            return SubmitResult("submitted", signal=f"url_changed: {before['url']} -> {last['url']}", url=last.get("url", ""),
+                                clicked_label=found.get("text", ""))
     return SubmitResult("failed", why=why_blocked(after) or ["page did not change and showed no error; the control may be inert"],
                         url=after.get("url", ""), clicked_label=found.get("text", ""))

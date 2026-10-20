@@ -1202,3 +1202,14 @@ async def test_a_bot_check_park_without_a_challenge_is_bounced(store, monkeypatc
     monkeypatch.setattr(toolsmod, "detect_challenge", no_challenge)
     out, _ = await d.t_park("bot_check_question: Workday sign-up encountered no robot prompt; continue application?")
     assert "no CAPTCHA" in out["error"]
+
+
+
+def test_a_completed_application_page_is_recognised():
+    """Hy-Vee (2026-10-20): the submit tool crashed after the click; the page was jobTasks/completed/application."""
+    from goat.agent.tools import COMPLETED_TEXT, COMPLETED_URL
+    assert COMPLETED_URL.search("https://hyvee.wd1.myworkdayjobs.com/en-US/HyVeeCareers/jobTasks/completed/application")
+    assert COMPLETED_TEXT.search("Candidate Home Application Submitted Under Consideration")
+    assert COMPLETED_TEXT.search("Thank you for applying to Acme!")
+    assert not COMPLETED_URL.search("https://hyvee.wd1.myworkdayjobs.com/en-US/HyVeeCareers/job/X/apply/applyManually")
+    assert not COMPLETED_TEXT.search("Review your application before you submit it")
