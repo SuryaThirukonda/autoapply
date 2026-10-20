@@ -135,8 +135,15 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         from .adapters.workday_sections import review_gaps
         missing = review_gaps(page_text, job.get("company", ""))
         if missing:
-            return GateResult("blocked", [f"the Review page does not show {m}: call go_to_step('My Experience'), then fill_sections, then Save and Continue forward to Review"
-                                          for m in missing[:4]])
+            from .adapters.workday_sections import LANGUAGES_GAP
+            return GateResult("blocked", [
+                (f"the Review page shows Languages: No Response: call go_to_step('My Experience'), click the Languages section's "
+                 "Add button, choose English for Language (answer_key background.languages_spoken), tick 'I am fluent in this "
+                 "language' (experience.fluent_in_english), set each proficiency box with answer_key experience.english_proficiency, "
+                 "then Save and Continue forward to Review")
+                if m == LANGUAGES_GAP else
+                f"the Review page does not show {m}: call go_to_step('My Experience'), then fill_sections, then Save and Continue forward to Review"
+                for m in missing[:4]])
     # Greenhouse's single page: when it has an Employment section, every stored work entry must be in it.
     if (portal or "").lower() == "greenhouse":
         from .adapters.greenhouse_sections import review_gaps_from_snapshot

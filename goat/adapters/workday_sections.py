@@ -714,4 +714,11 @@ def review_gaps(page_text: str, company: str = "") -> list[str]:
             host_path = re.sub(r"^https?://(www\.)?", "", url).rstrip("/").lower()
             if host_path not in page_text.lower():
                 gaps.append(f"website {url}")
+    # A Languages section left empty (Cigna, DFW, Intel, 2026-10-20: "Languages No Response" on Review, caught only by the
+    # judge after a full verification round).
+    if re.search(r"(?m)^[ \t]*Languages[ \t]*\n+[ \t]*No Response\b", (page_text or "").replace("\u200b", "")):
+        gaps.append(LANGUAGES_GAP)
     return gaps
+
+
+LANGUAGES_GAP = "a Languages entry (English)"

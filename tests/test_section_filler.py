@@ -327,3 +327,14 @@ async def test_an_untouched_entry_without_a_delete_button_is_retyped(stored):
         assert not any("no Delete button" in x for x in rep.skipped), rep.summary()
     finally:
         await ex.close(close_browser=True)
+
+
+
+def test_an_empty_languages_section_on_review_is_a_gap(monkeypatch):
+    """Cigna, DFW, Intel (2026-10-20): 'Languages No Response' on Workday's Review page."""
+    from goat.adapters import workday_sections as ws
+    monkeypatch.setattr(ws, "stored_work_entries", lambda company="": [])
+    monkeypatch.setattr(ws, "stored_websites", lambda company="": [])
+    page = "My Experience\nWork Experience\nRevio\nLanguages\nNo Response\nApplication Questions"
+    assert ws.review_gaps(page) == [ws.LANGUAGES_GAP]
+    assert ws.review_gaps("My Experience\nLanguages\nEnglish\nFluent") == []
