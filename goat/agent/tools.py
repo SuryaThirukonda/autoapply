@@ -800,7 +800,7 @@ class ToolDispatcher:
                     # The stored text names this option ("Not Specified"), negated or not: only when the label
                     # starts with it, so "willing" never ticks "Not willing to relocate".
                     label_matched = any(lab.startswith(x) for x in [nv, *parts] if x)
-                elif item.get("type") == "checkbox" and parts and (parts[0] in SELECT_ALL or re.match(r"^(select|pick|choose|tick|check) (every|all)", parts[0]))                         and not NEGATED.match((item.get("label") or "").strip()):
+                elif item.get("type") == "checkbox" and parts and (parts[0] in SELECT_ALL or re.match(r"^(select|pick|choose|tick|check) (every|all)\b", parts[0]))                         and not NEGATED.match((item.get("label") or "").strip()):
                     # ("Select every location offered (multi-select)..." in his bank answer: American Express, 2026-10-19)
                     # "All offered locations; ..." on a multi-select group: every box is ticked (Surya, 2026-10-18)
                     val = "true"
@@ -1907,7 +1907,7 @@ class ToolDispatcher:
     # Surya 2026-10-18: a car requirement is fine (he arranges one); "local / within N miles" is fine when the posting is
     # paid; a straight hardware role is not.
     DISQUALIFIERS = re.compile(r"(master'?s|ph\.?d|doctoral|graduate program|active (secret|top secret|ts/sci|clearance)|returning intern|co-?op|fall 2027|spring 2028|quant|"
-                               r"unpaid|hardware (engineer|design|role)|(fpga|asic|rtl|verilog|vhdl|pcb)|circuit design|analog design)", re.I)
+                               r"unpaid|hardware (engineer|design|role)|\b(fpga|asic|rtl|verilog|vhdl|pcb)\b|circuit design|analog design)", re.I)
 
     _SEASON_MONTH = {"spring": 5, "summer": 8, "fall": 12, "autumn": 12, "winter": 12, "jan": 1, "january": 1, "feb": 2, "february": 2,
                      "mar": 3, "march": 3, "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7, "aug": 8, "august": 8,
@@ -1930,6 +1930,13 @@ class ToolDispatcher:
             return False
         lo = min((y, mo or 1) for y, mo in dates)
         hi = max((y, mo or 12) for y, mo in dates)
+        # a one-sided bound: "graduation on or after December 2027" / "December 2027 or later" sets only the low end,
+        # "graduating by / before / no later than June 2028" only the high end (Motorola, 2026-10-19)
+        if len(dates) == 1:
+            if re.search(r"\b(on or after|after|or later|no earlier than|at the earliest|from)\b", posting, re.I):
+                return lo > (2028, 5)
+            if re.search(r"\b(by|before|on or before|no later than|or earlier|at the latest)\b", posting, re.I):
+                return hi < (2028, 5)
         return lo > (2028, 5) or hi < (2028, 5)
 
     # A posting the portal no longer has (AtkinsRealis on Workday, 2026-10-18: "The page you are looking for doesn't exist"):

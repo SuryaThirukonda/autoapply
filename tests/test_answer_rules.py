@@ -1129,3 +1129,15 @@ async def test_a_graduation_window_naming_fall_2027_is_no_co_op_disqualifier(sto
     out, _ = await d.t_park("eligibility: The posting requires an expected graduation date in Fall 2027, Spring/Summer 2028, "
                             "or Spring/Summer 2029. Surya graduates May 2028 and meets this requirement. Proceeding.")
     assert "SATISFIED" in out["error"]
+
+
+
+def test_a_one_sided_graduation_bound():
+    """Motorola (2026-10-19): 'graduation on or after December 2027' was read as a window ending in December 2027."""
+    from goat.agent.tools import ToolDispatcher as T
+    assert not T.grad_window_excludes("eligibility: Posting requires graduation on or after December 2027; Surya graduates May 2028.")
+    assert not T.grad_window_excludes("eligibility: graduating December 2027 or later")
+    assert T.grad_window_excludes("eligibility: graduation on or after December 2028")
+    assert T.grad_window_excludes("eligibility: must graduate by December 2027")
+    assert not T.grad_window_excludes("eligibility: must graduate by June 2028")
+    assert T.grad_window_excludes("eligibility: graduation between December 2028 and May 2029")
