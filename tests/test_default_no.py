@@ -209,3 +209,14 @@ def test_processing_for_other_openings_is_his_keep_profile_yes():
     assert consent_key(q) == "consent.keep_profile_future_roles"
     assert consent_question_key("Send me job alerts for future opportunities") == "consent.marketing_email"
     assert consent_key("I accept to the processing of my Personal Data in accordance with the Privacy Notice") == "consent.privacy_notice"
+
+
+
+def test_taking_part_in_the_hiring_process_is_his_consent():
+    """General Motors (2026-10-20): 'Are you willing to participate in the required virtual coding assessment?'."""
+    from goat.agent.tools import consent_question_key, is_affiliation_question
+    q = "Are you willing to participate in the required virtual coding assessment for this role?"
+    assert consent_question_key(q) == "consent.hiring_process"
+    assert not is_affiliation_question(q, ["Yes", "No"])
+    assert consent_question_key("Are you able to attend an in-person interview in Detroit?") == "consent.hiring_process"
+    assert consent_question_key("Are you willing to relocate?") != "consent.hiring_process"

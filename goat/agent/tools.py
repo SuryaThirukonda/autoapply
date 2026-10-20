@@ -427,6 +427,14 @@ def default_no_choice(question: str, options: list[str] | None) -> str | None:
     return next((o for o in negs if "knowledge" in o.lower()), negs[0])
 
 
+# "Are you willing to participate in the required virtual coding assessment for this role?" (General Motors, 2026-10-20)
+# went to Surya and timed out: taking part in the hiring process itself is a consent he gave by applying.
+HIRING_STEP = re.compile(
+    r"\b(willing|able|agree|available)\b.{0,30}\b(to )?(participate in|take|complete|do|undergo|sit for|attend)\b.{0,80}"
+    r"\b(assessments?|coding (tests?|challenges?|assessments?)|online assessments?|technical (tests?|interviews?|screens?)|"
+    r"interviews?|hackerrank|codility|hirevue|video interviews?|case studies|work samples?|skills? tests?)\b", re.I)
+
+
 def consent_question_key(question: str) -> str | None:
     """Consent / acknowledgement / certification questions Surya answers yes to on every form (his rule,
     2026-10-15), mapped to the standing key that authorizes it. Marketing opt-ins map to the No key."""
@@ -436,6 +444,8 @@ def consent_question_key(question: str) -> str | None:
         return "consent.compliance_disclosure"
     if future_roles_consent(q):
         return "consent.keep_profile_future_roles"   # his questionnaire Yes (2026-10-18); newsletters stay No
+    if HIRING_STEP.search(q):
+        return "consent.hiring_process"              # taking part in the hiring process follows from applying
     asks_consent = re.search(r"\b(do|will|would) you (agree|accept|acknowledge|consent|certify|authori[sz]e|understand|confirm)\b", q, re.I)
     if SMS.search(q) and (asks_consent or CONSENT.search(q) or re.search(r"\b(receive|opt in|opt-in)\b", q, re.I)):
         return "consent.sms"
