@@ -507,7 +507,7 @@ PROGRAM_LIST = re.compile(
 # 2026-10-20): a membership in NAMED organizations his profile never mentions takes the negative option. A generic one
 # ("a student organization", "a professional association") is never defaulted: he belongs to several clubs.
 MEMBERSHIP_Q = re.compile(r"\b(are|is|were|have) you (been )?(currently )?(a |an )?(current |active |registered )?"
-                          r"(member|members|affiliated)\b.{0,12}\b(of|with|in)\b\s*(?P<org>[^?]{2,80})", re.I)
+                          r"(member|members|affiliated|involved|participating|participant)\b.{0,12}\b(of|with|in)\b\s*(?P<org>[^?]{2,80})", re.I)
 GENERIC_ORG = re.compile(r"\b(any|a|an)\s+(student|professional|campus|honor|community|social)?\s*(organi[sz]ation|association|"
                          r"club|society|group|union|fraternity|sorority)s?\b|\b(organi[sz]ations?|associations?|clubs?|societies)\b\s*$", re.I)
 

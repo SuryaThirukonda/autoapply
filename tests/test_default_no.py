@@ -263,3 +263,11 @@ def test_membership_in_named_organizations_he_never_mentions_is_a_default_no(mon
     assert not tools.membership_default_no("Are you a member of Turtle Robotics?", ["Yes", "No"])
     assert not tools.membership_default_no("Are you a member of any student organizations?", ["Yes", "No"])
     assert not tools.membership_default_no("Are you a member of a professional association?", ["Yes", "No"])
+
+
+
+def test_involvement_with_a_named_program_he_never_mentions_is_a_default_no():
+    """Stryker (2026-10-20): 'Have you in the past or are you currently involved with the FIRST Robotics program?'"""
+    from goat.agent.tools import membership_default_no
+    assert membership_default_no("Have you in the past or are you currently involved with the FIRST Robotics program?", ["Yes", "No", "Select One"])
+    assert not membership_default_no("Are you currently involved in any student organizations?", ["Yes", "No"])
