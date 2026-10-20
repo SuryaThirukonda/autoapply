@@ -1836,8 +1836,6 @@ class ToolDispatcher:
         # links on THIS portal's host (from this tenant) are ever accepted.
         after_ts = db.now() - 86400
         self.ctx.verify_link_tried = True
-        if timeout_s is None and self.ctx.portal == "workday" and workday_mail_quiet():
-            timeout_s = 45
         res = await asyncio.to_thread(self.ctx.mail.fetch_verification_link, self.ctx.portal, self.ctx.portal_host, after_ts,
                                       timeout_s=timeout_s)
         status = getattr(res, "status", "not_received")
