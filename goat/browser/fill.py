@@ -498,6 +498,57 @@ def decline_option(options: list[dict], wants: list[str]) -> dict | None:
     return dec[0] if dec else None
 
 
+# A pay answer (his stored 41600 a year) against dollar ranges: the narrowest range that holds it ("$40,000-$60,000"
+# on CACI's form, 2026-10-20); an hourly list (bounds under $1,000) is read against $20 an hour.
+_MONEY_NUM = r"\$?\s*(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*([kK]\b)?"
+
+
+def _money_value(num: str, k: str | None) -> float:
+    v = float(num.replace(",", ""))
+    return v * 1000 if k else v
+
+
+def _money_bucket(text: str) -> tuple[float, float] | None:
+    t = text or ""
+    if "$" not in t and not re.search(r"\d\s*[kK]\b", t):
+        return None
+    m = re.search(_MONEY_NUM + r"\s*(?:-|\u2013|\u2014|to)\s*" + _MONEY_NUM, t)
+    if m:
+        a, b = _money_value(m.group(1), m.group(2)), _money_value(m.group(3), m.group(4))
+        return (min(a, b), max(a, b))
+    m = re.search(r"(?:up to|less than|under|below|<)\s*" + _MONEY_NUM, t, re.I)
+    if m:
+        return (0.0, _money_value(m.group(1), m.group(2)))
+    m = re.search(_MONEY_NUM + r"\s*(?:\+|or (?:more|above|higher)|and (?:above|up))", t, re.I)
+    if m:
+        return (_money_value(m.group(1), m.group(2)), float("inf"))
+    m = re.search(r"(?:more than|over|above|greater than|>)\s*" + _MONEY_NUM, t, re.I)
+    if m:
+        return (_money_value(m.group(1), m.group(2)), float("inf"))
+    return None
+
+
+def money_option(options: list[dict], wants: list[str]) -> dict | None:
+    m = re.fullmatch(r"\s*\$?\s*(\d{1,3}(?:,\d{3})+|\d{4,7})(?:\.\d+)?\s*", (wants or [""])[0] or "")
+    if not m:
+        return None
+    annual = float(m.group(1).replace(",", ""))
+    if annual < 1000:
+        return None
+    parsed = [(o, _money_bucket(str(o.get("text") or ""))) for o in options]
+    parsed = [(o, b) for o, b in parsed if b is not None]
+    if len(parsed) < 2:
+        return None
+    targets = [annual]
+    if all(b[1] < 1000 or b[1] == float("inf") and b[0] < 1000 for _o, b in parsed):
+        targets = [round(annual / 2080, 2)]           # an hourly list
+    for target in targets:
+        hold = [(o, b) for o, b in parsed if b[0] <= target <= b[1]]
+        if hold:
+            return min(hold, key=lambda ob: (ob[1][1] - ob[1][0]))[0]
+    return None
+
+
 def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
     """Exact match first. A prefix/contains match is accepted only when it is UNambiguous: if several
     options share the prefix (Texas A&M University - College Station / - Commerce / - Kingsville) the
@@ -510,6 +561,9 @@ def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
     gpa_hit = gpa_option(options, wants)
     if gpa_hit is not None:
         return gpa_hit
+    pay_hit = money_option(options, wants)
+    if pay_hit is not None:
+        return pay_hit
     institution = any(_INSTITUTION.search(w or "") for w in wants)
     for want in wants:
         w = _norm(want)

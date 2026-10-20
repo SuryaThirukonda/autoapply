@@ -1318,3 +1318,13 @@ async def test_an_already_applied_park_stands_when_the_page_says_so(store):
     with pytest.raises(Parked) as e:
         await d.t_park("already_applied: Thrivent says an application was submitted")
     assert e.value.reason.startswith("already_applied")
+
+
+
+@pytest.mark.asyncio
+async def test_a_salary_range_question_takes_his_stored_pay(store):
+    job = _job()
+    d, ctx = _dispatcher(job)
+    answers.save_answer("compensation.desired_annual", "41600", answer_type="text", source="questionnaire")
+    out, _ = await d.t_lookup_answer("What is your desired salary range?", ["Up to $40,000", "$40,000-$60,000", "$60,000-$80,000"])
+    assert out["key"] == "compensation.desired_annual" and out["pick"] == "$40,000-$60,000"

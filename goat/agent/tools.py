@@ -615,6 +615,11 @@ def acknowledgement_key(question: str, options: list[str] | None) -> str | None:
     return consent_question_key(f"{question} | {yes}")
 
 
+# A desired-salary range question with dollar ranges as options (CACI, 2026-10-20): his stored desired pay decides.
+SALARY_QUESTION = re.compile(r"\b(desired|expected|expectations?|target|requested)\b.{0,30}\b(salary|compensation|pay|wage|rate)\b|"
+                             r"\b(salary|compensation|pay) (range|expectations?|requirements?)\b", re.I)
+
+
 # "Did you find this opportunity through a campus event / a conference / a career fair? If yes, which ...?" (Cigna,
 # 2026-10-20): his source is online (stored How-did-you-hear: LinkedIn, then job boards), so the answer is No.
 OTHER_SOURCE_QUESTION = re.compile(
@@ -1819,6 +1824,17 @@ class ToolDispatcher:
             return {"miss": True, "key": k, "hint": "this form counts public / state universities as government entities, and Surya worked in a "
                     "Texas A&M research group (a public university). His stored No to government employment covers federal government only: "
                     "call ask_user with this question and its choices."}, None
+        if SALARY_QUESTION.search(question or "") and options:
+            a_pay = answers.get("compensation.desired_annual", self.ctx.job.get("company", ""), self.ctx.portal)
+            if a_pay is not None and a_pay.has_value:
+                pick = fill.money_option([{"text": o} for o in options], [str(a_pay.answer)])
+                if pick is not None:
+                    out = self._present(a_pay, via="salary_rule")
+                    out["pick"] = pick["text"]
+                    out["note"] = (f"his desired pay is $20 an hour, ${float(a_pay.answer):,.0f} a year: the option that holds it is "
+                                   f"{pick['text']!r} (choose with answer_key compensation.desired_annual picks it)")
+                    db.event(self.ctx.job_id, "answer:salary_rule", {"question": question[:160], "pick": pick["text"]})
+                    return out, None
         if OTHER_SOURCE_QUESTION.search(question or ""):
             neg = default_no_choice(question, options) or "No"
             k_src = answers.key_from_question(question)

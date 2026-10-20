@@ -238,3 +238,18 @@ def test_a_decline_chain_takes_any_declining_wording():
     assert best_option(no_decline, chain + ["Asian (Not Hispanic or Latino) (United States of America)"])["text"].startswith("Asian")
     # a chain that does not start with 'decline' is untouched
     assert best_option([{"text": "Male"}, {"text": "I do not wish to disclose"}], ["Male", "Man"])["text"] == "Male"
+
+
+
+def test_a_salary_range_is_picked_by_the_amount_it_holds():
+    """CACI (2026-10-20): 'Up to $40,000', '$40,000-$60,000', ... for his $41,600 a year went to Surya."""
+    from goat.browser.fill import best_option
+    def opts(*xs):
+        return [{"text": x} for x in xs]
+    caci = opts("Up to $40,000", "$40,000-$60,000", "$60,000-$80,000", "$80,000-$100,000", "$100,000-$120,000")
+    assert best_option(caci, ["41600"])["text"] == "$40,000-$60,000"
+    assert best_option(opts("$0 - $50,000", "$50,001 - $75,000", "$75,001+"), ["41600"])["text"] == "$0 - $50,000"
+    assert best_option(opts("$15 - $19.99 per hour", "$20 - $24.99 per hour", "$25+ per hour"), ["41600"])["text"] == "$20 - $24.99 per hour"
+    assert best_option(opts("40k-60k", "60k-80k"), ["41600"])["text"] == "40k-60k"
+    assert best_option(opts("Yes", "No"), ["41600"]) is None
+    assert best_option(opts("2027 - 2028", "2028 - 2029"), ["41600"]) is None
