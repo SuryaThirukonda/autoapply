@@ -1226,3 +1226,15 @@ def test_a_signed_in_form_is_recognised_from_the_page_probe():
     assert sign_in_page({"pw": 1, "heads": ["Sign In"], "title": "Careers"})
     assert not sign_in_page({"pw": 2, "heads": ["Create Account"], "title": "Create Account"})
     assert not sign_in_page({"pw": 0, "heads": ["Sign In"], "title": ""})
+
+
+
+def test_a_skills_checkbox_question_ticks_every_option_naming_one_of_his_skills():
+    """General Motors (2026-10-20): 'Do you have any experience with the following programming languages and databases?'"""
+    from goat.agent.tools import skill_option_matches
+    skills = ["Python", "SQL", "Java", "JavaScript", "C++", "React", "FastAPI", "Node.js", "Docker", "PostgreSQL",
+              "Amazon Web Services (AWS)", "Git", "R"]
+    for opt in ["Python", "C, C#, C++", "Java/JavaScript", "R", "Postgres", "HQL/SQL", "AWS", "React.js", "Node"]:
+        assert skill_option_matches(opt, skills), opt
+    for opt in ["Scala", "Go", "SAS", "None of the above", "SQL Server", "MATLAB", "Rust", "C#"]:
+        assert not skill_option_matches(opt, skills), opt

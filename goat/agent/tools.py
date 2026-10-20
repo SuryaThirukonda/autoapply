@@ -236,6 +236,60 @@ RULE_TEXT = re.compile(r"^\s*(select|pick|choose|tick|check|add|always|leave)\b|
 from ..adapters import LOCATION_KEY, POSTING_LOCATIONS, posting_locations  # noqa: E402  (Northrop Grumman, 2026-10-19)
 
 
+# A set of his skills, not a ranking: a 'check all that apply' languages / tools question ticks every option that names
+# one of them (General Motors, 2026-10-20: the ranked-chain rule let only 'Python' through, the model ticked R and
+# Postgres by hand without a decision, and the judge failed the draft twice).
+SET_VALUED_KEYS = {"experience.skills_list"}
+SKILL_YEAR_KEYS = {"python": "Python", "java": "Java", "javascript": "JavaScript", "cpp": "C++", "r": "R", "sql": "SQL"}
+
+
+def _skill_tokens(text: str) -> list[str]:
+    t = str(text or "").lower()
+    inner = re.findall(r"\(([^)]*)\)", t)
+    t = re.sub(r"\([^)]*\)", " ", t)
+    out = []
+    for chunk in [t, *inner]:
+        for tok in re.split(r"[,/;|&]| and | or ", chunk):
+            tok = re.sub(r"[^a-z0-9+#. ]", "", tok).strip(" .")
+            if tok:
+                out.append(tok)
+    return out
+
+
+def _skill_key(tok: str) -> str:
+    return re.sub(r"[^a-z0-9+#]", "", tok)
+
+
+def skill_option_matches(option_label: str, skills: list[str]) -> bool:
+    """Whether a checkbox option ('C, C#, C++', 'Java/JavaScript', 'Postgres', 'HQL/SQL') names one of his skills."""
+    if NEGATED.match((option_label or "").strip()):
+        return False
+    have = {_skill_key(x) for sk in skills for x in _skill_tokens(sk) if _skill_key(x)}
+    for tok in _skill_tokens(option_label):
+        k = _skill_key(tok)
+        if not k:
+            continue
+        if k in have:
+            return True
+        if len(k) >= 4 and k.isalnum() and any(len(h) >= 4 and h.isalnum() and (h.startswith(k) or k.startswith(h)) for h in have):
+            return True
+    return False
+
+
+def his_skills(chain_value) -> list[str]:
+    """His skills list plus the languages he stored years or proficiency for (R, from the questionnaire)."""
+    skills = [x.strip() for x in str(chain_value or "").split(";") if x.strip()]
+    for stem, name in SKILL_YEAR_KEYS.items():
+        for k in (f"skills.{stem}_years", f"skills.{stem}_proficiency"):
+            a = answers.get(k)
+            first = str(a.answer).split(";")[0].strip().lower() if a is not None and a.answer else ""
+            if first and first not in ("0", "none", "no", "n/a"):
+                if name not in skills:
+                    skills.append(name)
+                break
+    return skills
+
+
 def concrete_entries(answer) -> list[str]:
     """The entries of a ';' chain that are values, without picker rules."""
     return [w.strip() for w in str(answer if answer is not None else "").split(";") if w.strip() and not RULE_TEXT.search(w.strip())]
@@ -356,7 +410,9 @@ SIGN_IN_FAILED = re.compile(
     r"(wrong email address or password|account might be locked|incorrect (email|username|password)|invalid (email|username|password|credentials|login)|"
     r"(email|username|password)( address)? (or password )?(is|was|you entered is) (incorrect|invalid|wrong)|could not (sign|log) you in|unable to (sign|log) in|"
     r"(sign|log)[- ]?in failed|authentication failed|password (does not|doesn't) match)", re.I)
-ACCOUNT_EXISTS = re.compile(r"(already (exists|have an account|registered|in use)|an account with this email|email (address )?is already)", re.I)
+ACCOUNT_EXISTS = re.compile(
+    r"(already (exists|registered|in use|been registered|associated with an account)|an account (with|for|using) this email|"
+    r"email (address )?is already|you already have an account(?!\s*\?)|user already exists)", re.I)
 RESET_STEPS = ("sign-in with the universal password failed on this tenant: do the password reset. Click 'Forgot your password?' (or 'Reset password'), "
                "fill the email box from answer_key identity.email, click the send button, call open_password_reset_link, snapshot, call credentials "
                "mode 'set_password' with the new-password ref (confirm box via confirm_password_ref, email_ref ''), click the save button, then "
@@ -848,13 +904,23 @@ class ToolDispatcher:
                 if item.get("type") == "radio":
                     # one choice only: "All offered locations" cannot be picked, so the ranking that follows decides
                     parts0 = [x for x in parts0 if answers.norm(x) not in SELECT_ALL] or parts0
-                if a_chain is not None and a_chain.answer_type == "choice_chain" and answers.norm(parts0[0]) not in SELECT_ALL:
+                if a_chain is not None and a_chain.answer_type == "choice_chain" and answers.norm(parts0[0]) not in SELECT_ALL \
+                        and f["answer_key"] not in SET_VALUED_KEYS:
                     chosen = await self._chain_pick(f["ref"], parts0)
                     if chosen is not None and chosen.get("ref") != f["ref"]:
                         results.append({"ref": f["ref"], "status": "failed",
                                         "error": f"the stored answer is an ordered preference: in this question it picks "
                                                  f"'{str(chosen.get('label') or '')[:60]}' [{chosen.get('ref')}]; tick only that option"})
                         continue
+            if is_choice and item and item.get("type") == "checkbox" and f.get("answer_key") in SET_VALUED_KEYS:
+                skills = his_skills(val)
+                if skill_option_matches(item.get("label") or "", skills):
+                    val = "true"
+                else:
+                    results.append({"ref": f["ref"], "status": "failed", "error": (
+                        f"'{str(item.get('label') or '')[:50]}' is not one of his skills ({', '.join(skills[:10])}): leave it "
+                        "unticked. Tick every option of this question that names one of them.")})
+                    continue
             # Checkbox/radio with a text answer: check it when the option's own label matches the answer
             # ("Available May 2027" with answer "May 2027"); refuse when it plainly does not.
             label_matched = False
@@ -1259,10 +1325,10 @@ class ToolDispatcher:
                 else:
                     out["next"] = "the account already exists on this tenant: go to Sign In, call credentials login_universal and click Sign In; if that fails, " + RESET_STEPS
             elif not self.ctx.signed_in:
-                if self.ctx.creds_mode == "create" and re.search(r"create account|sign up|register|continue|submit", f"{clicked} {label or ''}", re.I):
-                    self.ctx.create_clicked = True
+                create_click = self.ctx.creds_mode == "create" and bool(
+                    re.search(r"create account|sign up|register|continue|submit", f"{clicked} {label or ''}", re.I))
                 # The form can take a few seconds to replace the account page: read it until it shows.
-                head = ""
+                head, probe = "", {}
                 if self.ctx.creds_mode == "create" or re.search(r"sign ?in|log ?in|create account|sign up|register", clicked, re.I):
                     for _ in range(6):
                         probe = await self._account_probe()
@@ -1274,11 +1340,21 @@ class ToolDispatcher:
                         await asyncio.sleep(1.0)
                 if head:
                     self.ctx.signed_in = True
+                    if create_click:
+                        self.ctx.create_clicked = True
                     db.event(self.ctx.job_id, "creds:signed_in", {"host": self.ctx.portal_host, "heading": head, "mode": self.ctx.creds_mode})
                     out["signed_in"] = True
                     out["next"] = (f"signed in: the application form is open ('{head}'). Take a snapshot and fill it; the account step "
                                    "is done (never park credentials now).")
-                elif self.ctx.creds_mode == "create" and self.ctx.create_clicked:
+                elif create_click and probe and (probe.get("pw") or 0) >= 2:
+                    # The Create Account form is still there: the click did not go through (an empty verify-password
+                    # box under a password manager's menu, Analog Devices 2026-10-20) or the form shows an error.
+                    db.event(self.ctx.job_id, "creds:create_not_through", {"host": self.ctx.portal_host})
+                    out["next"] = ("the Create Account form is still showing, so the account was not created yet. Take a snapshot and "
+                                   "read its messages: an empty or flagged verify-password box means call credentials mode 'create' "
+                                   "again (email, password and verify-password refs) and click Create Account once more.")
+                elif create_click:
+                    self.ctx.create_clicked = True
                     out["next"] = ("the account was created (no 'already exists' message). Take a snapshot: if it is a Sign In page, "
                                    "call credentials login_universal and click Sign In; if it asks you to verify the email, call "
                                    "open_verification_link.")
@@ -1752,13 +1828,37 @@ class ToolDispatcher:
         email = SETTINGS.creds.application_email
 
         async def _type_into(ref: str, text: str, secret: bool) -> None:
-            await ex.focus_ref(ref)
-            await ex.page.keyboard.press("Control+a")
-            await ex.page.keyboard.press("Backspace")
-            if secret:
-                await ex.type_secret(text)
-            else:
-                await ex.type_text(text)
+            # A password manager's inline menu (Bitwarden's 'Unlock your account to view autofill suggestions') opens
+            # under the box just typed and can sit over the next one: the focusing click landed on the menu and the
+            # verify-password box stayed empty (Analog Devices, CNA, Teledyne, 2026-10-20). Check what landed (its
+            # length only) and focus the element directly when it is short.
+            loc = ex.page.locator(f'[data-goat-ref="{ref}"]').first
+            for attempt in range(3):
+                try:
+                    if attempt == 0:
+                        await ex.focus_ref(ref)
+                    else:
+                        await loc.focus(timeout=3000)
+                    await ex.page.keyboard.press("Control+a")
+                    await ex.page.keyboard.press("Backspace")
+                    if attempt < 2:
+                        if secret:
+                            await ex.type_secret(text)
+                        else:
+                            await ex.type_text(text)
+                    else:
+                        await loc.fill(text, timeout=3000)
+                    n = await loc.evaluate("el => (el.value || '').length", timeout=3000)
+                except Exception:
+                    if attempt == 0:
+                        raise
+                    n = -1
+                if n == len(text):
+                    break
+            try:
+                await loc.evaluate("el => el.blur()", timeout=2000)    # closes the inline menu over the next control
+            except Exception:
+                pass
 
         loop = __import__("asyncio").get_event_loop()
         # The helper is synchronous and calls the callbacks; bridge them onto the loop.

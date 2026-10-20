@@ -357,3 +357,40 @@ async def test_a_ranked_location_list_picks_one_radio_by_rank(store, tmp_path):
         assert out["results"][0]["status"] == "set"
     finally:
         await ex.close(close_browser=True)
+
+
+LANGS = """<!doctype html><html><body style="margin:20px">
+<fieldset><legend>Do you have any experience with the following programming languages and databases? (check all that apply)</legend>
+  <label><input type="checkbox" id="py"> Python</label>
+  <label><input type="checkbox" id="cc"> C, C#, C++</label>
+  <label><input type="checkbox" id="jv"> Java/JavaScript</label>
+  <label><input type="checkbox" id="rr"> R</label>
+  <label><input type="checkbox" id="pg"> Postgres</label>
+  <label><input type="checkbox" id="sc"> Scala</label>
+  <label><input type="checkbox" id="sq"> HQL/SQL</label></fieldset>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_his_skills_list_ticks_every_matching_language_box(store, tmp_path):
+    """General Motors (2026-10-20): the skills list was treated as a ranking and only 'Python' could be ticked."""
+    job = _job()
+    answers.save_answer("experience.skills_list", "Python; SQL; Java; JavaScript; C++; React; Docker; PostgreSQL",
+                        answer_type="choice_chain", source="questionnaire")
+    answers.save_answer("skills.r_years", "1; 1 year", answer_type="choice_chain", source="questionnaire")
+    ex = await _race(tmp_path, LANGS, "langs.html")
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        refs = {o["label"].strip(): o["ref"] for g in snap.groups for o in g["options"]}
+        key = "experience.skills_list"
+        out, _ = await d.t_fill_batch([{"ref": r, "answer_key": key, "value": None, "source": None, "label": lab} for lab, r in refs.items()])
+        st = {r["ref"]: r["status"] for r in out["results"]}
+        assert st[refs["Scala"]] == "failed"
+        assert all(st[refs[x]] == "set" for x in ["Python", "C, C#, C++", "Java/JavaScript", "R", "Postgres", "HQL/SQL"]), out
+        ticked = await ex.page.evaluate("() => Array.from(document.querySelectorAll('input:checked')).map(i => i.id)")
+        assert sorted(ticked) == sorted(["py", "cc", "jv", "rr", "pg", "sq"])
+    finally:
+        await ex.close(close_browser=True)

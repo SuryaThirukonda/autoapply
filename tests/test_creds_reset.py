@@ -298,3 +298,82 @@ async def test_a_credentials_park_on_a_create_account_page_still_stands(store):
     ctx.verify_link_tried = ctx.reset_link_tried = ctx.reset_not_received = ctx.create_tried = ctx.account_exists = True
     with pytest.raises(Parked):
         await d.t_park("credentials_unknown: account exists, password unknown, no reset email")
+
+
+
+def test_the_create_pages_own_sign_in_link_is_not_an_existing_account():
+    """Analog Devices (2026-10-20): 'Already have an account? Sign In' under the form was read as 'account exists'."""
+    from goat.agent.tools import ACCOUNT_EXISTS
+    assert not ACCOUNT_EXISTS.search("Create Account Email Address Password Verify New Password Create Account Already have an account? Sign In")
+    assert not ACCOUNT_EXISTS.search("Already have an account ? Sign In")
+    for msg in ["An account with this email already exists.", "This email address is already in use.",
+                "The email address you entered is already registered", "You already have an account. Please sign in.",
+                "User already exists"]:
+        assert ACCOUNT_EXISTS.search(msg), msg
+
+
+@pytest.mark.asyncio
+async def test_a_create_click_that_leaves_the_form_says_it_did_not_go_through(store):
+    job = _job()
+    ex = ProbeEx("Create Account Already have an account? Sign In", {"pw": 2, "heads": ["Create Account"], "title": "Create Account"})
+    d, ctx = _with_ex(job, ex)
+    ctx.creds_mode = "create"
+    out, _ = await d.t_click("e1", "Create Account")
+    assert out.get("account") != "exists" and not ctx.account_exists and not ctx.create_clicked
+    assert "still showing" in out["next"]
+    assert db.connect().execute("SELECT COUNT(*) FROM events WHERE kind='creds:create_not_through'").fetchone()[0] == 1
+
+
+CREATE_FORM = """<!doctype html><html><body style="margin:20px">
+<h2>Create Account</h2>
+<label for="em">Email Address</label><input id="em" type="text"><br><br>
+<label for="p1">Password</label><input id="p1" type="password"><br><br>
+<label for="p2">Verify New Password</label><input id="p2" type="password"><br><br>
+<button type="button" id="go">Create Account</button>
+<div id="menu" style="position:absolute;z-index:99;background:#fff;border:1px solid #888">Unlock your account to view autofill suggestions</div>
+<script>
+  // a password manager's inline menu that opens under a focused password box and covers the box below it
+  document.querySelectorAll('input[type=password]').forEach(el => el.addEventListener('focus', () => {
+    const r = el.getBoundingClientRect(); const m = document.getElementById('menu');
+    m.style.left = r.left + 'px'; m.style.top = (r.bottom + 2) + 'px'; m.style.width = '320px'; m.style.height = '90px';
+  }));
+</script>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_the_verify_password_box_is_filled_even_under_a_password_managers_menu(store, tmp_path):
+    """Analog Devices (2026-10-20): Bitwarden's inline menu covered 'Verify New Password'; the focusing click hit the
+    menu and the box stayed empty."""
+    from goat.browser import snapshot
+    from goat.browser.executor import Executor, HostPolicy
+    page = tmp_path / "create.html"
+    page.write_text(CREATE_FORM, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        job = _job()
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        refs = {i["label"]: i["ref"] for i in snap.items if i.get("label")}
+        secret = "Test#Pass123"
+
+        def fill_credentials(host, email, type_email, type_pw, mode):
+            type_email(email)
+            type_pw(secret)
+            return "filled_universal"
+
+        def fill_confirm_password(host, type_pw2):
+            type_pw2(secret)
+            return "filled"
+        ctx.creds = SimpleNamespace(fill_credentials=fill_credentials, fill_confirm_password=fill_confirm_password)
+        out, _ = await d.t_credentials("create", refs["Email Address"], refs["Password"], refs["Verify New Password"])
+        assert out["status"] == "filled_universal"
+        lens = await ex.page.evaluate("() => [document.getElementById('p1').value.length, document.getElementById('p2').value.length]")
+        assert lens == [len(secret), len(secret)]
+    finally:
+        await ex.close(close_browser=True)
