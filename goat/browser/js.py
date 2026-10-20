@@ -825,7 +825,9 @@ JS_FIELD_COMMIT = r"""
   const prompt = !!(box && box.querySelector('[data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"], [data-automation-id="promptIcon"], [data-automation-id="promptSearchButton"]'));
   const errEl = box ? Array.from(box.querySelectorAll('[data-automation-id="errorMessage"], [role="alert"], [class*="error" i]')).find(e => vis(e) && txt(e)) : null;
   return JSON.stringify({ found: true, prompt, chips: chips.slice(0, 12), value: (el.value || '').slice(0, 160),
-                          invalid: el.getAttribute('aria-invalid') === 'true' || !!errEl, error: errEl ? txt(errEl).slice(0, 160) : '' });
+                          invalid: el.getAttribute('aria-invalid') === 'true' || !!errEl, error: errEl ? txt(errEl).slice(0, 160) : '',
+                          cx: /cx-select-input/.test(String(el.className || '')),
+                          cxInvalid: /cx-select-input--invalid/.test(String(el.className || '')) || el.getAttribute('aria-invalid') === 'true' });
 }
 """
 

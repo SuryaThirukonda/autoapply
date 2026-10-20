@@ -902,6 +902,13 @@ async def _committed(ex: Executor, ref: str, text: str) -> tuple[bool, str]:
     if not isinstance(st, dict) or not st.get("found"):
         return True, ""            # the control was replaced by its committed rendering
     t = _norm(text)
+    if st.get("cx") and st.get("cxInvalid"):
+        # an Oracle picker that still says invalid holds typed text, not a pick (AutoZone's Gender read 'Male' and stayed
+        # required, 2026-10-19); its validation can lag the click, so look once more
+        await asyncio.sleep(0.6)
+        st2 = await ex.eval(js.JS_FIELD_COMMIT, ref)
+        if isinstance(st2, dict) and st2.get("found") and st2.get("cxInvalid"):
+            return False, "the Oracle picker still marks the field invalid (the option was not taken)"
     if st.get("prompt"):
         if any(t and (t in _norm(c) or _norm(c) in t) for c in st.get("chips") or []):
             return True, ""
