@@ -178,3 +178,10 @@ def test_fact_check_lets_silence_support_no_to_influencing_the_company():
     influence GM decisions'."""
     from goat.judge import FACT_CHECK_INSTRUCTIONS
     assert "in a position to influence its decisions" in FACT_CHECK_INSTRUCTIONS
+
+
+
+def test_fact_check_follows_the_forms_own_term_definitions():
+    """Datadog (2026-10-20): the form defines Summer as April-July; May 2028 is Summer 2028 there."""
+    from goat.judge import FACT_CHECK_INSTRUCTIONS
+    assert "form's own definition of that term covers the month" in FACT_CHECK_INSTRUCTIONS

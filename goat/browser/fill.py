@@ -433,16 +433,74 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
     return options[hit["_i"]] if hit is not None else None
 
 
+# A GPA answer ("4.0 or above", "4.0+", "4.0") against numeric buckets: the bucket that holds the number wins, the
+# highest one when two hold it ("3.75 - 4" and "4+" both hold 4.0). Klaviyo (2026-10-19) listed '3.5 - 3.74',
+# '3.75 - 4', '4+': no stored wording matched, and "3.5+" (its '+' lost in normalising) prefix-matched '3.5 - 3.74'.
+_GPA_WANT = re.compile(r"^\s*([0-4]\.\d{1,2})\s*(\+|or above|and above|or higher|and higher|or more|or greater)?\s*$", re.I)
+_NUM = r"(\d(?:\.\d{1,2})?)"
+_RANGE = re.compile(_NUM + r"\s*(?:-|\u2013|\u2014|to)\s*" + _NUM)
+_AT_LEAST = re.compile(_NUM + r"\s*(?:\+|or above|and above|or higher|and higher|or more|or greater)|"
+                       r"(?:above|over|at least|greater than|>=?)\s*" + _NUM, re.I)
+_BELOW = re.compile(r"(?:below|under|less than|<)\s*" + _NUM + r"|" + _NUM + r"\s*(?:or below|or under|or less|and below|or lower)", re.I)
+
+
+def _gpa_bucket(text: str) -> tuple[float, float, bool] | None:
+    """(low, high, high_inclusive) for a GPA bucket label, else None."""
+    t = (text or "").strip()
+    m = _RANGE.search(t)
+    if m:
+        a, b = sorted((float(m.group(1)), float(m.group(2))))
+        return (a, b, True) if b <= 5 else None
+    m = _AT_LEAST.search(t)
+    if m:
+        v = float(m.group(1) or m.group(2))
+        return (v, 5.0, True) if v <= 5 else None
+    m = _BELOW.search(t)
+    if m:
+        v = float(m.group(1) or m.group(2))
+        inclusive = bool(m.group(2))
+        return (0.0, v, inclusive) if v <= 5 else None
+    m = re.fullmatch(_NUM, t)
+    if m:
+        v = float(m.group(1))
+        return (v, v, True) if v <= 5 else None
+    return None
+
+
+def gpa_option(options: list[dict], wants: list[str]) -> dict | None:
+    m = _GPA_WANT.match((wants or [""])[0] or "")
+    if not m:
+        return None
+    gpa = float(m.group(1))
+    parsed = [(o, _gpa_bucket(o.get("text") or "")) for o in options]
+    parsed = [(o, b) for o, b in parsed if b is not None]
+    if len(parsed) < 2:
+        return None
+    hold = [(o, b) for o, b in parsed if b[0] <= gpa and (gpa <= b[1] if b[2] else gpa < b[1])]
+    if not hold:
+        return None
+    return max(hold, key=lambda ob: ob[1][0])[0]
+
+
 def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
     """Exact match first. A prefix/contains match is accepted only when it is UNambiguous: if several
     options share the prefix (Texas A&M University - College Station / - Commerce / - Kingsville) the
     caller must name the exact one. Picking the shortest would silently choose the wrong campus."""
     seen: set[str] = set()
     options = [o for o in options if not (_norm(o.get("text")) in seen or seen.add(_norm(o.get("text"))))]
+    gpa_hit = gpa_option(options, wants)
+    if gpa_hit is not None:
+        return gpa_hit
     institution = any(_INSTITUTION.search(w or "") for w in wants)
     for want in wants:
         w = _norm(want)
         if not w:
+            continue
+        if re.fullmatch(r"\s*\d+(\.\d+)?\s*\+\s*", want or ""):
+            # "3.5+" normalises to "3 5", which would prefix-match "3.5 - 3.74": a number-plus answer matches only exactly
+            exact = [o for o in options if (o.get("text") or "").replace(" ", "") == want.replace(" ", "")]
+            if exact:
+                return exact[0]
             continue
         exact = [o for o in options if _norm(o["text"]) == w]
         if exact:

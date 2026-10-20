@@ -168,3 +168,23 @@ async def test_a_file_button_uploads_through_its_file_input(tmp_path):
         assert name == "doc.pdf"
     finally:
         await ex.close()
+
+
+
+def test_a_gpa_answer_picks_the_bucket_that_holds_his_gpa():
+    """Klaviyo (2026-10-19): the GPA chain landed on '3.5 - 3.74' for a 4.0."""
+    from goat.browser.fill import best_option
+    chain = ["4.0 or above", "4.0 and above", "4.0+", "3.7 - 4.0", "3.7-4.0", "3.75 - 4.0", "3.5 - 4.0", "3.5+", "3.5 or above"]
+    def opts(*xs):
+        return [{"text": x} for x in xs]
+    klaviyo = opts("Below 2", "2 - 2.24", "2.25 - 2.49", "2.5 - 2.74", "2.75 - 2.99", "3 - 3.24", "3.25 - 3.49", "3.5 - 3.74", "3.75 - 4", "4+")
+    assert best_option(klaviyo, chain)["text"] == "4+"
+    assert best_option(opts("3.75+", "3.41 - 3.74", "Below 3.4"), chain)["text"] == "3.75+"
+    assert best_option(opts("3.7 - 4.0", "3.1 - 3.6", "3.0 or under"), chain)["text"] == "3.7 - 4.0"
+    assert best_option(opts("4.0 or higher", "3.5 - 3.99", "3.49 - 3.0", "2.99 or below"), chain)["text"] == "4.0 or higher"
+    assert best_option(opts("Yes", "No"), chain) is None
+    # a number-plus answer never prefix-matches a narrower bucket
+    assert best_option(opts("5 - 10 years", "Below 5 years"), ["5+"]) is None
+    assert best_option(opts("5 - 10 years", "5+"), ["5+"])["text"] == "5+"
+    # years chains (whole numbers) keep their text matching
+    assert best_option(opts("0-1 years", "1-3 years", "3-5 years"), ["1", "1 year", "1-3 years"])["text"] == "1-3 years"
