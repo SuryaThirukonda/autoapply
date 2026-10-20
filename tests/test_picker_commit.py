@@ -103,3 +103,47 @@ async def test_an_expanded_prompt_is_still_a_prompt(tmp_path):
         assert st["prompt"] is True and st["chips"] == []
     finally:
         await ex.close()
+
+
+NESTED = """<html><body style="font:14px sans-serif">
+<div data-automation-id="formField-source">
+  <label id="l3">How Did You Hear About Us?</label>
+  <div data-automation-id="multiSelectContainer">
+    <div id="chips3"></div>
+    <input id="q3" aria-labelledby="l3" role="combobox" style="width:300px;height:28px">
+    <span data-automation-id="promptIcon">v</span>
+  </div>
+</div>
+<ul id="lb3" role="listbox" style="display:none;list-style:none;padding:0;margin:0;width:420px">
+  <li role="option" data-automation-id="promptOption" style="height:30px">Employment Agency / Search Firm</li>
+  <li role="option" data-automation-id="promptOption" style="height:30px">Job Board</li>
+</ul>
+<script>
+  const q3 = document.getElementById('q3'), lb3 = document.getElementById('lb3'), chips3 = document.getElementById('chips3');
+  q3.addEventListener('click', () => { lb3.style.display = 'block'; });
+  q3.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault();
+      if (q3.value.trim().toLowerCase() === 'linkedin') { chips3.innerHTML = '<div data-automation-id="selectedItem">LinkedIn</div>'; q3.value = ''; lb3.style.display = 'none'; } }
+    if (e.key === 'Escape') { lb3.style.display = 'none'; }
+  });
+  lb3.querySelectorAll('li').forEach(li => li.addEventListener('click', () => {
+    chips3.innerHTML = '<div data-automation-id="selectedItem">' + li.textContent + '</div>'; lb3.style.display = 'none'; }));
+</script></body></html>"""
+
+
+async def test_a_nested_first_preference_is_searched_before_a_lower_one(tmp_path):
+    """Ecolab (2026-10-20): LinkedIn sat inside a category and the chain settled for 'Employment Agency / Search Firm'."""
+    db.reset_for_tests(tmp_path / "t.db")
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page()
+        await ex.page.set_content(NESTED)
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if "How Did You Hear" in (i.get("label") or ""))
+        r = await fill.choose(ex, ref, ["LinkedIn", "Job Board", "Agency / Search Firm", "Other"])
+        assert r.ok and r.readback == "LinkedIn", r
+        chip = await ex.page.evaluate("() => (document.querySelector('[data-automation-id=selectedItem]') || {}).textContent")
+        assert chip == "LinkedIn"
+    finally:
+        await ex.close()

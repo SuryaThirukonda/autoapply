@@ -814,6 +814,26 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
                 shown_now = [o for o in (shown_now if isinstance(shown_now, list) else []) if _key(o) not in baseline_keys]
                 if shown_now:
                     break
+            # A Workday prompt whose top level does not show the first preference may hold it inside a category: its
+            # search box finds it there. Ecolab (2026-10-20) listed no 'LinkedIn' at the top and the chain settled for
+            # 'Employment Agency / Search Firm', its third choice. Search for the first preference before settling.
+            if wd_prompt and attempt == 0 and wants and wants[0] and shown_now \
+                    and best_option(shown_now, [wants[0]]) is None and best_option(shown_now, wants) is not None:
+                ok_s, shown_s = await _type_and_enter(ex, ref, [wants[0]], baseline_keys)
+                if ok_s:
+                    return FieldResult(ref, True, shown_s)
+                try:
+                    await ex.page.keyboard.press("Escape")
+                    await ex.click_ref(ref)
+                except Exception:
+                    pass
+                shown_now = []
+                for _ in range(8):
+                    await asyncio.sleep(0.3)
+                    shown_now = await ex.eval(js.JS_LIST_OPTIONS)
+                    shown_now = [o for o in (shown_now if isinstance(shown_now, list) else []) if _key(o) not in baseline_keys]
+                    if shown_now:
+                        break
             if type_to_filter and want and not (shown_now and best_option(shown_now, [want] if multi_tree else wants)) \
                     and await _text_box_focused(ex):
                 await _select_all_text(ex)     # replace, never append to, text left in the search box
