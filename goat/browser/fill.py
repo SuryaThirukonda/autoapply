@@ -684,6 +684,10 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
     # options under categories: the prompt's search box filters the whole tree, so each want is typed and
     # matched exactly instead of drilling into a category by hand.
     multi_tree = bool(re.search(r"\bitems? selected\b", before or "", re.I))
+    try:
+        wd_prompt = bool(await ex.eval(JS_IS_WORKDAY_PROMPT, ref))
+    except Exception:
+        wd_prompt = False
     # 0. already showing the wanted option: nothing to click.
     for w in wants:
         if _norm(w) and not PLACEHOLDER.match(before or "") and _norm(before) == _norm(w):
@@ -845,6 +849,28 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
             except ClickRefused as e:
                 return FieldResult(ref, False, before, str(e))
             await asyncio.sleep(0.6)
+            if wd_prompt:
+                # A Workday prompt holds its picks as chips; the text in its box is the search typed into it. Gordon
+                # Food Service (2026-10-20): a click on the 'Job Board' category left the typed 'LinkedIn' in the box,
+                # that text was read as the value, and the form was left with no pick at all.
+                st = await ex.eval(js.JS_FIELD_COMMIT, ref)
+                chips = [c for c in ((st.get("chips") or []) if isinstance(st, dict) else []) if c]
+                hit = next((c for c in chips if _chip_matches(c, [pick["text"], *[w for w in wants if w]])), None)
+                if hit:
+                    return FieldResult(ref, True, hit)
+                nxt = await ex.eval(js.JS_LIST_OPTIONS)
+                nxt = [o for o in (nxt if isinstance(nxt, list) else []) if _key(o) not in baseline_keys]
+                if nxt and {o.get("text") for o in nxt} != {o.get("text") for o in options}:
+                    # a category opened its next level (Job Board -> Indeed / LinkedIn / ...): stay in it
+                    open_now = True
+                    last_err = f"inside {pick['text']!r} the list shows: {[o['text'] for o in nxt[:12]]}; none matched the preference list"
+                    continue
+                # a leaf that only showed its text: commit it through its own radio or the keyboard
+                committed, why = await _force_commit(ex, ref, pick["text"], want)
+                if committed:
+                    return FieldResult(ref, True, pick["text"])
+                last_err = f"clicked {pick['text'][:60]!r} but it did not commit ({why})"
+                continue
             after = await ex.read_ref(ref)
             shown = (after.get("value") or after.get("shown") or "")
             if not shown.strip() or after.get("tag") == "button":
@@ -916,11 +942,7 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
             last_err = f"no option matched {want!r}; saw: {sample}" if options else f"no options appeared after opening (typed {want!r})"
     # Last resort on a Workday prompt input: type the text and press Enter (free-entry prompts take the typed
     # text; filtered prompts take the highlighted match). Verified by a selected-item chip.
-    try:
-        workday_prompt = bool(await ex.eval(JS_IS_WORKDAY_PROMPT, ref))
-    except Exception:
-        workday_prompt = False
-    if workday_prompt:
+    if wd_prompt:
         whys = []
         for w in [x for x in wants if x and x.strip()][:3]:
             ok, shown = await _type_and_enter(ex, ref, [w, *[x for x in wants if x and x != w]], baseline_keys)

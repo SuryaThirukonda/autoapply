@@ -77,3 +77,29 @@ async def test_a_prompt_that_never_commits_is_reported_honestly(tmp_path):
         assert not r.ok and "did not commit" in r.error
     finally:
         await ex.close()
+
+
+EXPANDED = """<html><body>
+<div data-automation-id="multiSelectContainer" aria-expanded="true">
+  <label id="l2">How Did You Hear About Us?</label>
+  <input id="q2" aria-labelledby="l2" value="LinkedIn" style="width:300px;height:28px">
+</div>
+<span data-automation-id="promptIcon">v</span>
+</body></html>"""
+
+
+async def test_an_expanded_prompt_is_still_a_prompt(tmp_path):
+    """Gordon Food Service (2026-10-20): with a category open, the container was the closest box, the field no longer
+    read as a prompt, and the typed search text 'LinkedIn' passed as its value."""
+    from goat.browser import js
+    db.reset_for_tests(tmp_path / "t.db")
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page()
+        await ex.page.set_content(EXPANDED)
+        await ex.page.evaluate("() => document.getElementById('q2').setAttribute('data-goat-ref', 'e7')")
+        st = await ex.eval(js.JS_FIELD_COMMIT, "e7")
+        assert st["prompt"] is True and st["chips"] == []
+    finally:
+        await ex.close()

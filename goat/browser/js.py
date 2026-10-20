@@ -888,7 +888,12 @@ JS_FIELD_COMMIT = r"""
   const scope = box || document;
   const chips = Array.from(scope.querySelectorAll('[data-automation-id="selectedItem"], [class*="multi-value__label" i], [class*="selected-item" i], [class*="chip" i]'))
     .filter(vis).map(c => txt(c)).filter(Boolean);
-  const prompt = !!(box && box.querySelector('[data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"], [data-automation-id="promptIcon"], [data-automation-id="promptSearchButton"]'));
+  // An expanded prompt (a category opened, Gordon Food Service 2026-10-20) makes the multiSelectContainer itself the
+  // closest box: it matches the selector rather than containing it, and it is still a prompt.
+  const PROMPT_SEL = '[data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"], [data-automation-id="promptIcon"], [data-automation-id="promptSearchButton"]';
+  const ff = el.closest('[data-automation-id^="formField"]');
+  const prompt = !!((box && (box.matches(PROMPT_SEL) || box.querySelector(PROMPT_SEL))) || (ff && ff.querySelector(PROMPT_SEL))
+                    || el.closest('[data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"]'));
   const errEl = box ? Array.from(box.querySelectorAll('[data-automation-id="errorMessage"], [role="alert"], [class*="error" i]')).find(e => vis(e) && txt(e)) : null;
   return JSON.stringify({ found: true, prompt, chips: chips.slice(0, 12), value: (el.value || '').slice(0, 160),
                           invalid: el.getAttribute('aria-invalid') === 'true' || !!errEl, error: errEl ? txt(errEl).slice(0, 160) : '',
