@@ -1154,3 +1154,34 @@ async def test_a_relocation_needs_you_park_is_bounced(store):
     out, _ = await d.t_park("needs_you: This application requires residence in Memphis during the internship; relocation "
                             "assistance eligibility is unclear (it depends on family housing availability in Memphis).")
     assert "relocates" in out["error"]
+
+
+
+@pytest.mark.asyncio
+async def test_a_no_answer_ticks_the_no_box_of_a_checkbox_group(store, monkeypatch):
+    """American Century (2026-10-19): 'Grant Thornton / FORVIS / Deloitte and Touche / No' checkboxes, answer No."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher({"id": 87, "company": "American Century Investments", "ats": "workday"})
+    g = "Are you currently employed by, or have you previously worked for, any of the listed firms?"
+    items = [{"ref": f"e{44 + n}", "tag": "input", "type": "checkbox", "label": lab, "group": g, "checked": False}
+             for n, lab in enumerate(["Grant Thornton", "FORVIS", "Deloitte and Touche", "No"])]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    sent = {}
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        out = []
+        for p_ in plan:
+            sent[p_["ref"]] = p_["value"]
+            out.append(FieldResult(p_["ref"], True, "checked" if str(p_["value"]) == "true" else "unchecked", ""))
+        return out
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("bank.prior-employee", "No", answer_type="choice", source="seed")
+    await d.t_fill_batch([{"ref": "e47", "answer_key": "bank.prior-employee", "value": None, "source": None, "label": g}])
+    await d.t_fill_batch([{"ref": "e44", "answer_key": "bank.prior-employee", "value": None, "source": None, "label": g}])
+    assert str(sent.get("e47")) == "true", sent
+    assert str(sent.get("e44")).lower() in ("no", "false"), sent

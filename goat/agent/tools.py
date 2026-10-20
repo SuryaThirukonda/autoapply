@@ -845,6 +845,16 @@ class ToolDispatcher:
                         results.append({"ref": f["ref"], "status": "failed",
                                         "error": f"the stored answer is Yes but this option reads '{opt_label[:50]}'; tick the Yes option instead"})
                         continue
+            # A checkbox group answered No ticks its own "No" / "None of the above" box; the other boxes (the firms it
+            # lists) stay unticked. American Century's 'Grant Thornton / FORVIS / Deloitte and Touche / No' boxes kept
+            # 'No' unticked and the run was held (2026-10-19).
+            if is_choice and item and item.get("type") == "checkbox" and not label_matched \
+                    and str(val).strip().lower() in ("no", "false", "n", "none"):
+                opt_label = (item.get("label") or "").strip()
+                if answers.norm(opt_label) in ("no", "none", "none of the above", "n a", "not applicable") \
+                        or re.match(r"^(no|none)\b", opt_label, re.I):
+                    val = "true"
+                    label_matched = True
             # A "Yes" answer must not land on a negated option ("Not willing to relocate").
             if is_choice and item and item.get("type") in ("radio", "checkbox") and not label_matched:
                 opt_label = (item.get("label") or "")
