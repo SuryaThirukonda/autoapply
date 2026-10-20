@@ -584,6 +584,25 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
 NO_RESULTS = re.compile(r"^\s*(no (results|matches|matching (results|options|items))|no options|no items)( were| was)?( found)?\.?\s*$", re.I)
 
 
+async def _settled_options(ex: Executor, baseline_keys: set, key, wants: list[str], polls: int = 12) -> list[dict]:
+    """The options a typed search shows once it has answered: the first list holding a wanted option, else the list
+    once it has stayed the same for two polls in a row (0.5 s apart), else whatever is showing at the end."""
+    filtered: list[dict] = []
+    prev, stable = None, 0
+    for _ in range(polls):
+        await asyncio.sleep(0.5)
+        got = await ex.eval(js.JS_LIST_OPTIONS)
+        filtered = [o for o in (got if isinstance(got, list) else []) if key(o) not in baseline_keys]
+        if filtered and best_option(filtered, [w for w in wants if w]) is not None:
+            break
+        texts = tuple(str(o.get("text")) for o in filtered)
+        stable = stable + 1 if (filtered and texts == prev) else 0
+        prev = texts
+        if stable >= 2:
+            break
+    return filtered
+
+
 async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bool = True) -> FieldResult:
     """Pick an option in a custom dropdown / combobox / autocomplete.
 
@@ -663,15 +682,15 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
             if type_to_filter and want and not (shown_now and best_option(shown_now, [want] if multi_tree else wants)) \
                     and await _text_box_focused(ex):
                 await _select_all_text(ex)     # replace, never append to, text left in the search box
-                await ex.type_text(want[:40], real_keys=True, delay_ms=20)
+                # Oracle's search-as-you-type boxes drop keys typed 20 ms apart ('6611 Cadogan Court' searched as
+                # '6611 O...', AutoZone 2026-10-19): type them at 45 ms.
+                slow = "oraclecloud.com" in (ex.url or "")
+                await ex.type_text(want[:40], real_keys=True, delay_ms=45 if slow else 20)
                 # Server-backed autocompletes (Ashby's university search, Sierra 2026-10-18) answer in a few seconds
-                filtered = []
-                for _ in range(10):
-                    await asyncio.sleep(0.5)
-                    filtered = await ex.eval(js.JS_LIST_OPTIONS)
-                    filtered = [o for o in (filtered if isinstance(filtered, list) else []) if _key(o) not in baseline_keys]
-                    if filtered:
-                        break
+                # A search-as-you-type list first shows results for the start of the query: wait for a match or a list
+                # that stopped changing (Oracle's address search listed other '6611 ...' streets before '6611 CADOGAN
+                # COURT, SUGAR LAND, TEXAS, 77479' came back; AutoZone and American Express, 2026-10-19).
+                filtered = await _settled_options(ex, baseline_keys, _key, wants, polls=12)
                 if not filtered or best_option(filtered, wants) is None:
                     # A search that matches the whole query as one substring finds nothing for a long name (Sierra's
                     # curated Ashby list has "Texas A&M": "Texas A&M University" returns No results, "Texas" finds it,
@@ -684,12 +703,7 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
                             continue
                         await _select_all_text(ex)
                         await ex.type_text(short[:40], real_keys=True, delay_ms=20)
-                        for _ in range(8):
-                            await asyncio.sleep(0.5)
-                            filtered = await ex.eval(js.JS_LIST_OPTIONS)
-                            filtered = [o for o in (filtered if isinstance(filtered, list) else []) if _key(o) not in baseline_keys]
-                            if filtered:
-                                break
+                        filtered = await _settled_options(ex, baseline_keys, _key, wants, polls=10)
                         if filtered and best_option(filtered, wants):
                             break
                 if not filtered and shown_now:
