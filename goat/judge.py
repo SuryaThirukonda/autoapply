@@ -58,6 +58,8 @@ JUDGE_INSTRUCTIONS = (
     "wrong or missing. A form-level banner from an earlier submit click ('Your form needs corrections', 'Missing entry for "
     "required field: X') stays on screen until the next click: when the outline shows X holding its value now, the banner "
     "is stale; judge the field, not the banner (the portal re-checks on the next click). "
+    "A logged value ending in '…[cut for length]' was shortened in the log: a page value that begins with it holds the "
+    "intended text, and the outline may show only the first part of a long box as well (Motorola, 2026-10-20). "
     "Consents, acknowledgments and attestations a form requires to apply (privacy notice, terms, data use, 'I have read "
     "and understood', a policy to follow, a willingness to make a disclosure a law or policy requires such as SEC Rule "
     "206(4)-5 political contributions (TIAA, 2026-10-19), an e-signature with his name and date) are delegated: Surya authorized the "
@@ -152,7 +154,9 @@ class Judge:
     def _log_text(decisions: list[dict], job_id: int | None = None) -> str:
         lines = []
         for d in decisions[-150:]:
-            lines.append(f"- page {d.get('page')}: {str(d.get('field_label') or '')[:80]} = {str(d.get('value') or '')[:600]!r} (source {d.get('source')})")
+            v = str(d.get('value') or '')
+            v = v if len(v) <= 2000 else v[:2000] + " …[cut for length]"
+            lines.append(f"- page {d.get('page')}: {str(d.get('field_label') or '')[:80]} = {v!r} (source {d.get('source')})")
         if lines:
             return "\n".join(lines)
         # A resumed draft (Workday reopens at Review) records nothing new: the previous attempt's archive is the intent.

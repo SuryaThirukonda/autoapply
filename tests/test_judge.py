@@ -185,3 +185,10 @@ def test_fact_check_follows_the_forms_own_term_definitions():
     """Datadog (2026-10-20): the form defines Summer as April-July; May 2028 is Summer 2028 there."""
     from goat.judge import FACT_CHECK_INSTRUCTIONS
     assert "form's own definition of that term covers the month" in FACT_CHECK_INSTRUCTIONS
+
+
+
+def test_long_logged_values_are_marked_when_cut():
+    """Motorola (2026-10-20): a 300-character log entry made the page's full answer look 'longer than the logged value'."""
+    from goat.judge import JUDGE_INSTRUCTIONS
+    assert "cut for length" in JUDGE_INSTRUCTIONS

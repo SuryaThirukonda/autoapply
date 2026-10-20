@@ -417,3 +417,31 @@ async def test_one_skills_box_ticked_completes_the_rest_of_the_group(store, tmp_
         assert sorted(ticked) == sorted(["py", "cc", "jv", "rr", "pg", "sq"]), out
     finally:
         await ex.close(close_browser=True)
+
+
+LONGBOX = """<!doctype html><html><body style="margin:20px">
+<label for="why">Why are you looking for new opportunities?</label><br>
+<textarea id="why" rows="6" cols="80"></textarea>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_long_answer_is_logged_in_full(store, tmp_path):
+    """Motorola (2026-10-20): the read-back stopped at 300 characters and the judge failed the longer page text."""
+    job = _job()
+    long_text = ("I am looking for a summer internship where I can contribute to software systems end to end. " * 6).strip()
+    answers.save_answer("q.why_new_opportunities", long_text, answer_type="text", source="questionnaire")
+    ex = await _race(tmp_path, LONGBOX, "long.html")
+    try:
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        snap = await snapshot.take(ex)
+        ctx.last_snapshot = snap
+        ref = next(i["ref"] for i in snap.items if "new opportunities" in (i.get("label") or ""))
+        out, _ = await d.t_fill_batch([{"ref": ref, "answer_key": "q.why_new_opportunities", "value": None, "source": None,
+                                        "label": "Why new opportunities"}])
+        assert out["results"][0]["status"] == "set", out
+        row = db.connect().execute("SELECT value FROM decisions WHERE job_id=? ORDER BY id DESC LIMIT 1", (job["id"],)).fetchone()
+        assert row["value"] == long_text and len(long_text) > 300
+    finally:
+        await ex.close(close_browser=True)

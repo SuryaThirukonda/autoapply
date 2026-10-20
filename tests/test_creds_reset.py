@@ -430,3 +430,16 @@ async def test_the_save_button_on_a_reset_page_is_not_held_back(store):
     ctx.creds_mode = "set_password"
     out, _ = await d.t_click("e4", "Reset password save")
     assert "error" not in out and ex.clicks == ["e4"]
+
+
+
+@pytest.mark.asyncio
+async def test_a_typed_new_password_is_saved_before_a_credentials_park(store):
+    """7-Eleven (2026-10-20): set_password filled the reset form and the run parked without clicking its 'Submit'."""
+    job = _job()
+    d, ctx = _with_ex(job, ProbeEx("Reset Password Submit", {"pw": 2, "heads": ["Reset Password"], "title": "Reset Password"}))
+    ctx.mail = object()
+    ctx.verify_link_tried = ctx.reset_link_tried = True
+    ctx.creds_mode = "set_password"
+    out, _ = await d.t_park("credentials_unknown: the save control is labelled Submit")
+    assert "not saved" in out["error"] and "Submit" in out["error"]

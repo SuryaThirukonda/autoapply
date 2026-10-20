@@ -443,7 +443,8 @@ ACCOUNT_EXISTS = re.compile(
     r"email (address )?is already|you already have an account(?!\s*\?)|user already exists)", re.I)
 RESET_STEPS = ("sign-in with the universal password failed on this tenant: do the password reset. Click 'Forgot your password?' (or 'Reset password'), "
                "fill the email box from answer_key identity.email, click the send button, call open_password_reset_link, snapshot, call credentials "
-               "mode 'set_password' with the new-password ref (confirm box via confirm_password_ref, email_ref ''), click the save button, then "
+               "mode 'set_password' with the new-password ref (confirm box via confirm_password_ref, email_ref ''), click the save button (on "
+               "Workday it is labelled 'Submit': it only saves the password and `click` takes it), then "
                "credentials mode 'login_universal' and click Sign In.")
 # No reset email came (Ryan, Assurant, Nasdaq, 2026-10-18): Workday only mails a reset for an account that exists, so
 # the tenant most likely has none for this email. PASSWORD_BIT is the sign-up password too (Surya).
@@ -1087,7 +1088,15 @@ class ToolDispatcher:
                 d = r.as_dict() if r else {"ref": p["ref"], "status": "failed", "error": "no result"}
                 results.append(d)
                 if r and r.ok:
-                    records.record_decision(self.ctx.job_id, self.ctx.page_no, p["_label"], r.readback, p["_src"], p["ref"])
+                    # The page's read-back stops at 300 characters; a long answer that reads back as the start of what was
+                    # typed is the whole text (Motorola, 2026-10-20: the judge saw the page's answer as 'longer than the
+                    # logged value' and failed the draft).
+                    rb = r.readback
+                    full = str(p.get("value") or "")
+                    squash = lambda t: re.sub(r"\s+", "", t or "")
+                    if rb and len(rb) >= 290 and len(full) > len(rb) and squash(full).startswith(squash(rb)[:250]):
+                        rb = full
+                    records.record_decision(self.ctx.job_id, self.ctx.page_no, p["_label"], rb, p["_src"], p["ref"])
         self.ctx.budget.step()
         set_n = sum(1 for r in results if r.get("status") == "set")
         # A field set again after a page's read-back complained is the fix for that complaint: drop it, so a mismatch
@@ -2393,6 +2402,15 @@ class ToolDispatcher:
                 return {"error": "not parked: this run opened the portal's verification link, so the account's email is confirmed "
                                  "('Invalid Token' only means the link was used already). Call credentials mode 'login_universal' with "
                                  "this Sign In form's email and password refs and click Sign In."}, None
+            if self.ctx.creds_mode == "set_password" and (probe.get("pw") or 0) >= 2 \
+                    and self.ctx.control_failures.get("creds:reset_save_bounce", 0) < 2:
+                # 7-Eleven (2026-10-20): the new password was typed and the run parked without clicking the reset page's
+                # 'Submit' (it took that for the application's submit).
+                self.ctx.control_failures["creds:reset_save_bounce"] = self.ctx.control_failures.get("creds:reset_save_bounce", 0) + 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "reset not saved"})
+                return {"error": "not parked: the new password is typed but not saved. Click the reset page's save button with "
+                                 "`click` (on Workday it is labelled 'Submit': it only saves the password, it is not the application's "
+                                 "submit), then sign in with credentials login_universal."}, None
             if self.ctx.creds_mode == "create" and not self.ctx.create_clicked and not self.ctx.account_exists \
                     and (probe.get("pw") or 0) >= 2 and self.ctx.control_failures.get("creds:create_click_bounce", 0) < 2:
                 # GE Vernova (2026-10-20): the Create Account form was filled and the run parked without clicking it.
