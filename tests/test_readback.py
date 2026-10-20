@@ -250,3 +250,29 @@ def test_a_state_code_and_a_preference_chain_read_back_as_equal():
     chain = "I am not a protected veteran; I am not a veteran; Not a protected veteran"
     assert values_equal(chain, "I am not a veteran", "choice")
     assert not values_equal(chain, "I am a protected veteran", "choice")
+
+
+
+PROMPT = """<html><body><div data-automation-id="formField-certification"><label for="c">Certification</label>
+<div data-automation-id="multiSelectContainer"><ul data-automation-id="selectedItemList"><li data-automation-id="selectedItem">AWS Certified Cloud Practitioner - AWS</li></ul>
+<input id="c" data-uxi-widget-type="selectinput" value="Cloud"></div></div></body></html>"""
+
+
+async def test_a_workday_prompt_reads_its_chips_not_its_search_text():
+    """AeroVironment (2026-10-19): the read-back took the search box's 'Cloud' for the picked certification."""
+    from goat.browser import js, snapshot
+    from goat.browser.executor import Executor, HostPolicy
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(PROMPT)
+        snap = await snapshot.take(ex)
+        item = next(i for i in snap.items if (i.get("label") or "").startswith("Certification"))
+        assert item.get("value") == "AWS Certified Cloud Practitioner - AWS", item
+        vals = await ex.eval(js.JS_READ_REFS, [item["ref"]])
+        import json as _json
+        vals = _json.loads(vals) if isinstance(vals, str) else vals
+        assert vals[item["ref"]]["value"] == "AWS Certified Cloud Practitioner - AWS", vals
+    finally:
+        await ex.close()

@@ -181,7 +181,9 @@ JS_SNAPSHOT = r"""
         }
         else if (type === 'checkbox' || type === 'radio') { item.checked = el.checked; }
         else { item.value = (el.value || '').slice(0, 300); if ((el.value || '').length > 300) item.value_len = (el.value || '').length; }
-        if (!item.value) {
+        {
+          // A Workday prompt's selected chips are its value, even when its search box still holds typed text
+          // (AeroVironment's Certification read 'Cloud' over a picked 'AWS Certified Cloud Practitioner - AWS', 2026-10-19).
           const ms = el.closest('[data-automation-id="multiSelectContainer"]');
           const picked = ms ? Array.from(ms.querySelectorAll('[data-automation-id="selectedItem"]')).map(x => txt(x)).filter(Boolean) : [];
           if (picked.length) { item.value = picked.join('; ').slice(0, 300); item.selected_items = picked.length; }
@@ -753,6 +755,11 @@ JS_READ_REFS = r"""
       out[ref] = { value: txt(el).slice(0, 300) };
     else if ('value' in el) out[ref] = { value: (el.value || '').slice(0, 300) };
     else out[ref] = { value: txt(el).slice(0, 300) };
+    const msBox = el.closest('[data-automation-id="multiSelectContainer"]');
+    if (msBox) {
+      const picked = Array.from(msBox.querySelectorAll('[data-automation-id="selectedItem"]')).map(x => txt(x)).filter(Boolean);
+      if (picked.length) out[ref] = { value: picked.join('; ').slice(0, 300) };
+    }
     const c = /cx-select-input/.test(String(el.className || '')) ? null : el.closest('[class*="__control"], [class*="control"], [class*="Control"]');
     if (c && tag === 'input' && out[ref].value === '') { const s = txt(c).slice(0, 300); if (s && !PLACEHOLDER.test(s)) out[ref].shown = s; }
   }
