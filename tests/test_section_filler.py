@@ -350,3 +350,11 @@ def test_a_skill_never_takes_another_technology_by_prefix():
     assert pick_skill("Python", ["Python 3"]) == "Python 3"
     assert pick_skill("Docker", ["Docker Swarm"]) is None
     assert pick_skill("SQL", ["Structured Query Language (SQL)", "SQLCLR"]) == "Structured Query Language (SQL)"
+
+
+
+def test_react_never_takes_the_react_framework():
+    """Solar Turbines (2026-10-20): 'ReAct Framework' (an AI agent pattern) was taken for React."""
+    from goat.adapters.workday_sections import pick_skill
+    assert pick_skill("React", ["ReAct Framework"]) is None
+    assert pick_skill("React", ["ReAct Framework", "React.js"]) == "React.js"

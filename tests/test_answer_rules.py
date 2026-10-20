@@ -1345,3 +1345,15 @@ async def test_a_skill_the_posting_wants_is_not_an_eligibility_hold(store):
     from goat.agent.tools import ToolDispatcher
     assert ToolDispatcher.HARD_REQUIREMENT.search("eligibility: requires an active Secret clearance")
     assert ToolDispatcher.HARD_REQUIREMENT.search("eligibility: requires enrollment in a Master's program")
+
+
+
+@pytest.mark.asyncio
+async def test_a_basis_of_authorization_change_question_is_no_for_a_citizen(store):
+    """Ecolab (2026-10-20): the run answered Yes from his citizenship key."""
+    job = _job()
+    d, ctx = _dispatcher(job)
+    q = ("Regardless of whether you require immigration sponsorship, do you have any reason to believe that your basis for "
+         "employment authorization in the U.S. will change within the next 1-3 years? Do not answer this question if you are a U.S citizen")
+    out, _ = await d.t_lookup_answer(q, ["Yes", "No"])
+    assert out["answer"] == "No" and out["key"] == "work_authorization.basis_change"

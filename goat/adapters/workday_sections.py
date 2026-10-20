@@ -662,7 +662,8 @@ def pick_skill(skill: str, options: list[str]) -> str | None:
     return None
 
 
-GENERIC_SKILL_WORD = re.compile(r"\d+(\.\d+)*|v\d+|programming|language|languages|development|developer|framework|library|"
+# never 'framework' or 'library': 'ReAct Framework' is not React (Solar Turbines, 2026-10-20)
+GENERIC_SKILL_WORD = re.compile(r"\d+(\.\d+)*|v\d+|programming|language|languages|development|developer|"
                                 r"js|api|apis|technology|technologies|software|tools?|platform|scripting|coding|algorithms?|"
                                 r"techniques?|methods?|concepts?|fundamentals|principles|modeling|modelling|engineering", re.I)
 

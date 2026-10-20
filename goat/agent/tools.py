@@ -662,6 +662,13 @@ def acknowledgement_key(question: str, options: list[str] | None) -> str | None:
     return consent_question_key(f"{question} | {yes}")
 
 
+# "Do you have any reason to believe that your basis for employment authorization in the U.S. will change within the next
+# 1-3 years? Do not answer this question if you are a U.S. citizen" (Ecolab, 2026-10-20): the run mapped it to his
+# citizenship key and answered Yes, which opened a required 'explain your situation' box. A U.S. citizen's basis does not
+# change: No.
+AUTH_BASIS_CHANGE = re.compile(r"basis (for|of) (your )?(employment |work )?(authori[sz]ation|eligibility).{0,80}\b(change|expire)", re.I)
+
+
 # A desired-salary range question with dollar ranges as options (CACI, 2026-10-20): his stored desired pay decides.
 SALARY_QUESTION = re.compile(r"\b(desired|expected|expectations?|target|requested)\b.{0,30}\b(salary|compensation|pay|wage|rate)\b|"
                              r"\b(salary|compensation|pay) (range|expectations?|requirements?)\b", re.I)
@@ -1877,6 +1884,14 @@ class ToolDispatcher:
             return {"miss": True, "key": k, "hint": "this form counts public / state universities as government entities, and Surya worked in a "
                     "Texas A&M research group (a public university). His stored No to government employment covers federal government only: "
                     "call ask_user with this question and its choices."}, None
+        if AUTH_BASIS_CHANGE.search(question or ""):
+            neg = default_no_choice(question, options) or "No"
+            answers.save_answer("work_authorization.basis_change", "No", answer_type="choice", source="derived",
+                                note="U.S. citizen: his basis for employment authorization does not change", aliases=[question])
+            db.event(self.ctx.job_id, "answer:basis_change", {"question": question[:160]})
+            return {"key": "work_authorization.basis_change", "answer": neg, "confidence": 1.0, "via": "citizen_rule",
+                    "note": "he is a U.S. citizen, so his basis for employment authorization never changes: No (a form that says "
+                            "not to answer this for citizens is answered No only when the field is already set or required)"}, None
         if SALARY_QUESTION.search(question or "") and options:
             a_pay = answers.get("compensation.desired_annual", self.ctx.job.get("company", ""), self.ctx.portal)
             if a_pay is not None and a_pay.has_value:
