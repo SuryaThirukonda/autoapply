@@ -49,6 +49,8 @@ JUDGE_INSTRUCTIONS = (
     "wording is the intended value: 'Computer and Information Science', 'Computer sciences' or 'Computer Science and "
     "Engineering' for Computer Science, 'Bachelor of Science' / 'BS' / 'Bachelors' / 'Bachelor's Level Degree' / "
     "'Bachelor's degree' for his BS, 'Texas A & M University' for Texas A&M (Dimensional, 2026-10-20; Micron, 2026-10-21). "
+    "A Title / Salutation of 'Mr' or 'Mr.' logged from identity.salutation is his stored answer (male, he/him), never an "
+    "unsourced value (AutoZone, 2026-10-21; onsemi passed with the same). "
     "His year in school is Sophomore on US forms; a portal that counts years to graduation words the same year "
     "'Penultimate academic year' / 'Penultimate year' / 'Second Year' / '2nd Year' / 'Year 2' (he graduates May 2028, so "
     "2026-27 is the second of his three years), and that wording logged from education.class_standing or its variants "

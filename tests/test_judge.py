@@ -313,3 +313,10 @@ def test_the_judge_knows_his_year_in_a_portals_own_wording():
     """LSEG (2026-10-21): 'Penultimate academic year' was failed as not Sophomore."""
     from goat.judge import JUDGE_INSTRUCTIONS
     assert "'Penultimate academic year'" in JUDGE_INSTRUCTIONS and "Sophomore" in JUDGE_INSTRUCTIONS
+
+
+
+def test_the_judge_knows_his_title_is_a_stored_answer():
+    """AutoZone (2026-10-21): 'Mr' from identity.salutation was failed as unsourced; onsemi passed with the same."""
+    from goat.judge import JUDGE_INSTRUCTIONS
+    assert "identity.salutation" in JUDGE_INSTRUCTIONS and "'Mr'" in JUDGE_INSTRUCTIONS
