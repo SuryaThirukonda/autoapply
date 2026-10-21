@@ -14,6 +14,9 @@ from .browser import fill, js
 from .browser.snapshot import Snapshot
 
 SKIP_SOURCES = ("cleared", "judgment")
+# A phone country-code picker that draws only a flag shows no text to compare (SmartRecruiters' 'Country code', CapTech
+# 2026-10-21: the model recorded '+1', the read-back saw '' and blocked Next; the number itself carries the code).
+PHONE_COUNTRY = re.compile(r"^\s*(country( calling)? code|phone country( code)?|dial(l?ing)? code|country/region code)\s*\*?\s*:?\s*$", re.I)
 SKIP_VALUES = ("(set)", "No results were found.", "No results found", "No results", "No matches found", "No options")
 _DATE_PARTS = re.compile(r"month=(\d{1,2})(?:\s+day=\d{1,2})?\s+year=(\d{4})", re.I)
 _DATEISH_LABEL = re.compile(r"\b(date|month|year|day)\b", re.I)
@@ -258,6 +261,8 @@ def diff(decisions: list[dict], snap: Snapshot, page_no: int = 0) -> list[str]:
         kind = _kind_for(item, str(val))
         page_value = _page_value(item)
         label = (item.get("label") or d.get("field_label") or "")
+        if not str(page_value or "").strip() and PHONE_COUNTRY.match(label):
+            continue
         if kind == "checkbox":
             val = _expect_checked(str(val), item)
         if kind != "checkbox" and dial_code_matches(str(val), page_value):

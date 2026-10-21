@@ -698,6 +698,12 @@ KEY_OPTION_POLARITY = {
 }
 
 
+# The same two options answer his marketing / talent-community opt-out (No: 'ONLY THE ROLE I AM APPLYING FOR'): Qualcomm's
+# resolver mapped the question to consent.marketing_email and the 'only' option was refused as not a No (2026-10-21).
+KEY_OPTION_POLARITY["consent.marketing_email"] = KEY_OPTION_POLARITY["consent.keep_profile_future_roles"]
+KEY_OPTION_POLARITY["policy.may_join_talent_community"] = KEY_OPTION_POLARITY["consent.keep_profile_future_roles"]
+
+
 # A profile-use choice that also enrolls him in the talent community (Qualcomm, 2026-10-21: "... My profile data may also
 # be used for recruiting initiatives (e.g., Talent Community and Events)" against "ONLY THE ROLE I AM APPLYING FOR. I will
 # NOT be contacted about ... Talent Community"): his delegation never joins a talent community, so the 'only this role'

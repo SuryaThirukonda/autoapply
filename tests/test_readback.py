@@ -289,3 +289,19 @@ def test_a_day_box_matches_its_part_of_a_set_date_decision():
     assert values_equal(d, "2028", "text", "Year")
     assert not values_equal(d, "16", "text", "Day")
     assert not values_equal(d, "2027", "text", "Year")
+
+
+
+def test_a_flag_only_phone_country_picker_is_not_compared():
+    """CapTech (SmartRecruiters, 2026-10-21): 'Country code' showed only a flag; '+1' read back as '' blocked Next."""
+    from goat import readback
+    from goat.browser.snapshot import Snapshot
+    items = [{"ref": "e11", "tag": "dropdown", "label": "Country code", "value": ""},
+             {"ref": "e12", "tag": "dropdown", "label": "Country", "value": ""}]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    decisions = [{"ref": "e11", "field_label": "Country code", "value": "+1", "source": "standing:identity.phone_country_code", "page": 1},
+                 {"ref": "e12", "field_label": "Country", "value": "United States", "source": "standing:identity.country", "page": 1}]
+    out = readback.diff(decisions, snap, 1)
+    assert len(out) == 1 and "Country" in out[0] and "Country code" not in out[0], out

@@ -1888,3 +1888,30 @@ def test_undergraduate_is_not_a_graduation_window():
     assert not T.grad_window_excludes("eligibility: posting requires current undergraduate Juniors for Summer 2027; Surya is a "
                                       "sophomore by his current year in school and will be a rising senior then.")
     assert T.grad_window_excludes("eligibility: posting requires graduation between Dec 2028 and Spring 2029")
+
+
+@pytest.mark.asyncio
+async def test_the_only_this_role_option_is_his_marketing_opt_out(store, monkeypatch):
+    """Qualcomm (2026-10-21): mapped to consent.marketing_email (No), the 'ONLY THE ROLE' option was refused as not a No."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher(_job())
+    q = "Use my profile data"
+    anyr = "Use my profile data for ANY ROLES GLOBALLY THAT MAY MATCH MY SKILLS. Talent Community and Events."
+    only = "Use my profile data for ONLY THE ROLE I AM APPLYING FOR. I will NOT be contacted about other roles."
+    items = [{"ref": "e5", "tag": "input", "type": "radio", "label": anyr, "group": q},
+             {"ref": "e6", "tag": "input", "type": "radio", "label": only, "group": q}]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        return [FieldResult(p["ref"], True, "checked", "") for p in plan]
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("consent.marketing_email", "No", answer_type="choice", source="seed:delegation.yaml")
+    out, _ = await d.t_fill_batch([{"ref": "e5", "answer_key": "consent.marketing_email", "value": None, "source": None, "label": q}])
+    assert out["results"][0]["status"] == "failed", out
+    out, _ = await d.t_fill_batch([{"ref": "e6", "answer_key": "consent.marketing_email", "value": None, "source": None, "label": q}])
+    assert out["results"][0]["status"] == "set", out
