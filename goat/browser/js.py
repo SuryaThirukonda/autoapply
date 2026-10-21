@@ -89,6 +89,21 @@ _COMMON = r"""
     if (t && t !== a) out.push(t);
     return out;
   }
+  // The pick a design-system field keeps on its custom-element host while its own box is empty (SmartRecruiters' City
+  // after a page change: the box '', the host holding {displayString: 'Sugar Land, TX, US'}, ServiceNow 2026-10-21).
+  function hostPickedValue(el) {
+    let n = el;
+    for (let i = 0; i < 3; i++) {
+      const r = n && n.getRootNode ? n.getRootNode() : null;
+      const h = r && r.host ? r.host : null;
+      if (!h) return '';
+      let v = h.value;
+      if (v && typeof v === 'object') v = v.displayString || v.text || v.name || v.label || '';
+      if (typeof v === 'string' && v.trim()) return v.trim();
+      n = h;
+    }
+    return '';
+  }
   function findRef(ref) {
     for (const root of allRoots(document)) {
       try { const el = root.querySelector('[data-goat-ref="' + ref + '"]'); if (el) return el; } catch (e) {}
@@ -196,7 +211,10 @@ JS_SNAPSHOT = r"""
           if (item.name && !/resume|cv|cover|transcript/i.test(item.label)) item.label = item.name + ' (' + (item.label || 'file') + ')';
         }
         else if (type === 'checkbox' || type === 'radio') { item.checked = el.checked; }
-        else { item.value = (el.value || '').slice(0, 300); if ((el.value || '').length > 300) item.value_len = (el.value || '').length; }
+        else {
+          item.value = (el.value || '').slice(0, 300); if ((el.value || '').length > 300) item.value_len = (el.value || '').length;
+          if (!item.value && tag === 'input') { const hv = hostPickedValue(el); if (hv) item.shown = hv.slice(0, 200); }
+        }
         {
           // A Workday prompt's selected chips are its value, even when its search box still holds typed text
           // (AeroVironment's Certification read 'Cloud' over a picked 'AWS Certified Cloud Practitioner - AWS', 2026-10-19).
@@ -652,6 +670,16 @@ JS_PAGE_ERRORS = r"""
       else if (el.tagName === 'SELECT') empty = !el.value || !el.selectedOptions.length;
       else {
         empty = !String(el.value || '').trim();
+        if (empty) {
+          // a pick kept on the field's custom-element host (SmartRecruiters' City)
+          let n = el;
+          for (let i = 0; i < 3 && empty; i++) {
+            const rn = n && n.getRootNode ? n.getRootNode() : null; const h = rn && rn.host ? rn.host : null; if (!h) break;
+            let v = h.value; if (v && typeof v === 'object') v = v.displayString || v.text || v.name || v.label || '';
+            if (typeof v === 'string' && v.trim()) empty = false;
+            n = h;
+          }
+        }
         if (empty) {
           const ms = el.closest('[data-automation-id="multiSelectContainer"]');
           if (ms && ms.querySelector('[data-automation-id="selectedItem"]')) empty = false;
@@ -1132,7 +1160,24 @@ JS_KEEPALIVE_DIALOG = r"""
 """
 
 JS_PAGE_TEXT = r"""
-(maxChars) => (document.body ? document.body.innerText : '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').slice(0, maxChars)
+(maxChars) => {
+  let t = document.body ? document.body.innerText : '';
+  // text drawn inside open shadow roots is not in innerText: SmartRecruiters' fields and its file chip (ServiceNow,
+  // 2026-10-21: the gate called the attached résumé missing)
+  const extra = [];
+  const walk = (root, depth) => {
+    for (const el of root.querySelectorAll('*')) {
+      if (!el.shadowRoot || depth > 6) continue;
+      const s = Array.from(el.shadowRoot.children).filter(c => !/^(STYLE|SCRIPT|LINK|TEMPLATE)$/.test(c.tagName))
+        .map(c => c.innerText || '').join(' ').replace(/\s+/g, ' ').trim();
+      if (s) extra.push(s);
+      walk(el.shadowRoot, depth + 1);
+    }
+  };
+  try { walk(document, 0); } catch (e) {}
+  if (extra.length) t += '\n' + extra.join('\n');
+  return t.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').slice(0, maxChars);
+}
 """
 
 

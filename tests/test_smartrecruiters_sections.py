@@ -215,3 +215,33 @@ async def test_the_city_box_takes_his_city_in_his_state(stored):
         assert "city" in again.present
     finally:
         await ex.close()
+
+
+
+HOST_PICK = """<html><body><oc-personal-information>
+<spl-autocomplete id="city" label="City*"></spl-autocomplete>
+<spl-dropzone></spl-dropzone></oc-personal-information>
+<script>
+customElements.define('spl-input', class extends HTMLElement { connectedCallback() {
+  this.attachShadow({ mode: 'open' }).innerHTML = '<div class="field"><label>City*</label> <input type="text" required></div>'; } });
+customElements.define('spl-autocomplete', class extends HTMLElement { connectedCallback() {
+  this.value = { displayString: 'Sugar Land, TX, US', city: 'Sugar Land' };
+  this.attachShadow({ mode: 'open' }).innerHTML = '<spl-input></spl-input>'; } });
+customElements.define('spl-dropzone', class extends HTMLElement { connectedCallback() {
+  this.attachShadow({ mode: 'open' }).innerHTML = '<div>Surya_Thirukonda_Resume_SWE.pdf</div>'; } });
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_pick_kept_on_the_host_is_the_fields_value_and_shadow_text_is_page_text():
+    """ServiceNow (2026-10-21): City showed '' after a page change (the host held the pick), and the gate called the
+    attached résumé missing (its name only inside a shadow root)."""
+    ex = await _open(HOST_PICK)
+    try:
+        snap = await snapshot.take(ex)
+        city = next(i for i in snap.items if (i.get("label") or "").startswith("City"))
+        assert city.get("shown") == "Sugar Land, TX, US", city
+        assert not any("City" in (r.get("label") or "") for r in snap.errors.get("empty_required", [])), snap.errors
+        assert "Surya_Thirukonda_Resume_SWE.pdf" in await ex.page_text(30000)
+    finally:
+        await ex.close()

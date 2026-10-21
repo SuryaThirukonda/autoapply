@@ -708,8 +708,9 @@ class SmartRecruiters(Adapter):
              "whenever you take a snapshot (the outline's HARNESS line says what it did): never add, edit or delete those "
              "cards yourself, and never park over them. If the HARNESS line reports a failure, call fill_sections once, then "
              "go on. Upload the résumé into the Resume box lower on the page, never the 'autocomplete your application' box "
-             "at the top (it rewrites Experience wrongly). City is an autocomplete that keeps only a picked suggestion "
-             "('Sugar Land, TX, US'); a City already showing that is done. Fill the rest of the page, click Next, answer the "
+             "at the top (it rewrites Experience wrongly). The harness also picks City ('Sugar Land, TX, US'): never type into "
+             "City (typed text is dropped and the pick is lost), and leave the phone Country code as it is (the number "
+             "carries +1). If City is empty, call fill_sections. Fill the rest of the page, click Next, answer the "
              "screening questions from stored answers, then call submit.")
 
 
