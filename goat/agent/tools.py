@@ -2192,7 +2192,11 @@ class ToolDispatcher:
                 return {"error": "this is SmartRecruiters' 'autocomplete your application' box: it rewrites Experience and "
                                  "Education from the résumé, wrongly. Never upload there: upload into the Resume box lower on "
                                  "the page."}, None
-        from ..adapters import is_job_match_upload
+        from ..adapters import is_job_match_upload, is_profile_import_upload
+        if is_profile_import_upload(" ".join([str(item_now.get("label") or ""), str(item_now.get("placeholder") or "")]), self.ctx.portal):
+            return {"error": "this is Oracle's 'Import your profile' box: it parses the résumé into broken Work and Education "
+                             "History entries. Never upload there: the résumé goes into the Supporting Documents slot "
+                             "('Upload Resume' / 'Drop Resume Here') lower on the page."}, None
         if is_job_match_upload(" ".join([str(item_now.get("label") or ""), str(item_now.get("placeholder") or "")]),
                                getattr(self.ctx.ex, "url", "") or "", self.ctx.portal):
             # Texas Instruments (2026-10-20): the search page's "upload your resume to get recommended jobs" box parsed the

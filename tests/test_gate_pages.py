@@ -488,3 +488,22 @@ def test_a_resume_named_in_eightfolds_text_box_counts_as_attached(store):
     g = run_gate(job={"id": 1, "company": "Qualcomm", "title": "Intern", "url": "u"}, snapshot=snap, page_text="Application Form",
                  expected_resume="Surya_Thirukonda_Resume_SWE.pdf", free_text_answers=[], portal="other")
     assert not any("resume" in r for r in g.reasons), g.reasons
+
+
+
+def test_oracle_issue_count_blocks_the_gate_and_its_import_box_is_never_the_resume_slot(store):
+    """Berkshire Hathaway Energy (Oracle, 2026-10-21): the prefill uploaded into 'Import your profile from resume', the
+    import made seven broken history entries, the gate passed, and SUBMIT did nothing."""
+    from goat.adapters import is_profile_import_upload
+    from goat.gate import run_gate
+    assert is_profile_import_upload("Import your profile from resume", "oracle")
+    assert not is_profile_import_upload("Upload Resume", "oracle") and not is_profile_import_upload("Import your profile", "greenhouse")
+    items = [{"ref": "e9", "tag": "button", "type": "submit", "label": "SUBMIT", "submitish": True}]
+    snap = Snapshot(url="https://x.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/1/apply/section/1",
+                    title="Apply", headings=["Job application form"], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    g = run_gate(job={"id": 1, "company": "BHE", "title": "Intern", "url": "u"}, snapshot=snap,
+                 page_text="Skip to main content.\nYou have 7 issues that need to be fixed before you can submit your application.\nGo to Next Issue",
+                 expected_resume=None, free_text_answers=[], portal="oracle")
+    assert g.result == "blocked" and "Go to Next Issue" in g.reasons[0], g.reasons

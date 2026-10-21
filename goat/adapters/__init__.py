@@ -200,6 +200,18 @@ def is_job_match_upload(label: str, url: str = "", portal: str = "") -> bool:
     return (portal or "").lower() == "oracle" and "/apply" not in (url or "") and bool(url)
 
 
+# Oracle's "Import your profile from resume" box parses the résumé into the form: Berkshire Hathaway Energy (2026-10-21)
+# got seven broken Work and Education History entries ('Unnamed Job Title', 'Engineering Honors' with no dates), Oracle
+# said "You have 7 issues that need to be fixed before you can submit", and SUBMIT did nothing. The résumé goes into the
+# Supporting Documents slot instead.
+PROFILE_IMPORT_UPLOAD = re.compile(r"\bimport\b|\bautofill\b|\bauto-fill\b|\bparse\b", re.I)
+
+
+def is_profile_import_upload(label: str, portal: str = "") -> bool:
+    """An Oracle file box that imports the résumé into the form's fields rather than attaching it."""
+    return (portal or "").lower() == "oracle" and bool(PROFILE_IMPORT_UPLOAD.search(label or ""))
+
+
 def resume_path_for(job: dict):
     """The résumé file for this job's variant, from delegation.yaml (never a file on the never_attach list)."""
     import yaml
@@ -388,6 +400,9 @@ class Adapter:
                 continue
             if is_job_match_upload(label, getattr(ex, "url", "") or "", self.portal):
                 res.details.append({"label": item.get("label"), "ok": True, "skipped": "a job-matching upload, not the application"})
+                continue
+            if is_profile_import_upload(label, self.portal):
+                res.details.append({"label": item.get("label"), "ok": True, "skipped": "a profile import, not the résumé slot"})
                 continue
             path = resume_path_for(job)
             if path is None or not path.exists():

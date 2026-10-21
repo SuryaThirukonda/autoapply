@@ -281,3 +281,17 @@ async def test_decisions_for_controls_the_run_removed_are_left_out():
     gone = await removed_decisions(Ex(), decs, 1, "Revio appears in the page text")
     assert [d["field_label"] for d in gone] == ["Career Level"], gone
     assert await removed_decisions(Ex(), decs, None, "") == []
+
+
+
+def test_the_fact_check_counts_board_seats_and_political_office_under_his_default_no():
+    """Micron (2026-10-21): 'plans to join a for-profit board = No' failed the check as a generic default."""
+    from goat.judge import FACT_CHECK_INSTRUCTIONS
+    assert "board of directors" in FACT_CHECK_INSTRUCTIONS and "political, government or regulatory office" in FACT_CHECK_INSTRUCTIONS
+
+
+
+def test_catalog_wordings_for_his_degree_and_major_are_named():
+    """Micron (2026-10-21): 'Bachelor's Level Degree' and 'Computer sciences' failed as wrong option wording."""
+    from goat.judge import JUDGE_INSTRUCTIONS
+    assert "Bachelor's Level Degree" in JUDGE_INSTRUCTIONS and "Computer sciences" in JUDGE_INSTRUCTIONS

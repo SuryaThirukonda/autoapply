@@ -70,6 +70,9 @@ SUBMIT_LABEL = re.compile(r"\bsubmit\b|\bsend (my |your |the )?application\b|"
                           r"^(finish|complete|complete (my |your )?application|apply|apply now|apply for this (job|position|role))$", re.I)
 
 
+ORACLE_ISSUES = re.compile(r"you have \d+ issues? that needs? to be fixed before you can submit( your application)?", re.I)
+
+
 def has_submit_control(snapshot: Snapshot) -> bool:
     """A submit control on the page: one the snapshot marked, or any button whose label reads like a submit
     (the model may name a final button the snapshot's exact list does not know)."""
@@ -281,6 +284,16 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     # Oracle keeps each Experience / Education entry as a tile, and a tile missing a required field shows "Fields to fix: N";
     # its SUBMIT then does nothing (Texas Instruments, 2026-10-20: two tiles from Oracle's résumé import, 'Computer Science'
     # and 'Engineering Honors / Texas A&M University', and two inert submits spent the run).
+    # Oracle's own count of what blocks its SUBMIT (Berkshire Hathaway Energy, 2026-10-21: "You have 7 issues that need to be
+    # fixed before you can submit your application"; the gate passed and the click did nothing)
+    m_issues = ORACLE_ISSUES.search(page_text or "")
+    if m_issues:
+        return GateResult("blocked", [
+            f"Oracle says {m_issues.group(0).strip()!r}: press 'Go to Next Issue' (or open each Work and Education History "
+            "entry marked with an error), fill its missing required fields from his stored entries (experience.work.N.* "
+            "for jobs, education.* for Texas A&M) and save it; an entry that matches none of his stored entries (Oracle's "
+            "résumé import adds such entries, e.g. 'Engineering Honors') is removed with its Delete button. Then call "
+            "submit again."])
     tiles = fields_to_fix(page_text)
     if tiles:
         return GateResult("blocked", [
