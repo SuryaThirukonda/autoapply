@@ -258,7 +258,17 @@ JS_SNAPSHOT = r"""
       const comboLike = tag === 'input' && (el.getAttribute('aria-autocomplete') || el.getAttribute('aria-haspopup') || /react-select|select__input|__input/i.test(el.className || ''));
       const choiceLike = tag === 'input' && (type === 'checkbox' || type === 'radio');
       let posEl = el;
-      if (!vis(el) && !isFile) {
+      // An action shown only on hover or focus is still a control: Oracle's tile pencil ('Edit') sits at opacity 0 beside
+      // its always-shown Delete, and the run clicked Delete to edit a tile and lost an entry (AutoZone, 2026-10-21).
+      const hoverOnly = (tag === 'button' || el.getAttribute('role') === 'button') && !vis(el)
+        && !!el.closest('[class*="tile" i], [class*="card" i]') && (() => {
+          try {
+            const r = el.getBoundingClientRect(); const s = el.ownerDocument.defaultView.getComputedStyle(el); const p = el.parentElement;
+            return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && !!p
+              && Array.from(p.children).some(c => c !== el && vis(c) && (c.tagName === 'BUTTON' || c.getAttribute('role') === 'button'));
+          } catch (e) { return false; }
+        })();
+      if (!vis(el) && !isFile && !hoverOnly) {
         // Custom-styled radios/checkboxes hide the real input (opacity 0 / sr-only) inside a visible label.
         let ctrl = comboLike ? el.closest('[class*="__control"], [class*="control"], [class*="Control"], [class*="__value-container"]') : null;
         if (!ctrl && choiceLike) { ctrl = el.closest('label'); if (!ctrl && el.id) { try { ctrl = el.ownerDocument.querySelector('label[for="' + CSS.escape(el.id) + '"]'); } catch (e) {} } if (!ctrl) ctrl = el.parentElement; }
@@ -353,6 +363,15 @@ JS_SNAPSHOT = r"""
         } else {
           item.label = shown || item.label;
           if (!item.label) continue;
+          // an entry tile's bare Edit / Delete is named by its tile ('Delete: Engineering Honors / Texas A&M University'):
+          // the outline listed five Deletes with no name and no Edit at all (AutoZone, 2026-10-21)
+          const tileEl = el.closest('article.apply-flow-profile-item-tile');
+          if (tileEl && /^(edit|delete|remove)$/i.test(item.label.trim())) {
+            const tt = txt(tileEl.querySelector('.apply-flow-profile-item-tile__summary-title'));
+            const ts = txt(tileEl.querySelector('.apply-flow-profile-item-tile__summary-subtitle'));
+            const nm = [tt, ts].filter(Boolean).join(' / ');
+            if (nm) item.label = item.label.trim() + ': ' + nm.slice(0, 140);
+          }
           // a shadow-root button is named by its host: its aria-label and its visible text both count
           const names = [item.label].concat(shown ? [] : shadowHostNames(el)).filter((n, i, a) => n && a.indexOf(n) === i);
           const nFilled = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]), textarea')).filter(i => (i.value || '').trim()).length;
@@ -424,11 +443,22 @@ JS_SNAPSHOT = r"""
       groupList.push(g);
     }
   }
+  // Oracle's entry tiles: what each one says and its Edit / Delete refs (the gate checks them against his stored entries)
+  const tiles = [];
+  for (const t of document.querySelectorAll('article.apply-flow-profile-item-tile')) {
+    if (!vis(t) || tiles.length >= 20) continue;
+    const blk = t.closest('.apply-flow-block__form-list') || (t.parentElement && t.parentElement.closest('[aria-label]'));
+    const sec = ((blk && blk.getAttribute('aria-label')) || '').replace(/\s*Required\s*$/i, '').trim();
+    const ed = t.querySelector('button[class*="edit" i]'); const de = t.querySelector('button[class*="delete" i]');
+    tiles.push({ section: sec.slice(0, 60), title: txt(t.querySelector('.apply-flow-profile-item-tile__summary-title')).slice(0, 120),
+      sub: txt(t.querySelector('.apply-flow-profile-item-tile__summary-subtitle')).slice(0, 160), invalid: /--invalid/.test(String(t.className || '')),
+      edit: ed ? (ed.getAttribute('data-goat-ref') || '') : '', del: de ? (de.getAttribute('data-goat-ref') || '') : '' });
+  }
   const headings = [];
   for (const h of document.querySelectorAll('h1, h2, h3, [role="heading"]')) { if (vis(h)) { const t = txt(h); if (t && t.length < 160) headings.push(t); } if (headings.length >= 12) break; }
   const bodyText = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ');
   return JSON.stringify({ url: location.href, title: document.title, headings, items: items.slice(0, maxItems),
-    groups: groupList, total: items.length, scrollY: Math.round(scrollY), pageHeight: Math.round(document.documentElement.scrollHeight), vw: innerWidth, vh: innerHeight,
+    groups: groupList, tiles, total: items.length, scrollY: Math.round(scrollY), pageHeight: Math.round(document.documentElement.scrollHeight), vw: innerWidth, vh: innerHeight,
     text_head: bodyText.slice(0, 600) });
 }
 """

@@ -681,3 +681,99 @@ async def test_div_radio_options_are_named_by_their_own_text_and_a_purpose_note_
         assert not any("designed for" in (e.get("text") or "") for e in snap.errors.get("error_text", [])), snap.errors
     finally:
         await ex.close()
+
+
+
+ORACLE_TILES = """<html><body><div class="apply-flow-section">
+<div class="apply-flow-block__form-list" aria-label="Work History Required"><div class="profile-item-list" role="group">
+ <article class="apply-flow-profile-item-tile"><div class="apply-flow-profile-item-tile__summary" data-profile-item-tile="true"
+   role="group" tabindex="0" aria-label="Contract Software Engineer Quantitative Systems, FastAPI, QuestDB, Docker 02/2026 - 06/2026">
+  <div><div class="apply-flow-profile-item-tile__summary-title"><span>Contract Software Engineer</span></div>
+   <div class="apply-flow-profile-item-tile__summary-subtitle">Quantitative Systems, FastAPI, QuestDB, Docker 02/2026 - 06/2026</div></div>
+  <div class="apply-flow-profile-item-tile__actions-container">
+   <button class="apply-flow-profile-item-tile__edit-item-icon" aria-label="Edit" title="Edit" style="opacity:0;width:16px;height:18px"></button>
+   <button class="apply-flow-profile-item-tile__delete-icon" aria-label="Delete" title="Delete" style="width:16px;height:18px"></button>
+  </div></div></article>
+ <article class="apply-flow-profile-item-tile"><div class="apply-flow-profile-item-tile__summary" data-profile-item-tile="true"
+   role="group" tabindex="0" aria-label="Founding Software Engineer (Part-time) Revio 02/2026">
+  <div><div class="apply-flow-profile-item-tile__summary-title"><span>Founding Software Engineer (Part-time)</span></div>
+   <div class="apply-flow-profile-item-tile__summary-subtitle">Revio 02/2026</div></div>
+  <div class="apply-flow-profile-item-tile__actions-container">
+   <button class="apply-flow-profile-item-tile__edit-item-icon" aria-label="Edit" title="Edit" style="opacity:0;width:16px;height:18px"></button>
+   <button class="apply-flow-profile-item-tile__delete-icon" aria-label="Delete" title="Delete" style="width:16px;height:18px"></button>
+  </div></div></article>
+</div></div>
+<div class="apply-flow-block__form-list" aria-label="Education "><div class="profile-item-list" role="group">
+ <article class="apply-flow-profile-item-tile apply-flow-profile-item-tile--invalid"><div class="apply-flow-profile-item-tile__summary"
+   data-profile-item-tile="true" role="group" tabindex="0" aria-label="Engineering Honors Texas A&amp;M University">
+  <div><div class="apply-flow-profile-item-tile__summary-title"><span>Engineering Honors</span></div>
+   <div class="apply-flow-profile-item-tile__summary-subtitle">Texas A&amp;M University</div><div><span>Fields to fix: 1</span></div></div>
+  <div class="apply-flow-profile-item-tile__actions-container">
+   <button class="apply-flow-profile-item-tile__edit-item-icon" aria-label="Edit" title="Edit" style="opacity:0;width:16px;height:18px"></button>
+   <button class="apply-flow-profile-item-tile__delete-icon" aria-label="Delete" title="Delete" style="width:16px;height:18px"></button>
+  </div></div></article>
+</div><button type="button" class="button apply-flow-profile-item-tile__new-tile">ADD EDUCATION</button></div>
+</div></body></html>"""
+
+HIS_ENTRIES = [
+    {"n": 1, "company": "Revio", "title": "Founding Software Engineer (Part-time)"},
+    {"n": 2, "company": "DeKalb Capital Management", "title": "Software Engineering Intern, Quantitative Systems"},
+    {"n": 3, "company": "Mai Shan Yun (WaiterDock)", "title": "Contract Software Engineer"},
+]
+
+
+@pytest.mark.asyncio
+async def test_oracle_tiles_show_their_hover_edit_and_names_and_the_gate_checks_them():
+    """AutoZone (2026-10-21): the tile pencil sits at opacity 0, the outline listed only unnamed Deletes, the run deleted an
+    entry it meant to edit, and the imported tiles named skill lists as employers."""
+    from goat.gate import oracle_tile_problems
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(ORACLE_TILES)
+        snap = await snapshot.take(ex)
+        labels = [str(i.get("label") or "") for i in snap.items if i.get("tag") == "button"]
+        assert "Edit: Contract Software Engineer / Quantitative Systems, FastAPI, QuestDB, Docker 02/2026 - 06/2026" in labels, labels
+        assert "Delete: Engineering Honors / Texas A&M University" in labels, labels
+        assert [t["section"] for t in snap.tiles] == ["Work History", "Work History", "Education"], snap.tiles
+        assert snap.tiles[2]["invalid"] and snap.tiles[0]["edit"] and snap.tiles[0]["del"]
+        assert "ENTRY TILE (Education): 'Engineering Honors' / 'Texas A&M University' FIELDS TO FIX" in snapshot.render(snap)
+        got = oracle_tile_problems(snap.tiles, snap.items, entries=HIS_ENTRIES, school="Texas A&M University",
+                                   high_school="Clements High School")
+        assert len(got) == 3, got
+        assert "gives its employer as 'Quantitative Systems, FastAPI, QuestDB, Docker'" in got[0] and "Mai Shan Yun" in got[0]
+        assert f"Edit [{snap.tiles[0]['edit']}]" in got[0]
+        assert "'Engineering Honors' / 'Texas A&M University' is not his" in got[1]
+        assert got[2].startswith("Education has no Texas A&M University entry: click ADD EDUCATION")
+    finally:
+        await ex.close()
+
+
+def test_his_own_oracle_tiles_pass():
+    from goat.gate import oracle_tile_problems
+    tiles = [{"section": "Work History", "title": "Contract Software Engineer", "sub": "Mai Shan Yun 02/2026 - 06/2026", "edit": "e1", "del": "e2"},
+             {"section": "Work History", "title": "Founding Software Engineer (Part-time)", "sub": "Revio 02/2026", "edit": "e3", "del": "e4"},
+             {"section": "Education", "title": "Bachelor of Science", "sub": "Texas A&M University", "edit": "e5", "del": "e6"},
+             {"section": "Licenses and Certificates", "title": "AWS Certified Cloud Practitioner", "sub": "Amazon Web Services", "edit": "e7", "del": "e8"}]
+    items = [{"ref": "e9", "tag": "button", "label": "ADD EDUCATION"}]
+    assert oracle_tile_problems(tiles, items, entries=HIS_ENTRIES, school="Texas A&M University", high_school="Clements High School") == []
+    # no tiles at all on a portal that is not Oracle: nothing to say
+    assert oracle_tile_problems([], items, portal="greenhouse", entries=HIS_ENTRIES, school="Texas A&M University", high_school="") == []
+
+
+
+def test_a_resume_attached_on_an_earlier_attempt_counts_by_the_jobs_own_file_name(store, monkeypatch):
+    """Arconic (Oracle, 2026-10-21): Surya_Thirukonda_Resume_SWE.pdf was listed beside REMOVE RESUME, no upload had happened
+    in this run, and the gate said the Resume/CV slot was empty."""
+    import goat.gate as gate_mod
+    monkeypatch.setattr(gate_mod, "job_resume_name", lambda job: "Surya_Thirukonda_Resume_SWE.pdf")
+    job = _job()
+    items = [{"ref": "e2", "tag": "input", "type": "file", "label": "Import your profile from resume", "value": ""},
+             {"ref": "e1", "tag": "button", "label": "SUBMIT", "submitish": True}]
+    text = "Supporting Documents and URLs\nSurya_Thirukonda_Resume_SWE.pdf\nREMOVE RESUME\nUpload Cover Letter\nSUBMIT"
+    g = run_gate(job=job, snapshot=_snap(items), page_text=text, expected_resume=None, free_text_answers=[], portal="oracle", page_no=1)
+    assert not any("resume not attached" in r for r in g.reasons), g.reasons
+    g2 = run_gate(job=job, snapshot=_snap(items), page_text=text.replace("Surya_Thirukonda_Resume_SWE.pdf\n", ""),
+                  expected_resume=None, free_text_answers=[], portal="oracle", page_no=1)
+    assert any("resume not attached" in r for r in g2.reasons), g2.reasons

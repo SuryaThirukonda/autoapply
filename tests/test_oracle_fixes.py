@@ -238,6 +238,11 @@ def test_a_decline_chain_takes_any_declining_wording():
     assert best_option(no_decline, chain + ["Asian (Not Hispanic or Latino) (United States of America)"])["text"].startswith("Asian")
     # a chain that does not start with 'decline' is untouched
     assert best_option([{"text": "Male"}, {"text": "I do not wish to disclose"}], ["Male", "Man"])["text"] == "Male"
+    # more decline wordings (Westinghouse, 2026-10-21)
+    for dec in ("I don't want to answer", "I wish not to answer", "Do not care to answer", "Choose not to share", "Decline to state",
+                "I prefer not to state"):
+        got = best_option([{"text": "Asian"}, {"text": "White"}, {"text": dec}], chain)
+        assert got["text"] == dec, (dec, got)
 
 
 
@@ -301,3 +306,70 @@ def test_smartrecruiters_and_successfactors_have_their_own_hints():
     assert "the harness writes the Experience and Education cards" in sr and "autocomplete your application" in sr
     sf = for_portal("successfactors").hints
     assert "button_label 'Apply'" in sf and "Please complete your personal information" in sf
+
+
+
+def test_a_month_and_year_takes_the_layout_its_box_asks_for():
+    """Amazon (2026-10-21): 'Please enter the month in the format YYYY-MM' to 'May 2028'."""
+    from goat.browser.fill import month_layout
+    assert month_layout("May 2028", "text", "Expected graduation | Please enter the month in the format YYYY-MM") == "2028-05"
+    assert month_layout("May 2028", "month", "") == "2028-05"
+    assert month_layout("May 2028", "text", "placeholder MM/YYYY") == "05/2028"
+    assert month_layout("May 2028", "text", "Graduation date (MM/DD/YYYY)") is None
+    assert month_layout("May 2028", "text", "Format: YYYY-MM-DD") is None
+    assert month_layout("May 2028", "text", "Expected graduation") is None
+    assert month_layout("Texas A&M University", "text", "YYYY-MM") is None
+    assert month_layout("05/15/2028", "text", "YYYY-MM") is None
+
+
+async def test_a_text_box_asking_for_yyyy_mm_gets_it():
+    from goat.browser.executor import Executor, HostPolicy
+    from goat.browser import snapshot, fill
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content('<form><label for="g">Expected graduation month/year</label>'
+                                  '<input id="g" type="text" placeholder="YYYY-MM"></form>')
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if i.get("tag") == "input")
+        r = await fill.fill_batch(ex, [{"ref": ref, "value": "May 2028"}])
+        assert r[0].ok and r[0].readback == "2028-05", r
+    finally:
+        await ex.close()
+
+
+
+DECLINE_LIST = """<html><body><div>
+ <label id="l">Please confirm your ethnicity</label>
+ <button id="b" type="button" aria-haspopup="listbox" aria-labelledby="l" style="width:300px;height:30px"
+   onclick="document.getElementById('lst').style.display='block'">Asian (United States of America)</button>
+ <ul id="lst" role="listbox" style="display:none">
+  <li role="option" style="height:24px" onclick="pick(this)">Asian (United States of America)</li>
+  <li role="option" style="height:24px" onclick="pick(this)">White (United States of America)</li>
+  <li role="option" style="height:24px" onclick="pick(this)">I do not wish to self-identify (United States of America)</li>
+ </ul>
+</div>
+<script>function pick(li){ document.getElementById('b').textContent = li.textContent; document.getElementById('lst').style.display='none'; }</script>
+</body></html>"""
+
+
+async def test_a_held_fallback_does_not_stop_the_picker_from_finding_the_decline():
+    """LSEG (2026-10-21): the list still showed 'Asian (United States of America)' from an earlier attempt, it matched the
+    chain's fallback, and the decline option was never looked for."""
+    from goat.browser import fill
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(DECLINE_LIST)
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if "ethnicity" in str(i.get("label") or "").lower())
+        chain = ["decline", "Decline to self-identify", "I do not wish to answer", "Asian", "Asian (United States of America)"]
+        r = await fill.choose(ex, ref, chain)
+        assert r.ok and r.readback.startswith("I do not wish to self-identify"), r
+        # a held decline is kept as it is
+        r2 = await fill.choose(ex, ref, chain)
+        assert r2.ok and r2.readback.startswith("I do not wish to self-identify"), r2
+    finally:
+        await ex.close()

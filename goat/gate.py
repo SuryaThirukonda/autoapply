@@ -212,6 +212,67 @@ ACCOUNT_PAGE = re.compile(r"\b(please review before continuing|password help|for
                           r"(^|\| )(sign[- ]?in|log[- ]?in|register)( \||$))", re.I)
 
 
+# Oracle's entry tiles must be his entries. Its résumé import (before 2026-10-21) wrote skill lines into Employer Name
+# ('Quantitative Systems, FastAPI, QuestDB, Docker' for his Mai Shan Yun role) and added education tiles he never had
+# ('Engineering Honors / Texas A&M University'); they stay in his candidate profile on that tenant (AutoZone, 2026-10-21).
+_TILE_DATES = re.compile(r"\s*\d{1,2}/\d{4}(\s*-\s*(\d{1,2}/\d{4}|present|current))?\s*$", re.I)
+_WORK_SECTION = re.compile(r"work|experience|employment", re.I)
+_EDU_SECTION = re.compile(r"education", re.I)
+_HIS_DEGREE = re.compile(r"bachelor|undergraduate|computer science|\bb\.?\s?s\b", re.I)
+
+
+def oracle_tile_problems(tiles: list[dict], items: list[dict], company: str = "", portal: str = "", *,
+                         entries: list[dict] | None = None, school: str | None = None, high_school: str | None = None) -> list[str]:
+    """What is wrong with Oracle's entry tiles: a work tile whose employer is none of his, an education tile that is not
+    his degree, and no education tile for his school while the form offers ADD EDUCATION."""
+    from . import answers
+    if not tiles and (portal or "").lower() != "oracle":
+        return []
+    if entries is None:
+        from .adapters.workday_sections import stored_work_entries
+        entries = stored_work_entries(company, portal or "oracle")
+    if school is None:
+        a = answers.get("education.school", company, portal or "oracle")
+        school = str(a.answer) if a and a.has_value and a.answer else ""
+    if high_school is None:
+        a = answers.get("education.high_school", company, portal or "oracle")
+        high_school = str(a.answer) if a and a.has_value and a.answer else ""
+    from .adapters.workday_sections import _same_company
+    out = []
+    for t in tiles:
+        if not _WORK_SECTION.search(t.get("section") or "") or not entries:
+            continue
+        employer = _TILE_DATES.sub("", t.get("sub") or "").strip(" ,-")
+        if not employer or any(_same_company(employer, e["company"]) for e in entries):
+            continue
+        tn = answers.norm(t.get("title") or "")
+        role = next((e for e in entries if tn and (answers.norm(e.get("title") or "").startswith(tn)
+                                                   or tn.startswith(answers.norm(re.split(r"\s*[(,]", e.get("title") or "", 1)[0]) or "-"))), None)
+        which = f" (his {role['company']} role: experience.work.{role['n']}.*)" if role else ""
+        out.append(f"the {t.get('section') or 'Work History'} tile '{t.get('title')}' gives its employer as '{employer}', which is none "
+                   f"of his employers{which}: open it with its Edit [{t.get('edit') or '?'}], set Employer Name to his stored company "
+                   "for that role and Job Title, dates and Achievements from the same experience.work.N.* entry, then SAVE; a tile "
+                   f"that is none of his roles is removed with its Delete [{t.get('del') or '?'}]")
+    school_key = answers.norm(re.split(r"\s*[-(,]", school or "", 1)[0]) if school else ""
+    hs_key = answers.norm(high_school or "")
+    his = []
+    for t in tiles:
+        if not _EDU_SECTION.search(t.get("section") or ""):
+            continue
+        both = f"{t.get('title') or ''} {t.get('sub') or ''}"
+        text = answers.norm(both)
+        if (hs_key and hs_key in text) or (school_key and school_key in text and _HIS_DEGREE.search(both)):
+            his.append(t)
+            continue
+        out.append(f"the Education tile '{t.get('title')}' / '{t.get('sub')}' is not his {school or 'school'} degree entry (Oracle's "
+                   f"résumé import adds such tiles, e.g. 'Engineering Honors'): remove it with its Delete [{t.get('del') or '?'}]")
+    add_edu = next((i for i in items or [] if re.fullmatch(r"\s*add education\s*", str(i.get("label") or ""), re.I)), None)
+    if add_edu is not None and school_key and not any(school_key in answers.norm(f"{t.get('title')} {t.get('sub')}") for t in his):
+        out.append(f"Education has no {school} entry: click ADD EDUCATION [{add_edu['ref']}] and enter it from education.* (school, "
+                   "degree Bachelor of Science, major Computer Science, graduation May 2028), then SAVE")
+    return out
+
+
 _FIELDS_TO_FIX = re.compile(r"(?m)^[ \t]*(.{1,90}?)[ \t]*\n+[ \t]*Fields to fix:?[ \t]*(\d+)")
 
 
@@ -223,6 +284,16 @@ def fields_to_fix(page_text: str) -> list[tuple[str, int]]:
         if n > 0:
             out.append((m.group(1).strip(), n))
     return out
+
+
+def job_resume_name(job: dict) -> str:
+    """The résumé file this job's variant names (delegation.yaml), '' when there is none."""
+    try:
+        from .adapters import resume_path_for
+        p = resume_path_for(job)
+        return p.name if p is not None else ""
+    except Exception:  # noqa: BLE001 - no config: nothing to compare against
+        return ""
 
 
 def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: str | None,
@@ -286,6 +357,9 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     # and 'Engineering Honors / Texas A&M University', and two inert submits spent the run).
     # Oracle's own count of what blocks its SUBMIT (Berkshire Hathaway Energy, 2026-10-21: "You have 7 issues that need to be
     # fixed before you can submit your application"; the gate passed and the click did nothing)
+    tile_problems = oracle_tile_problems(getattr(snapshot, "tiles", None) or [], snapshot.items, job.get("company", ""), portal)
+    if tile_problems:
+        return GateResult("blocked", tile_problems[:5])
     m_issues = ORACLE_ISSUES.search(page_text or "")
     if m_issues:
         return GateResult("blocked", [
@@ -333,12 +407,16 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     resume_slots = [fi for fi in snapshot.file_inputs()
                     if re.search(r"resume|résumé|\bcv\b|curriculum", " ".join([fi.get("label") or "", fi.get("name") or ""]), re.I)
                     and not re.search(r"cover|transcript", " ".join([fi.get("label") or "", fi.get("name") or ""]), re.I)]
+    # The run's own upload, else the file this job's résumé variant names: a résumé attached on an earlier attempt shows only
+    # as text, and with no upload in this run to compare against the gate called the slot empty (Arconic's Oracle page
+    # listed Surya_Thirukonda_Resume_SWE.pdf beside REMOVE RESUME, 2026-10-21).
+    exp_text = expected_resume or (job_resume_name(job) if resume_slots else "")
     if resume_slots:
         shown = " ".join((fi.get("value") or "") for fi in resume_slots).lower()
-        if not shown and expected_resume and expected_resume.lower() in (page_text or "").lower():
+        if not shown and exp_text and exp_text.lower() in (page_text or "").lower():
             # Oracle empties its import input and lists the uploaded file as text beside 'Remove Resume' (onsemi and
             # Vertiv were held on an attached résumé, 2026-10-19)
-            shown = expected_resume.lower()
+            shown = exp_text.lower()
         if not shown and expected_resume:
             # Eightfold keeps the attached résumé's name in a text box beside its empty file input (Qualcomm, 2026-10-21:
             # 'Upload your resume' = Surya_Thirukonda_Resume_SWE.pdf, and the gate said the slot was empty)

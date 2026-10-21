@@ -727,7 +727,10 @@ class Oracle(Adapter):
              ".description; then click the form's own ADD EXPERIENCE (or ADD EDUCATION) button to save it as a tile. A form "
              "left open for an entry that already has a tile is closed with its CANCEL button. The resume import can add "
              "tiles that are not his entries (GM Financial, 2026-10-19: an 'Engineering Honors' education record with a "
-             "required Degree): delete any tile that matches none of his stored entries with its Delete button, then go on.")
+             "required Degree): delete any tile that matches none of his stored entries with its Delete button, then go on. "
+             "The outline lists each tile as ENTRY TILE with its own Edit and Delete refs ('Edit: <title> / <employer>'); a tile "
+             "from an earlier résumé import can name a skill list as its employer (AutoZone, 2026-10-21): open it with its Edit, "
+             "set Employer Name and the other fields from his stored entry for that role, and SAVE.")
 
 
 class ICIMS(Adapter):

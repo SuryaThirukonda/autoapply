@@ -2063,3 +2063,39 @@ def test_the_way_back_to_a_sign_in_page_is_never_a_session_bound_address():
     assert way_back_url(crumb) == ""
     assert way_back_url("", "https://x.example.com/login;jsessionid=AB12") == ""
     assert way_back_url("https://jobs.example.com/apply?site=3&sid=9") == "https://jobs.example.com/apply?site=3&sid=9"
+
+
+
+def test_an_oracle_import_box_is_refused_only_when_the_page_has_another_resume_slot():
+    """onsemi / Vertiv (2026-10-21): the import box was the page's only résumé box; refusing it left the gate asking for a
+    résumé that no tool could attach."""
+    from types import SimpleNamespace
+    from goat.agent.tools import other_resume_slot
+    imp = {"ref": "e2", "type": "file", "label": "Import your profile from resume"}
+    cover = {"ref": "e7", "type": "file", "label": "Upload Cover Letter"}
+    attach = {"ref": "e9", "type": "file", "label": "Upload Resume"}
+    assert other_resume_slot(SimpleNamespace(items=[imp, cover]), "e2", "oracle") is None
+    assert other_resume_slot(SimpleNamespace(items=[imp, cover, attach]), "e2", "oracle")["ref"] == "e9"
+    assert other_resume_slot(None, "e2", "oracle") is None
+
+
+
+def test_a_create_account_page_with_one_password_box_is_a_sign_up():
+    """TikTok (2026-10-21): /create-account has a single password box, and credentials 'create' was refused as a Sign In form."""
+    from types import SimpleNamespace
+    from goat.agent.tools import single_password_signup
+    tiktok = SimpleNamespace(title="Create Account", headings=["Sign in"], url="https://lifeattiktok.com/create-account")
+    assert single_password_signup(tiktok, "https://lifeattiktok.com/create-account")
+    assert not single_password_signup(SimpleNamespace(title="Sign in", headings=["Sign in"], url=""), "https://lifeattiktok.com/login")
+    assert not single_password_signup(SimpleNamespace(title="Join our Talent Community", headings=[], url=""),
+                                      "https://careers.example.com/talentcommunity/register")
+
+
+
+def test_a_date_boxs_placeholder_is_never_its_value():
+    """AutoZone (Oracle, 2026-10-21): set_date read back 'Month' from a Start Date Month picker and called it set."""
+    from goat.agent.tools import DATE_PLACEHOLDER
+    for p in ("Month", "Year", "MM", "YYYY", "Select One", "", "  "):
+        assert DATE_PLACEHOLDER.match(p), p
+    for v in ("February", "2026", "02/01/2026", "Feb 2026"):
+        assert not DATE_PLACEHOLDER.match(v), v

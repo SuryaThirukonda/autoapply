@@ -306,3 +306,10 @@ def test_a_later_attempt_replaces_an_earlier_answer_worded_differently():
     assert same_question("Built tool for non-technical users", "Built a tool for non-technical users")
     assert not same_question("Name", "Name if related")
     assert not same_question("Worked for Sony company", "If yes relationship name/details")
+
+
+
+def test_the_judge_knows_his_year_in_a_portals_own_wording():
+    """LSEG (2026-10-21): 'Penultimate academic year' was failed as not Sophomore."""
+    from goat.judge import JUDGE_INSTRUCTIONS
+    assert "'Penultimate academic year'" in JUDGE_INSTRUCTIONS and "Sophomore" in JUDGE_INSTRUCTIONS

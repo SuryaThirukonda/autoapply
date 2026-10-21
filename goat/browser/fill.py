@@ -175,11 +175,61 @@ async def _type_boxes(ex: Executor, fields: list[dict]) -> list[FieldResult]:
     return out
 
 
+# A month and year ('May 2028', '05/2028', '2028-05') typed into a box that asks for another layout: Amazon's graduation
+# box said "Please enter the month in the format YYYY-MM" to 'May 2028' and the run stopped there (2026-10-21).
+MONTH_YEAR = re.compile(r"^\s*(?:[A-Za-z]{3,9}\.?,?\s+\d{4}|\d{1,2}/\d{4}|\d{4}-\d{1,2})\s*$")
+JS_DATE_FORMAT_HINT = js._COMMON_WRAP("""
+  const el = findRef(ref);
+  if (!el) return null;
+  const bits = [el.getAttribute('placeholder') || '', el.getAttribute('pattern') || '', el.getAttribute('title') || '',
+                el.getAttribute('aria-label') || '', el.getAttribute('data-format') || ''];
+  for (const id of (el.getAttribute('aria-describedby') || '').split(/\\s+/).filter(Boolean)) {
+    const d = document.getElementById(id); if (d) bits.push(txt(d));
+  }
+  let box = el.parentElement;
+  for (let i = 0; i < 3 && box; i++, box = box.parentElement) { const t = txt(box); if (t.length < 400) bits.push(t); else break; }
+  return { type: (el.type || '').toLowerCase(), hint: bits.join(' | ').slice(0, 1200) };
+""", "ref")
+
+
+def month_layout(value: str, kind: str, hint: str) -> str | None:
+    """The value in the layout the box asks for, when it is a month and year and the box names one."""
+    if not isinstance(value, str) or not MONTH_YEAR.match(value):
+        return None
+    parts = parse_date(value)
+    if not parts.get("month") or not parts.get("year") or parts.get("day"):
+        return None
+    y, m = parts["year"], int(parts["month"])
+    if kind == "month" or re.search(r"yyyy\s*-\s*mm(?!\s*-\s*dd)", hint or "", re.I):
+        return f"{y}-{m:02d}"
+    if re.search(r"\bmm\s*/\s*yyyy\b", hint or "", re.I):
+        return f"{m:02d}/{y}"
+    return None
+
+
+async def _month_layouts(ex: Executor, fields: list[dict]) -> list[dict]:
+    out = []
+    for f in fields:
+        v = f.get("value")
+        if isinstance(v, str) and MONTH_YEAR.match(v):
+            try:
+                h = await ex.eval(JS_DATE_FORMAT_HINT, str(f["ref"]))
+            except Exception:
+                h = None
+            if isinstance(h, dict):
+                nv = month_layout(v, str(h.get("type") or ""), str(h.get("hint") or ""))
+                if nv and nv != v:
+                    f = {**f, "value": nv}
+        out.append(f)
+    return out
+
+
 async def fill_batch(ex: Executor, fields: list[dict]) -> list[FieldResult]:
     """fields: [{ref, value}] where value is str or bool. Password and file inputs are refused. On an autosaving
     form (Ashby) the fields are set one at a time, each save awaited, and lost saves are redone at the end."""
     if not fields:
         return []
+    fields = await _month_layouts(ex, fields)
     if needs_real_typing(ex):
         typed, clicked, rest = [], [], []
         for f in fields:
@@ -622,10 +672,11 @@ def gpa_option(options: list[dict], wants: list[str]) -> dict | None:
 
 # A self-identification chain starts with 'decline' (Surya: decline whenever the form offers it). Forms word the decline
 # their own way; GDIT's 'I do not wish to disclose (United States of America)' matched none of the stored wordings and
-# the chain fell through to his race (2026-10-20).
+# the chain fell through to his race (2026-10-20). 'I don't want to answer', 'I wish not to answer' and 'Choose not to
+# share' are declines too (Westinghouse's SuccessFactors Ethnicity took the Asian fallback, 2026-10-21).
 DECLINE_OPT = re.compile(
-    r"\b(decline[sd]?|do not wish|don.?t wish|prefer not|choose not|chose not|elect not|opt not|"
-    r"not (wish|want) to|rather not|not to (disclose|answer|say|identify|self[- ]?identify|respond|specify|provide)|"
+    r"\b(decline[sd]?|do not wish|don.?t wish|don.?t want to|wish not to|prefer not|choose not|chose not|elect not|opt not|"
+    r"not (wish|want|care) to|rather not|not to (disclose|answer|say|identify|self[- ]?identify|respond|specify|provide|state|share)|"
     r"undisclosed|not (specified|declared|disclosed|provided))\b", re.I)
 
 
@@ -1034,9 +1085,14 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
         wd_prompt = bool(await ex.eval(JS_IS_WORKDAY_PROMPT, ref))
     except Exception:
         wd_prompt = False
-    # 0. already showing the wanted option: nothing to click.
+    # 0. already showing the wanted option: nothing to click. A decline-led self-identification chain keeps a value only
+    #    when it is a decline: LSEG's ethnicity list still held 'Asian (United States of America)' from an earlier attempt,
+    #    that matched the chain's fallback, and the list was never opened to look for its decline option (2026-10-21).
+    decline_led = bool(wants) and _norm(wants[0]) == "decline"
     for w in wants:
         if _norm(w) and not PLACEHOLDER.match(before or "") and _norm(before) == _norm(w):
+            if decline_led and not DECLINE_OPT.search(before or ""):
+                break
             return FieldResult(ref, True, before)
 
     # 1. react-select through its own props: list its options, pick by OUR preference order (the first

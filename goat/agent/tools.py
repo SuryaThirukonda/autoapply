@@ -483,6 +483,37 @@ def way_back_url(*urls: str) -> str:
     return ""
 
 
+# A sign-up page by its own address or title. TikTok's /create-account has one password box and no confirm box, and the
+# one-box rule took it for a Sign In form (2026-10-21). A talent community is never joined (his rule).
+SIGNUP_PAGE = re.compile(r"create[-_ ]?(an[-_ ]?|your[-_ ]?)?account|sign[-_ ]?up|\bregister\b|registration", re.I)
+TALENT_COMMUNITY = re.compile(r"talent (community|network|pool)|job alerts?", re.I)
+
+
+def single_password_signup(snap, url: str = "") -> bool:
+    """A Create Account page whose form has a single password box."""
+    title = str(getattr(snap, "title", "") or "")
+    heads = " ".join(getattr(snap, "headings", None) or [])
+    where = " ".join([url or str(getattr(snap, "url", "") or ""), title])
+    return bool(SIGNUP_PAGE.search(where)) and not TALENT_COMMUNITY.search(" ".join([where, heads]))
+
+
+# A date box's own placeholder is never its value (Oracle's 'Month' read back as set, AutoZone 2026-10-21)
+DATE_PLACEHOLDER = re.compile(r"^\s*(month|year|day|mm|dd|yyyy|mm/dd/yyyy|mm/yyyy|select( one)?|choose( one)?|-+)?\s*$", re.I)
+
+
+def other_resume_slot(snap, ref: str, portal: str) -> dict | None:
+    """A résumé file box on the page other than this one and other than an Oracle profile import box."""
+    from ..adapters import is_profile_import_upload
+    for i in (getattr(snap, "items", None) or []):
+        if i.get("type") != "file" or i.get("ref") == ref:
+            continue
+        lab = " ".join([str(i.get("label") or ""), str(i.get("placeholder") or ""), str(i.get("name") or "")])
+        if re.search(r"resume|résumé|\bcv\b|curriculum", lab, re.I) and not re.search(r"cover|transcript", lab, re.I) \
+                and not is_profile_import_upload(lab, portal):
+            return i
+    return None
+
+
 # A posting page's own Apply menu ('Apply now' with 'Apply with LinkedIn' / 'Apply now' inside) is navigation, not a field.
 APPLY_NAV = re.compile(r"^\s*(apply( now| for this (job|position|role))?|apply (with|using) .{0,30}|start (your |an )?application|"
                        r"i'?m interested)\s*[»›>]*\s*$", re.I)
@@ -1877,6 +1908,10 @@ class ToolDispatcher:
             if mine:
                 out["note"] = (f"{shown[:60]!r} came from your options, not from the stored answer {first[:60]!r}: it must mean the same, "
                                "and the check before submit will verify it. If it does not, pick the option that says the stored answer.")
+            elif first and answers.norm(first) == "decline" and not fill.DECLINE_OPT.search(shown):
+                # never call his stated fallback a 'wording for decline' (LSEG, 2026-10-21)
+                out["note"] = (f"the list offers no decline option, so his stated fallback {shown[:60]!r} was picked (his rule "
+                               "for a form without one): it is the sourced value. Do not re-set it, do not ask, do not park over it.")
             elif first and answers.norm(shown) != answers.norm(first):
                 out["note"] = (f"{shown[:60]!r} is this portal's wording for {first[:40]!r} (one of the stored variants): "
                                "it is the correct, sourced value. Do not re-set it, do not ask, do not park over it.")
@@ -2262,10 +2297,29 @@ class ToolDispatcher:
                                  "Education from the résumé, wrongly. Never upload there: upload into the Resume box lower on "
                                  "the page."}, None
         from ..adapters import is_job_match_upload, is_profile_import_upload
+        import_note = ""
         if is_profile_import_upload(" ".join([str(item_now.get("label") or ""), str(item_now.get("placeholder") or "")]), self.ctx.portal):
-            return {"error": "this is Oracle's 'Import your profile' box: it parses the résumé into broken Work and Education "
-                             "History entries. Never upload there: the résumé goes into the Supporting Documents slot "
-                             "('Upload Resume' / 'Drop Resume Here') lower on the page."}, None
+            other = other_resume_slot(self.ctx.last_snapshot, ref, self.ctx.portal)
+            if other is not None:
+                return {"error": "this is Oracle's 'Import your profile' box: it parses the résumé into broken Work and Education "
+                                 f"History entries. Never upload there: upload into '{str(other.get('label') or 'Resume')[:50]}' "
+                                 f"[{other['ref']}] instead."}, None
+            # The only résumé box on the page (onsemi, Vertiv, AutoZone, 2026-10-21): the résumé reaches the application only
+            # through it, and refusing it left the gate asking for a résumé no tool could attach.
+            p0 = _resume_path(self.ctx, document)
+            try:
+                shown_text = await self.ctx.ex.page_text(30000)
+            except Exception:
+                shown_text = ""
+            if p0 is not None and document == "resume" and p0.name.lower() in (shown_text or "").lower():
+                self.ctx.resume_file = p0.name
+                records.record_decision(self.ctx.job_id, self.ctx.page_no, f"{document} upload", p0.name, "resume", ref)
+                return {"ref": ref, "status": "set", "readback": p0.name,
+                        "note": "this résumé is already attached (Oracle lists it beside 'Remove Resume'): do not upload it again"}, None
+            import_note = ("Oracle's import box is this page's only résumé box, so the résumé went there, and Oracle parses it "
+                           "into Work History and Education tiles: take a snapshot and check every ENTRY TILE against his stored "
+                           "entries (a wrong employer is fixed with the tile's Edit, a tile that is none of his entries is "
+                           "deleted); the gate names any tile that is wrong.")
         if is_job_match_upload(" ".join([str(item_now.get("label") or ""), str(item_now.get("placeholder") or "")]),
                                getattr(self.ctx.ex, "url", "") or "", self.ctx.portal):
             # Texas Instruments (2026-10-20): the search page's "upload your resume to get recommended jobs" box parsed the
@@ -2293,7 +2347,10 @@ class ToolDispatcher:
             if document == "resume":
                 self.ctx.resume_file = p.name
             records.record_decision(self.ctx.job_id, self.ctx.page_no, f"{document} upload", p.name, "resume", ref)
-        return r.as_dict(), None
+        out = r.as_dict()
+        if import_note and r.ok:
+            out["note"] = import_note
+        return out, None
 
     async def t_set_date(self, ref: str, answer_key: str | None, value: str | None, label: str):
         src = "adapter"
@@ -2306,7 +2363,17 @@ class ToolDispatcher:
             src = "resume"
         else:
             return {"error": "give a value or an answer_key"}, None
-        r = await fill.set_date(self.ctx.ex, ref, str(val))
+        item = (self.ctx.last_snapshot.find(ref) if self.ctx.last_snapshot else None) or {}
+        if item.get("combo") or item.get("tag") == "dropdown":
+            # Oracle's Start Date Month / Year are pickers: set_date typed into one, read back its placeholder 'Month'
+            # and called it set (AutoZone, 2026-10-21). A picker takes the month name or the year from its own list.
+            wants = [str(val)] + (fill.month_numbers([str(val)]) if re.search(r"month", f"{label} {item.get('label') or ''}", re.I) else [])
+            r = await fill.choose(self.ctx.ex, ref, wants)
+        else:
+            r = await fill.set_date(self.ctx.ex, ref, str(val))
+        if r.ok and DATE_PLACEHOLDER.match(r.readback or ""):
+            r = fill.FieldResult(ref, False, r.readback, "the field still shows its placeholder: nothing was set (a Month or "
+                                                         "Year picker takes choose with the month name or the year)")
         self.ctx.budget.step()
         if r.ok:
             records.record_decision(self.ctx.job_id, self.ctx.page_no, label, r.readback or str(val),
@@ -2666,7 +2733,7 @@ class ToolDispatcher:
         if mode in ("login", "login_universal") and pw_boxes >= 2:
             return {"error": "this is the Create Account form (two password boxes). To sign in, click its 'Sign In' link first, take a "
                              "snapshot, then call credentials login_universal on the sign-in form and click its Sign In button."}, None
-        if mode == "create" and pw_boxes == 1:
+        if mode == "create" and pw_boxes == 1 and not single_password_signup(snap, getattr(self.ctx.ex, "url", "") or ""):
             return {"error": "this is the Sign In form (one password box). Click 'Create Account' first, take a snapshot, then call "
                              "credentials mode 'create' with the password and verify-password boxes."}, None
         if mode == "create":
