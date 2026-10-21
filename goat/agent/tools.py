@@ -515,9 +515,10 @@ def rank_wants(wants: list[str], taken: list[str]) -> list[str]:
 
 
 # A 'stuck' park that only lists what is left to fill ("remains incomplete", "still unanswered", "need completion").
-STUCK_TODO = re.compile(r"\b(incomplete|need(s|ed)? (to be )?(completion|completed|filled|answered)|remain(s|ing)? "
-                        r"(unanswered|incomplete|empty|unfilled|unresolved)|not yet (filled|answered|read|completed)|"
-                        r"still (unanswered|empty|need|required|incomplete)|must be (filled|completed|answered))\b", re.I)
+STUCK_TODO = re.compile(r"\b(incomplete|need(s|ed)? (to be )?(completion|completed|filled|answered|correction|fixing|fixed)|"
+                        r"requires? (completion|correction|completing|fixing)|remain(s|ing)? "
+                        r"(unanswered|incomplete|empty|unfilled|unresolved|sections|fields|questions)|not yet (filled|answered|read|completed)|"
+                        r"still (unanswered|empty|need|needs|require|requires|required|incomplete)|must be (filled|completed|answered|fixed))\b", re.I)
 # A date a status was obtained, next to the citizenship / status block
 OBTAINED_DATE = re.compile(r"\b(date obtained|obtained date|date of acquisition|acquired on|date acquired)\b", re.I)
 CITIZENSHIP_LABEL = re.compile(r"\b(type of status|country \d+ name|citizenship|permanent residen|date of acquisition)\b", re.I)
@@ -1873,7 +1874,17 @@ class ToolDispatcher:
         if APPLY_NAV.match(nav_label):
             # NetApp / Acuity (2026-10-21): the posting's 'Apply now' menu was picked with answer_key identity.email and
             # recorded as a decision; on the form the same ref named another control and the stale decision blocked the gate.
-            r = await fill.choose(self.ctx.ex, ref, [o for o in (options or []) if o] or ["Apply now", "Apply"])
+            try:
+                r = await fill.choose(self.ctx.ex, ref, [o for o in (options or []) if o] or ["Apply now", "Apply"])
+            except Exception as e:  # noqa: BLE001 - the page went away under the read-back: the menu did its job
+                # NetApp (2026-10-21): 'Apply now' opened the sign-in page and the read-back on the old page raised
+                # 'Execution context was destroyed', so the model got a tool error instead of 'navigated'
+                r = fill.FieldResult(ref, True, "", "")
+                db.event(self.ctx.job_id, "choose:navigation_away", {"ref": ref, "error": f"{type(e).__name__}"[:60]})
+                try:
+                    await self.ctx.ex.settle()
+                except Exception:  # noqa: BLE001
+                    pass
             db.event(self.ctx.job_id, "choose:navigation", {"ref": ref, "label": nav_label[:60], "picked": str(r.readback)[:60], "ok": r.ok})
             return {"ref": ref, "status": "navigated" if r.ok else "failed", "readback": r.readback, "error": r.error,
                     "note": "an Apply menu is navigation, not an answer: nothing was recorded. Take a snapshot."}, None
@@ -3698,23 +3709,27 @@ class ToolDispatcher:
         # past the budget, a park is still checked twice when the page has a submit control: Northrop Grumman spent its
         # four parks on a portal error that had cleared, then parked from Review over an earlier attempt's certification
         # problem that was no longer on the page (2026-10-19)
-        extra = not hard and self.ctx.park_attempts >= 4 and self.ctx.control_failures.get("park:past_budget", 0) < 2 \
+        # A park after fields were set since the last checked one, or one that only lists what is left to fill, is free:
+        # it never uses up a check and never takes the past-budget path that lets a park stand. Westinghouse set fields
+        # between parks and its fifth park stood with every blocker fillable; AutoZone had fixed two of three wrong
+        # employers when its seventh park took the past-budget path (2026-10-21). Ten checked parks in all.
+        free = False
+        n_dec = -1
+        if not hard:
+            n_dec = db.connect().execute("SELECT COUNT(*) FROM decisions WHERE job_id=?", (self.ctx.job_id,)).fetchone()[0]
+            progressed = self.ctx.decisions_at_park >= 0 and n_dec > self.ctx.decisions_at_park
+            free = self.ctx.parks_total < 10 and (progressed or (low.startswith("stuck") and bool(STUCK_TODO.search(reason))))
+        extra = not hard and not free and self.ctx.park_attempts >= 4 and self.ctx.control_failures.get("park:past_budget", 0) < 2 \
             and bool(self.ctx.last_snapshot is not None and has_submit_control(self.ctx.last_snapshot))
         if extra:
             self.ctx.control_failures["park:past_budget"] = self.ctx.control_failures.get("park:past_budget", 0) + 1
-        if not hard and (self.ctx.park_attempts < 4 or extra):
+        if not hard and (self.ctx.park_attempts < 4 or extra or free):
             # An eager park: run the gate first. If it passes, the right move is submit; if it blocks,
             # the model gets the concrete blockers instead of giving up. Four checks, not two: Epic Games spent both
             # within 30 s (one on the posting page before Apply opened the form) and its third park went through
             # with "requires an unavailable resume attachment" on a form whose blockers were all fillable (2026-10-19).
-            # A park after fields were set since the last one, or one that only lists what is left to fill, does not use
-            # up a check: Westinghouse set fields between parks and its fifth park stood with every blocker fillable
-            # (2026-10-21). Ten checked parks in all, then every one counts.
-            n_dec = db.connect().execute("SELECT COUNT(*) FROM decisions WHERE job_id=?", (self.ctx.job_id,)).fetchone()[0]
-            progressed = self.ctx.decisions_at_park >= 0 and n_dec > self.ctx.decisions_at_park
             self.ctx.decisions_at_park = n_dec
             self.ctx.parks_total += 1
-            free = not extra and self.ctx.parks_total <= 10 and (progressed or (low.startswith("stuck") and bool(STUCK_TODO.search(reason))))
             if not free:
                 self.ctx.park_attempts += 1
             snap = await snapmod.take(self.ctx.ex)

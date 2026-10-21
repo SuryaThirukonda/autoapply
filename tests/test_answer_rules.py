@@ -2148,3 +2148,13 @@ def test_a_landing_pages_sign_in_link_is_the_way_to_the_sign_up_link():
                                   {"ref": "e2", "tag": "input", "type": "password", "label": "Password:*"},
                                   {"ref": "e4", "tag": "button", "label": "Sign In"}])
     assert sign_in_link(form) is None
+
+
+
+def test_a_park_that_names_corrections_left_is_still_work_to_do():
+    """AutoZone (2026-10-21): 'misassigned work-history entries ... requires correction; ... still require completion'."""
+    from goat.agent.tools import STUCK_TODO
+    for r in ("stuck: AutoZone application has misassigned work-history entries and requires correction",
+              "stuck: Five-entry history, education details, remaining sections, and later pages still require completion",
+              "stuck: three tiles need correction"):
+        assert STUCK_TODO.search(r), r
