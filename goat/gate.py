@@ -124,6 +124,12 @@ COOKIE_CONTROL = re.compile(r"\bcookies?\b.{0,40}\b(settings|preferences|policy|
                             r"\b(manage|customi[sz]e|accept|reject)\b.{0,20}\bcookies?\b", re.I)
 
 
+# A job-search page's own sorting and paging pickers are page chrome too (UKG, 2026-10-21: "Sort by = Latest" blocked a
+# park on the careers search page).
+SEARCH_CONTROL = re.compile(r"^(sort( results)?( by)?|order( by)?|results per page|items per page|jobs per page|per page|"
+                            r"page size)\s*:?\s*$", re.I)
+
+
 def is_display_language_picker(label: str, value: str) -> bool:
     lab = re.sub(r"[\s:*]+$", "", (label or "").strip()).lower()
     return lab in ("language", "select language", "change language", "site language", "display language") \
@@ -359,7 +365,8 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
                 or (it.get("tag") in ("select", "dropdown") or it.get("combo")) and \
                 _answers.norm(str(val)) == _answers.norm(it.get("label") or "") and it.get("type") not in ("checkbox", "radio"):
             continue
-        if is_display_language_picker(it.get("label") or "", str(val)) or COOKIE_CONTROL.search(it.get("label") or ""):
+        if is_display_language_picker(it.get("label") or "", str(val)) or COOKIE_CONTROL.search(it.get("label") or "") \
+                or SEARCH_CONTROL.match((it.get("label") or "").strip()):
             continue
         if not _sourced(it.get("ref", ""), it.get("label", "")):
             key = standing.get(_answers.norm(str(val)))

@@ -369,3 +369,11 @@ async def test_a_dropdown_showing_only_its_icon_glyph_is_empty():
         assert any("Gender" in (r.get("label") or "") for r in snap.errors.get("empty_required", [])), snap.errors
     finally:
         await ex.close()
+
+
+
+def test_a_search_pages_sort_picker_needs_no_sourced_decision():
+    """UKG (2026-10-21): 'Sort by = Latest' on the careers search page was asked for a sourced decision."""
+    from goat.gate import SEARCH_CONTROL
+    assert SEARCH_CONTROL.match("Sort by") and SEARCH_CONTROL.match("Sort") and SEARCH_CONTROL.match("Results per page:")
+    assert not SEARCH_CONTROL.match("Sort code") and not SEARCH_CONTROL.match("How did you hear about us?")
