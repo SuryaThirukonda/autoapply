@@ -124,7 +124,8 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     on_review = any(h.strip().lower() == "review" for h in (snapshot.headings or [])) \
         or bool(re.search(r"current step \d+ of \d+\s*\n\s*Review\b", page_text[:4000], re.I))
     if (portal or "").lower() == "workday" and on_review:
-        gaps = [sec for sec in ("Work Experience", "Field of Study") if re.search(sec + r"\s*\n\s*No Response", page_text)]
+        gaps = [sec for sec in ("Work Experience", "Professional Experience", "Work History", "Employment History", "Field of Study")
+                if re.search(sec + r"\s*\n\s*No Response", page_text)]
         if gaps:
             return GateResult("blocked", [f"the Review page shows '{g}: No Response': call go_to_step('My Experience'), then fill_sections, "
                                           "then Save and Continue forward to Review" for g in gaps])

@@ -63,6 +63,10 @@ JS_SECTIONS = r"""
 """
 
 WORK_KINDS = ("workExperience", "workexperience", "experience", "employment")
+# The work-history section's own heading: Rogue Fitness calls it "Professional Experience" (2026-10-20: only the tenant's
+# pre-rendered block was filled, and entries 2-5 failed with "Add button not found" because the Add Another button sat
+# under a heading the filler did not know).
+WORK_HEADING = re.compile(r"^(?:(?:work|professional|employment|job)\s+(?:experience|history)|employment|experience)\b", re.I)
 SITE_KINDS = ("websites", "website", "webAddress", "webAddresses")
 
 
@@ -300,7 +304,7 @@ class WorkdaySections:
         if not stored:
             return
         info = await self.scan()
-        work_heading = re.compile(r"^work (experience|history)", re.I)
+        work_heading = WORK_HEADING
         if not any(work_heading.search(s["heading"]) for s in info["sections"]) and not any(e["kind"] in WORK_KINDS for e in info["entries"]):
             self.report.skipped.append("no Work Experience section on this page")
             return
@@ -702,7 +706,7 @@ def _field_value(entries: list[dict], company: str) -> dict | None:
 
 def is_experience_page(info_text: str, headings: list[str]) -> bool:
     hay = " ".join(headings) + " " + info_text
-    return bool(re.search(r"\b(My Experience|Work Experience|Work History)\b", hay, re.I))
+    return bool(re.search(r"\b(My Experience|Work Experience|Work History|Professional Experience|Employment History)\b", hay, re.I))
 
 
 def review_gaps(page_text: str, company: str = "") -> list[str]:

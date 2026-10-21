@@ -358,3 +358,27 @@ def test_react_never_takes_the_react_framework():
     from goat.adapters.workday_sections import pick_skill
     assert pick_skill("React", ["ReAct Framework"]) is None
     assert pick_skill("React", ["ReAct Framework", "React.js"]) == "React.js"
+
+
+
+@pytest.mark.asyncio
+async def test_a_professional_experience_section_gets_every_entry(stored):
+    """Rogue Fitness (2026-10-20): the section is headed 'Professional Experience'; only the pre-rendered block was filled
+    and entries 2-5 failed with 'Add button not found'."""
+    html = (FIX / "workday" / "sections.html").read_text(encoding="utf-8").replace("Work Experience", "Professional Experience")
+    ex = await _open_html(html)
+    try:
+        f = _filler("workday", ex)
+        await snapshot.take(ex)
+        rep = await f.run()
+        assert not [x for x in rep.failed if "Add button" in x], rep.summary()
+        info = await f.scan()
+        assert set(_vals(info["entries"])) == {e["company"] for e in ENTRIES}
+    finally:
+        await ex.close(close_browser=True)
+
+
+def test_the_review_page_names_an_empty_professional_experience_section():
+    assert ws.WORK_HEADING.search("Professional Experience") and ws.WORK_HEADING.search("Work Experience 3")
+    assert ws.WORK_HEADING.search("Employment History") and not ws.WORK_HEADING.search("My Experience")
+    assert ws.is_experience_page("", ["Professional Experience"])
