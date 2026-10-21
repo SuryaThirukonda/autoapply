@@ -1,0 +1,169 @@
+"""SmartRecruiters' one-click form (CapTech, Wellmark, ServiceNow 2026-10-21): every control lives in a custom element's
+shadow root. The snapshot names the buttons by their host, the click guards still recognise a Submit drawn that way, and
+the harness writes the Experience / Education cards from the stored entries (parsed project cards removed)."""
+import json
+from pathlib import Path
+
+import pytest
+
+from goat import db, records
+from goat.adapters import smartrecruiters_sections as sr
+from goat.browser import js, snapshot
+from goat.browser.executor import Executor, HostPolicy
+
+FIX = Path(__file__).parent / "fixtures" / "smartrecruiters" / "oneclick.html"
+NL = chr(10)
+
+ENTRIES = [
+    {"n": 1, "company": "Revio", "title": "Founding Software Engineer (Part-time)", "location": "Remote", "start": "02/01/2026", "end": "",
+     "current": True, "description": "• Launched a beta. • Kept documents intact."},
+    {"n": 2, "company": "DeKalb Capital Management", "title": "Software Engineering Intern", "location": "Remote", "start": "06/01/2026",
+     "end": "08/20/2026", "current": False, "description": "• Built analytics. • Synced positions."},
+    {"n": 3, "company": "Mai Shan Yun (WaiterDock)", "title": "Contract Software Engineer", "location": "College Station, TX", "start": "02/01/2026",
+     "end": "06/30/2026", "current": False, "description": "• Won the challenge."},
+    {"n": 4, "company": "Rathinam Group, Texas A&M", "title": "Undergraduate Research Assistant", "location": "College Station, TX",
+     "start": "09/01/2026", "end": "", "current": True, "description": ""},
+    {"n": 5, "company": "Southwest Airlines", "title": "Data Analyst", "location": "College Station, TX", "start": "10/01/2025",
+     "end": "12/15/2025", "current": False, "description": "• Forecast baggage revenue."},
+]
+EDU = {"education.school": "Texas A&M University", "education.school_variants": "Texas A & M University; Texas A&M University - College Station",
+       "education.high_school": "Clements High School", "education.major": "Computer Science", "education.degree": "Bachelor of Science",
+       "education.start": "August 2025", "education.graduation": "May 2028"}
+
+
+@pytest.fixture()
+def stored(monkeypatch, tmp_path):
+    db.reset_for_tests(tmp_path / "t.db")
+    monkeypatch.setattr(sr, "stored_work_entries", lambda company="", portal="": [dict(e) for e in ENTRIES])
+    monkeypatch.setattr(sr.SmartRecruitersSections, "_answer", lambda self, key: EDU.get(key, ""))
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('l1','Acme','Intern','https://jobs.smartrecruiters.com/Acme/1','smartrecruiters')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,priority) VALUES(1,'l1','filling','no_account',0)")
+
+
+async def _open(html: str | None = None) -> Executor:
+    url = FIX.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    await ex.new_page()
+    ex.policy.hosts.add("")
+    if html is None:
+        await ex.page.goto(url)
+    else:
+        await ex.page.set_content(html)
+    await ex.settle(quiet_ms=100)
+    return ex
+
+
+@pytest.mark.asyncio
+async def test_the_filler_writes_every_stored_entry_and_removes_parsed_cards(stored):
+    ex = await _open()
+    try:
+        f = sr.SmartRecruitersSections(ex, {"id": 1, "company": "Acme"}, 1)
+        assert await f.applies()
+        rep = await f.run()
+        assert rep.failed == [], rep.failed
+        assert rep.present == ["experience: Revio"]
+        assert [x for x in rep.updated if "Tempo" in x] and [x for x in rep.updated if "Engineering Honors" in x]
+        assert len([x for x in rep.added if x.startswith("experience:")]) == 4 and "education: Texas A&M University" in rep.added
+        cards = await f.cards("experience")
+        assert sorted(c["company"] for c in cards) == sorted(e["company"] for e in ENTRIES)
+        by = {c["company"]: c for c in cards}
+        assert by["DeKalb Capital Management"]["date"] == "2026 - 2026" and by["Rathinam Group, Texas A&M"]["date"] == "2026 - Present"
+        assert by["Southwest Airlines"]["name"] == "Data Analyst" and by["Southwest Airlines"]["date"] == "2025 - 2025"
+        edu = await f.cards("education")
+        assert [(c["name"], c["date"], c["major"], c["degree"]) for c in edu] == [
+            ("Texas A&M University", "2025 - 2028", "Computer Science", "Bachelor of Science")]
+        # descriptions go in with real line breaks, one bullet per line
+        descs = await ex.page.evaluate("() => window.__descs")
+        assert ("• Built analytics." + NL + "• Synced positions.") in descs
+        # every added value is recorded with its stored key
+        srcs = {r["source"] for r in records.decisions(1)}
+        assert {"standing:experience.work.2.title", "standing:experience.work.2.company", "standing:experience.work.2.start",
+                "standing:experience.work.2.end", "standing:experience.work.4.current", "standing:education.school",
+                "standing:education.graduation"} <= srcs
+        # a second pass changes nothing
+        again = await sr.SmartRecruitersSections(ex, {"id": 1, "company": "Acme"}, 1).run()
+        assert again.added == [] and again.updated == [] and again.failed == []
+        assert len(again.present) == 6
+    finally:
+        await ex.close()
+
+
+@pytest.mark.asyncio
+async def test_an_editor_left_open_is_cancelled_before_the_cards_are_written(stored):
+    ex = await _open()
+    try:
+        await ex.page.locator('[data-test="add-experience"] button').first.click()
+        await ex.page.locator('oc-experience-edit-form [data-test="job-title-autocomplete"] input').first.fill("Half typed")
+        rep = await sr.SmartRecruitersSections(ex, {"id": 1, "company": "Acme"}, 1).run()
+        assert rep.failed == []
+        assert await ex.page.locator("oc-experience-edit-form").count() == 0
+        assert len(await sr.SmartRecruitersSections(ex, {"id": 1, "company": "Acme"}, 1).cards("experience")) == 5
+    finally:
+        await ex.close()
+
+
+@pytest.mark.asyncio
+async def test_the_snapshot_names_shadow_root_buttons_by_their_host():
+    ex = await _open()
+    try:
+        snap = await snapshot.take(ex)
+        labels = {i.get("label"): i for i in snap.items}
+        for name in ("Add experience entry", "Add education entry", "Next", "Delete experience Tempo"):
+            assert name in labels, sorted(k for k in labels if k)
+        assert not labels["Next"].get("submitish")
+        await ex.page.locator('[data-test="add-experience"] button').first.click()
+        snap = await snapshot.take(ex)
+        labels = {i.get("label"): i for i in snap.items}
+        assert "Save experience entry" in labels and labels["I currently work here"]["type"] == "checkbox"
+    finally:
+        await ex.close()
+
+
+SHADOW_SUBMIT = """<html><body>
+<input value="Surya"><input value="Thirukonda"><input value="x@y.z">
+<oc-button><spl-button id="s">Submit</spl-button></oc-button>
+<script>customElements.define('spl-button', class extends HTMLElement { connectedCallback() {
+  this.attachShadow({ mode: 'open' }).innerHTML = '<button type="button" style="min-width:80px;min-height:30px"><slot></slot></button>'; } });</script>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_submit_drawn_inside_a_shadow_root_is_still_a_submit_control():
+    ex = await _open(SHADOW_SUBMIT)
+    try:
+        snap = await snapshot.take(ex)
+        item = next(i for i in snap.items if i.get("label") == "Submit")
+        assert item.get("submitish")
+        x, y = item["bbox"][0], item["bbox"][1]
+        el = await ex.element_at(x, y)
+        assert el.submit, el
+        guard = await ex.eval(js.JS_TARGET_GUARD, item["ref"])
+        assert guard.get("found") and guard.get("submit"), guard
+        found = await ex.eval(js.JS_FIND_SUBMIT, "")
+        assert found.get("ok") and found.get("text") == "Submit", found
+    finally:
+        await ex.close()
+
+
+@pytest.mark.asyncio
+async def test_the_autocomplete_resume_box_is_told_apart_from_the_resume_box():
+    ex = await _open()
+    try:
+        snap = await snapshot.take(ex)
+        files = sorted((i for i in snap.items if i.get("type") == "file"), key=lambda i: i["bbox"][1])
+        assert len(files) == 2
+        top, bottom = files
+        assert await ex.eval(js.JS_INSIDE_TAG, [top["ref"], ["oc-apply-with-resume"]]) == "oc-apply-with-resume"
+        assert await ex.eval(js.JS_INSIDE_TAG, [bottom["ref"], ["oc-apply-with-resume"]]) == ""
+    finally:
+        await ex.close()
+
+
+def test_month_year_from_every_stored_date_shape():
+    assert sr.month_year("02/01/2026") == "02/2026"
+    assert sr.month_year("August 2025") == "08/2025"
+    assert sr.month_year("May 2028") == "05/2028"
+    assert sr.month_year("") == ""
+    assert json.loads(json.dumps(sr.month_year("2025-10-01"))) == "10/2025"

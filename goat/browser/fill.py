@@ -121,8 +121,10 @@ async def fill_batch(ex: Executor, fields: list[dict]) -> list[FieldResult]:
                     info = await ex.read_ref(str(f["ref"]))
                 except Exception:
                     info = {}
-                if info.get("tag") in ("input", "textarea") and str(info.get("type") or "text").lower() in (
-                        "text", "email", "tel", "url", "search", "number", "textarea", ""):
+                # never a picker's search box: Netflix's veteran question (2026-10-21) got his whole answer list typed into
+                # it ('No match found for I am not a protected veteran; ...'); choose works those
+                if (info.get("tag") in ("input", "textarea") and not info.get("combo") and info.get("expanded") is None
+                        and str(info.get("type") or "text").lower() in ("text", "email", "tel", "url", "search", "number", "textarea", "")):
                     typed.append(f)
                     continue
             rest.append(f)

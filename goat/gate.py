@@ -112,6 +112,24 @@ _SECTION_MSG = re.compile(r"\bplease complete (your |the )?(personal |contact |p
 _FORMAT_MSG = re.compile(r"\b(valid|invalid|format|must be|at least|at most|characters?|match(es)?|correct|too (long|short))\b", re.I)
 
 
+# The site's display-language picker is page chrome, not a question: SAP SuccessFactors shows "Language = English US
+# (English US)" above L3Harris's form, the gate demanded a sourced decision for it, and every pick reloaded the page
+# ("Execution context was destroyed"), so the run parked (2026-10-21). A locale name repeated in brackets marks it.
+_LOCALE_REPEAT = re.compile(r"^\s*([^()]+?)\s*[\u200e\u200f]*\(\s*[\u200e\u200f]*\1\s*[\u200e\u200f]*\)\s*[\u200e\u200f]*\s*$")
+
+
+# A cookie-consent control is page chrome too: Qualcomm's OneTrust button "Cookies Settings, Opens the preference center
+# dialog" reads as a dropdown holding 'Cookies Settings', and the gate demanded a sourced decision for it (2026-10-21).
+COOKIE_CONTROL = re.compile(r"\bcookies?\b.{0,40}\b(settings|preferences|policy|consent|choices|notice)\b|"
+                            r"\b(manage|customi[sz]e|accept|reject)\b.{0,20}\bcookies?\b", re.I)
+
+
+def is_display_language_picker(label: str, value: str) -> bool:
+    lab = re.sub(r"[\s:*]+$", "", (label or "").strip()).lower()
+    return lab in ("language", "select language", "change language", "site language", "display language") \
+        and bool(_LOCALE_REPEAT.match(value or ""))
+
+
 def drop_stale_required(errors: dict | None, snapshot) -> dict:
     """The page's error scan without 'required' messages whose own field now holds a value (and is not marked invalid)."""
     from . import answers as _answers
@@ -338,6 +356,8 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         if re.fullmatch(r"[\W_]+", str(val)) or PLACEHOLDER_VALUE.match(str(val).strip()) \
                 or (it.get("tag") in ("select", "dropdown") or it.get("combo")) and \
                 _answers.norm(str(val)) == _answers.norm(it.get("label") or "") and it.get("type") not in ("checkbox", "radio"):
+            continue
+        if is_display_language_picker(it.get("label") or "", str(val)) or COOKIE_CONTROL.search(it.get("label") or ""):
             continue
         if not _sourced(it.get("ref", ""), it.get("label", "")):
             key = standing.get(_answers.norm(str(val)))

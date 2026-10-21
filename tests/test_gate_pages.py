@@ -323,3 +323,24 @@ def test_a_section_level_complete_your_information_message_is_stale_when_nothing
     assert drop_stale_required(errs, snap)["error_text"] == []
     errs2 = {**errs, "empty_required": [{"label": "* Phone", "type": "text", "ref": "e20"}]}
     assert drop_stale_required(errs2, snap)["error_text"] == errs["error_text"]
+
+
+
+def test_the_sites_display_language_picker_is_not_a_question():
+    """L3Harris (SuccessFactors, 2026-10-21): 'Language = English US (English US)' blocked the gate and every pick reloaded."""
+    from goat.gate import is_display_language_picker
+    assert is_display_language_picker("Language", "English US \u200e(English US)\u200e")
+    assert is_display_language_picker("Language:", "Deutsch (Deutsch)")
+    assert not is_display_language_picker("Language", "English")                       # a real answer
+    assert not is_display_language_picker("Languages spoken", "English US (English US)")
+    assert not is_display_language_picker("Preferred language for communication", "English (US)")
+
+
+
+def test_a_cookie_settings_button_needs_no_sourced_decision():
+    """Qualcomm (2026-10-21): OneTrust's 'Cookies Settings' button read as a dropdown valued 'Cookies Settings'."""
+    from goat.gate import COOKIE_CONTROL
+    assert COOKIE_CONTROL.search("Cookies Settings, Opens the preference center dialog")
+    assert COOKIE_CONTROL.search("Manage cookies")
+    assert not COOKIE_CONTROL.search("How did you hear about this position?")
+    assert not COOKIE_CONTROL.search("Country")

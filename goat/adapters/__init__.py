@@ -702,13 +702,15 @@ class SmartRecruiters(Adapter):
     # Wellmark (2026-10-21): the résumé upload parsed project names ('Tempo | Node.js, WebSockets, ...') into Experience cards
     # with missing or wrong dates, the form then said "Please provide at least one work experience entry" / "Please provide
     # start date", and the run parked over the parsed cards instead of fixing them.
-    hints = ("SmartRecruiters: the résumé upload parses his résumé into Experience and Education cards, often wrongly (project "
-             "names such as 'Tempo' or 'RateSignal' as jobs, missing or wrong dates). Make Experience hold exactly his stored "
-             "entries: delete (trash icon) every card whose company matches none of experience.work.N; for each stored entry "
-             "that is missing or malformed, open or add a card and fill Title, Company, Location, From / To (set_date; tick 'I "
-             "currently work here' for a current role and leave To empty) and Description from experience.work.N.*, then press "
-             "the card's Save button before the next one. Education holds one Texas A&M entry from the education.* keys. Never "
-             "park over parsed cards: fixing them is the job. Take a snapshot after each Save; the refs change.")
+    # CapTech (2026-10-21): every button is a bare <button> in a custom element's shadow root; the snapshot now names them
+    # by their host, and the harness writes the Experience / Education cards itself (smartrecruiters_sections).
+    hints = ("SmartRecruiters one-click form: the harness writes the Experience and Education cards from his stored entries "
+             "whenever you take a snapshot (the outline's HARNESS line says what it did): never add, edit or delete those "
+             "cards yourself, and never park over them. If the HARNESS line reports a failure, call fill_sections once, then "
+             "go on. Upload the résumé into the Resume box lower on the page, never the 'autocomplete your application' box "
+             "at the top (it rewrites Experience wrongly). City is an autocomplete that keeps only a picked suggestion "
+             "('Sugar Land, TX, US'); a City already showing that is done. Fill the rest of the page, click Next, answer the "
+             "screening questions from stored answers, then call submit.")
 
 
 class SuccessFactors(Adapter):

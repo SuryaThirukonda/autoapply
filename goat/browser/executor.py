@@ -594,8 +594,15 @@ class Executor:
             # A 'Select files' button was named instead of its file input (Auto-Owners' Workday transcript slot,
             # 2026-10-20): use the file input in the same field or drop zone.
             box = loc.first.locator("xpath=ancestor::*[.//input[@type='file']][1]")
-            inp = box.locator("input[type=file]").first
-            await inp.set_input_files(path)
+            if await box.count():
+                inp = box.locator("input[type=file]").first
+                await inp.set_input_files(path)
+            else:
+                # Google Careers (2026-10-21): the Upload button opens the browser's file chooser; no file input exists
+                # in the page until then, and the search above waited 30 s for one that never came.
+                async with self.page.expect_file_chooser(timeout=8000) as chooser:
+                    await loc.first.click()
+                await (await chooser.value).set_files(path)
         await asyncio.sleep(0.8)
         return await self.read_ref(ref)
 

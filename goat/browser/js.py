@@ -57,6 +57,8 @@ _COMMON = r"""
     // Lever custom questions: the text sits in a sibling block BEFORE the field container (.application-label + .application-field)
     if (!t) { const ff = el.closest('.application-field, [class*="field" i]'); let p = ff && ff.previousElementSibling; for (let i = 0; i < 2 && p && !t; i++, p = p.previousElementSibling) { if (/label|question/i.test(p.className || '')) t = txt(p).replace(/\s*[✱*]\s*$/, ''); } }
     if (!t) { const h = boxHead(el); if (h) t = txt(h); }
+    // inside a custom element's shadow root: the host's name ('I currently work here', 'Add experience entry')
+    if (!t) { const hn = shadowHostNames(el); if (hn.length) t = hn[0]; }
     if (!t) t = el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '';
     if (selectedList) {
       // Workday keeps the search box inside the chip list once something is selected: say so, and name the section.
@@ -72,6 +74,19 @@ _COMMON = r"""
       if (el.shadowRoot) yield* allRoots(el.shadowRoot);
       if (el.tagName === 'IFRAME') { try { if (el.contentDocument) yield* allRoots(el.contentDocument); } catch (e) {} }
     }
+  }
+  // A control drawn inside a custom element's shadow root (SmartRecruiters' spl-button / spl-checkbox, 2026-10-21) has
+  // no text or label of its own: its host carries the name (aria-label 'Add experience entry') and the slotted text ('Add').
+  function shadowHostNames(el) {
+    const r = el && el.getRootNode ? el.getRootNode() : null;
+    const h = r && r.host ? r.host : null;
+    if (!h) return [];
+    const out = [];
+    const a = (h.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+    if (a) out.push(a.slice(0, 120));
+    const t = txt(h).slice(0, 120);
+    if (t && t !== a) out.push(t);
+    return out;
   }
   function findRef(ref) {
     for (const root of allRoots(document)) {
@@ -229,12 +244,14 @@ JS_SNAPSHOT = r"""
         } else {
           item.label = shown || item.label;
           if (!item.label) continue;
+          // a shadow-root button is named by its host: its aria-label and its visible text both count
+          const names = [item.label].concat(shown ? [] : shadowHostNames(el)).filter((n, i, a) => n && a.indexOf(n) === i);
           const nFilled = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]), textarea')).filter(i => (i.value || '').trim()).length;
           const onAccountPage = Array.from(document.querySelectorAll('input[type=password]')).some(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
-          const accountBtn = onAccountPage || /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|verify email|send code|resend|back)$/i.test(item.label);
-          item.submitish = !accountBtn && (/^(submit|submit application|submit my application|send application|finish|complete application|complete)$/i.test(item.label)
-            || (/^(apply|apply now|apply for this job|apply to this job)$/i.test(item.label) && nFilled >= 3)
-            || (type === 'submit' && nFilled >= 3));
+          const submitName = names.some(n => /^(submit|submit application|submit my application|send application|finish|complete application|complete)$/i.test(n)
+            || (/^(apply|apply now|apply for this job|apply to this job)$/i.test(n) && nFilled >= 3));
+          const accountBtn = onAccountPage || (!submitName && names.some(n => /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|verify email|send code|resend|back)$/i.test(n)));
+          item.submitish = !accountBtn && (submitName || (type === 'submit' && nFilled >= 3));
           // Toggle buttons (Ashby Yes/No, segmented choices) carry aria-pressed/aria-checked: an answer, not navigation.
           const pressed = el.getAttribute('aria-pressed') ?? el.getAttribute('aria-checked');
           if (pressed !== null) {
@@ -302,14 +319,21 @@ JS_ELEMENT_AT = r"""
     const tag = p.tagName.toLowerCase();
     const type = (p.getAttribute('type') || '').toLowerCase();
     const t = txt(p).slice(0, 80);
-    const isBtn = tag === 'button' || tag === 'a' || p.getAttribute('role') === 'button' || (tag === 'input' && (type === 'submit' || type === 'button'));
+    // a custom element that draws a native button in its shadow root (SmartRecruiters' spl-button): a click on its
+    // slotted text lands on the host, which is the button as far as the page is concerned
+    const isBtn = tag === 'button' || tag === 'a' || p.getAttribute('role') === 'button' || (tag === 'input' && (type === 'submit' || type === 'button'))
+      || !!(p.shadowRoot && p.shadowRoot.querySelector('button, [role="button"]'));
     if (isBtn) {
-      const label = (tag === 'input' ? (p.value || '') : (t || p.getAttribute('aria-label') || '')).replace(/\s+/g, ' ').trim();
+      const own = (tag === 'input' ? (p.value || '') : (t || p.getAttribute('aria-label') || '')).replace(/\s+/g, ' ').trim();
+      // a bare <button> inside a custom element's shadow root is named by its host (SmartRecruiters' spl-button)
+      const names = own ? [own] : shadowHostNames(p);
+      const label = names[0] || '';
       // Account-flow buttons (Create Account, Sign In, Continue, Verify) are navigation, even when type=submit.
       const ACCOUNT = /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|verify email|send code|resend|back)$/i;
-      if (ACCOUNT.test(label)) break;
+      const submitName = names.some(n => SUBMIT.test(n) || (APPLY.test(n) && formFilled));
+      if (!submitName && names.some(n => ACCOUNT.test(n))) break;
       if (accountPage) break;
-      if (SUBMIT.test(label) || (APPLY.test(label) && formFilled) || (type === 'submit' && formFilled)) { submit = true; why = 'submit control: ' + label; }
+      if (submitName || (type === 'submit' && formFilled)) { submit = true; why = 'submit control: ' + label; }
       // Simplify's panel "Submit Application" is also a submit control; any extension panel is.
       break;
     }
@@ -367,18 +391,23 @@ JS_COOKIE_WALL = r"""
 # Focus a field directly when it does not hold the focus already (it, or an element inside it).
 JS_FOCUS_REF = r"""
 (ref) => {
-  const t = document.querySelector('[data-goat-ref="' + ref + '"]');
+""" + _COMMON + r"""
+  const t = findRef(ref);
   if (!t) return false;
-  const a = document.activeElement;
+  // inside a shadow root the document's activeElement is the host: ask the element's own root
+  const root = t.getRootNode ? t.getRootNode() : document;
+  const active = () => (root && 'activeElement' in root) ? root.activeElement : document.activeElement;
+  const a = active();
   if (a === t || (a && t.contains(a))) return true;
   if (t.focus) t.focus();
-  return document.activeElement === t;
+  return active() === t;
 }
 """
 
 JS_HIT_TARGET = r"""
 ([ref, x, y]) => {
-  const t = document.querySelector('[data-goat-ref="' + ref + '"]');
+""" + _COMMON + r"""
+  const t = findRef(ref);
   if (!t) return 'missing';
   let at = document.elementFromPoint(x, y);
   let hops = 0;
@@ -408,7 +437,7 @@ JS_TARGET_GUARD = r"""
   const SUBMIT = /^(submit|submit application|submit my application|send application|finish|complete application|complete|send)$/i;
   const APPLY = /^(apply|apply now|apply for this job|apply to this job)$/i;
   const ACCOUNT = /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|verify email|send code|resend|back|reset password|send reset link|submit)$/i;
-  const t = document.querySelector('[data-goat-ref="' + ref + '"]');
+  const t = findRef(ref);
   if (!t) return JSON.stringify({ found: false });
   const filledInputs = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]), textarea')).filter(i => (i.value || '').trim()).length;
   const formFilled = filledInputs >= 3;
@@ -418,13 +447,19 @@ JS_TARGET_GUARD = r"""
   for (let p = t, i = 0; p && i < 8; i++, p = p.parentElement) {
     const tag = p.tagName.toLowerCase();
     const type = (p.getAttribute('type') || '').toLowerCase();
-    const isBtn = tag === 'button' || tag === 'a' || p.getAttribute('role') === 'button' || (tag === 'input' && (type === 'submit' || type === 'button'));
+    // a custom element that draws a native button in its shadow root (SmartRecruiters' spl-button): a click on its
+    // slotted text lands on the host, which is the button as far as the page is concerned
+    const isBtn = tag === 'button' || tag === 'a' || p.getAttribute('role') === 'button' || (tag === 'input' && (type === 'submit' || type === 'button'))
+      || !!(p.shadowRoot && p.shadowRoot.querySelector('button, [role="button"]'));
     if (isBtn) {
-      const label = (tag === 'input' ? (p.value || '') : (txt(p) || p.getAttribute('aria-label') || '')).replace(/\s+/g, ' ').trim();
-      if (accountPage && ACCOUNT.test(label)) break;
-      if (/^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|back)$/i.test(label)) break;
+      const own = (tag === 'input' ? (p.value || '') : (txt(p) || p.getAttribute('aria-label') || '')).replace(/\s+/g, ' ').trim();
+      const names = own ? [own] : shadowHostNames(p);
+      const label = names[0] || '';
+      const submitName = names.some(n => SUBMIT.test(n) || (APPLY.test(n) && formFilled));
+      if (accountPage && names.some(n => ACCOUNT.test(n))) break;
+      if (!submitName && names.some(n => /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|back)$/i.test(n))) break;
       if (accountPage) break;
-      if (SUBMIT.test(label) || (APPLY.test(label) && formFilled) || (type === 'submit' && formFilled)) { submit = true; why = 'submit control: ' + label; }
+      if (submitName || (type === 'submit' && formFilled)) { submit = true; why = 'submit control: ' + label; }
       break;
     }
     if (/g-recaptcha|h-captcha|cf-turnstile|captcha|challenge/i.test((p.className || '').toString() + ' ' + (p.id || ''))) { captcha = true; why = 'captcha widget'; }
@@ -656,13 +691,16 @@ JS_SUBMIT_SIGNAL = r"""
 
 JS_FIND_SUBMIT = r"""
 (label) => {
+""" + _COMMON + r"""
   const want = (label || '').trim().toLowerCase();
   const DEF = /^(submit|submit application|apply|apply now|send application|finish|complete|complete application|submit my application)$/i;
-  const cands = Array.from(document.querySelectorAll('button, input[type=submit], input[type=button], [role=button], a[href="#"]'));
+  const cands = [];
+  for (const root of allRoots(document)) { try { cands.push(...root.querySelectorAll('button, input[type=submit], input[type=button], [role=button], a[href="#"]')); } catch (e) {} }
   for (const b of cands) {
-    const t = ((b.innerText || b.value || b.getAttribute('aria-label') || '') + '').replace(/\s+/g, ' ').trim();
-    const ok = want ? t.toLowerCase() === want : DEF.test(t);
-    if (!ok) continue;
+    const own = ((b.innerText || b.value || b.getAttribute('aria-label') || '') + '').replace(/\s+/g, ' ').trim();
+    // SmartRecruiters' final button is a bare <button> in an spl-button's shadow root: its host carries the name
+    const t = (own ? [own] : shadowHostNames(b)).find(n => want ? n.toLowerCase() === want : DEF.test(n)) || '';
+    if (!t) continue;
     const r = b.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) continue;
     if (b.disabled || b.getAttribute('aria-disabled') === 'true') continue;
@@ -852,6 +890,7 @@ JS_READ_REF = r"""
   }
   return JSON.stringify({ found: true, tag, type, label: labelFor(el), value, shown, x: Math.round(r2.x + r2.width / 2), y: Math.round(r2.y + r2.height / 2), w: Math.round(r2.width), h: Math.round(r2.height),
     disabled: !!el.disabled, expanded: el.getAttribute('aria-expanded'), invalid: el.getAttribute('aria-invalid') === 'true',
+    combo: el.getAttribute('role') === 'combobox' || !!el.getAttribute('aria-autocomplete') || !!el.getAttribute('aria-haspopup'),
     pressed: (el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked')) ? (el.getAttribute('aria-pressed') ?? el.getAttribute('aria-checked')) === 'true' : null });
 }
 """
@@ -1181,3 +1220,18 @@ JS_ASHBY_REPICK = r"""([path, step, idx]) => {
   if (!r.checked) r.click();
   return JSON.stringify({ ok: r.checked, idx });
 }"""
+
+# Whether the element [data-goat-ref=ref] sits inside one of the custom elements named in `tags`, crossing shadow roots:
+# SmartRecruiters' 'autocomplete your application' résumé box is inside <oc-apply-with-resume> (Wellmark, 2026-10-21).
+JS_INSIDE_TAG = r"""
+([ref, tags]) => {
+""" + _COMMON + r"""
+  const want = tags.map(t => t.toLowerCase());
+  let n = findRef(ref);
+  for (let i = 0; n && i < 80; i++) {
+    if (n.tagName && want.includes(n.tagName.toLowerCase())) return n.tagName.toLowerCase();
+    n = n.parentNode && n.parentNode.nodeType === 11 ? n.parentNode.host : n.parentNode;
+  }
+  return '';
+}
+"""

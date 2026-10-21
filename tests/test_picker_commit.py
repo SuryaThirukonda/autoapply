@@ -308,3 +308,28 @@ async def test_a_site_that_keeps_its_own_state_gets_real_keystrokes(monkeypatch)
         assert await ex.page.evaluate("() => document.getElementById('err').textContent") == ""
     finally:
         await ex.close()
+
+
+@pytest.mark.asyncio
+async def test_a_pickers_search_box_is_never_typed_into(monkeypatch):
+    """Netflix (2026-10-21): the veteran picker got his whole answer list typed into it."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content('<html><body><label for="v">Veteran</label><input id="v" type="text" role="combobox" '
+                                  'aria-expanded="false" placeholder="Select"></body></html>')
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if i.get("label") == "Veteran")
+        monkeypatch.setattr(fill, "needs_real_typing", lambda ex: True)
+        seen = []
+
+        async def js_fill(ex, fields):
+            seen.extend(f["ref"] for f in fields)
+            return [fill.FieldResult(ref=f["ref"], ok=False, readback="", error="picker") for f in fields]
+        monkeypatch.setattr(fill, "fill_batch_js", js_fill)
+        await fill.fill_batch(ex, [{"ref": ref, "value": "I am not a protected veteran; No"}])
+        assert seen == [ref]
+        assert await ex.page.evaluate("() => document.getElementById('v').value") == ""
+    finally:
+        await ex.close()

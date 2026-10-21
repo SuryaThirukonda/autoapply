@@ -1,0 +1,200 @@
+<!doctype html>
+<!-- A trimmed model of SmartRecruiters' one-click form (jobs.smartrecruiters.com/oneclick-ui, CapTech 2026-10-21):
+     every control is a custom element with its native input or button in a shadow root; buttons carry their name on the
+     host; autocompletes keep only a picked suggestion (typed text is dropped on blur, the first suggestion repeats it);
+     month-year boxes take MM/YYYY; Delete asks for a Yes. Pre-rendered cards: one correct (Revio), one parsed project
+     ('Tempo', no dates) and one parsed honors programme as a school. -->
+<html><head><meta charset="utf-8"><title>Easy apply - Software Engineering Intern - Acme</title>
+<style>
+  body { font-family: sans-serif; width: 1100px; margin: 10px; }
+  oc-experience-entry, oc-education-entry, oc-experience, oc-education, oc-apply-with-resume, oc-resume-upload { display: block; margin: 6px 0; }
+  spl-dialog { display: none; }
+  spl-dialog[open] { display: block; position: fixed; top: 80px; left: 300px; background: #fff; border: 1px solid #000; padding: 20px; z-index: 10; }
+</style></head>
+<body>
+<h1>Software Engineering Intern</h1>
+<oc-apply-with-resume><p>Choose an option to autocomplete your application.</p><spl-dropzone id="dz-top"></spl-dropzone></oc-apply-with-resume>
+<oc-personal-information><label for="fn">First name*</label> <input id="fn" type="text" required></oc-personal-information>
+<oc-experience>
+  <h3>Experience</h3>
+  <oc-button data-test="add-experience"><spl-button aria-label="Add experience entry">Add</spl-button></oc-button>
+  <div id="exp-list">
+    <oc-experience-entry><div data-test="experience-entry">
+      <p data-test="experience-entry-title">Founding Software Engineer (Part-time) <span data-test="experience-entry-date">2026 - Present</span></p>
+      <p data-test="experience-entry-company">Revio</p>
+      <spl-button data-test="experience-entry-edit" aria-label="Edit experience Founding Software Engineer (Part-time) Revio"></spl-button>
+      <spl-button data-test="experience-entry-delete" aria-label="Delete experience Founding Software Engineer (Part-time) Revio"></spl-button>
+    </div></oc-experience-entry>
+    <oc-experience-entry><div data-test="experience-entry">
+      <p data-test="experience-entry-title">Tempo | Node.js, WebSockets <span data-test="experience-entry-date"></span></p>
+      <p data-test="experience-entry-company">Tempo</p>
+      <spl-button data-test="experience-entry-edit" aria-label="Edit experience Tempo"></spl-button>
+      <spl-button data-test="experience-entry-delete" aria-label="Delete experience Tempo"></spl-button>
+    </div></oc-experience-entry>
+  </div>
+</oc-experience>
+<oc-education>
+  <h3>Education</h3>
+  <oc-button data-test="add-education"><spl-button aria-label="Add education entry">Add</spl-button></oc-button>
+  <div id="edu-list">
+    <oc-education-entry><div data-test="education-entry">
+      <p data-test="education-entry-institution">Craig and Galen Brown Engineering Honors Program <span data-test="education-entry-date">2025</span></p>
+      <p data-test="education-entry-major"></p><p data-test="education-entry-degree"></p>
+      <spl-button data-test="education-entry-delete" aria-label="Delete education Engineering Honors"></spl-button>
+    </div></oc-education-entry>
+  </div>
+</oc-education>
+<oc-resume-upload><h3>Resume</h3><spl-dropzone id="dz-resume"></spl-dropzone></oc-resume-upload>
+<oc-button data-test="footer-next"><spl-button>Next</spl-button></oc-button>
+<spl-dialog id="dlg"><p>Would you like to delete this entry?</p><spl-button type="secondary" id="dlg-no">No</spl-button> <spl-button type="primary" id="dlg-yes">Yes</spl-button></spl-dialog>
+<script>
+customElements.define('spl-button', class extends HTMLElement {
+  connectedCallback() { if (this.shadowRoot) return; this.attachShadow({ mode: 'open' }).innerHTML = '<button type="button" style="min-width:40px;min-height:22px"><slot></slot></button>'; }
+});
+customElements.define('spl-autocomplete', class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    this.value = '';
+    const r = this.attachShadow({ mode: 'open' });
+    r.innerHTML = '<style>spl-select-option { display: block; height: 22px; line-height: 22px; }</style><label></label> <input type="text"><div class="list"></div>';
+    r.querySelector('label').textContent = this.getAttribute('label') || '';
+    const inp = r.querySelector('input'), list = r.querySelector('.list');
+    inp.addEventListener('input', () => {
+      list.innerHTML = '';
+      const t = inp.value.trim();
+      if (!t) return;
+      for (const s of [t, t + ' Holdings', 'The ' + t]) {
+        const o = document.createElement('spl-select-option');
+        o.textContent = s;
+        o.addEventListener('mousedown', (e) => { e.preventDefault(); this.value = s; inp.value = s; list.innerHTML = ''; });
+        list.appendChild(o);
+      }
+    });
+    // typed text that was never picked is dropped
+    inp.addEventListener('blur', () => setTimeout(() => { inp.value = this.value; list.innerHTML = ''; }, 120));
+  }
+});
+customElements.define('spl-date-field', class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    this.value = null;
+    const r = this.attachShadow({ mode: 'open' });
+    r.innerHTML = '<input type="text" placeholder="Pick a date">';
+    const inp = r.querySelector('input');
+    inp.addEventListener('input', () => {
+      const m = /^(\d{2})\/(\d{4})$/.exec(inp.value.trim());
+      this.value = m ? new Date(Date.UTC(+m[2], +m[1] - 1, 1)).toISOString() : null;
+    });
+  }
+});
+customElements.define('spl-checkbox', class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    this.checked = false;
+    const r = this.attachShadow({ mode: 'open' });
+    r.innerHTML = '<input type="checkbox"><label id="-label"><slot></slot></label>';
+    const cb = r.querySelector('input');
+    cb.addEventListener('change', () => { this.checked = cb.checked; });
+  }
+});
+customElements.define('spl-textarea', class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    this.value = '';
+    const r = this.attachShadow({ mode: 'open' });
+    r.innerHTML = '<label>Description</label> <textarea maxlength="2000" rows="3" cols="60"></textarea>';
+    const ta = r.querySelector('textarea');
+    ta.addEventListener('input', () => { this.value = ta.value; });
+  }
+});
+customElements.define('spl-input', class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    this.value = '';
+    const r = this.attachShadow({ mode: 'open' });
+    r.innerHTML = '<label></label> <input type="text">';
+    r.querySelector('label').textContent = this.getAttribute('label') || '';
+    const i = r.querySelector('input');
+    i.addEventListener('input', () => { this.value = i.value; });
+  }
+});
+customElements.define('spl-dropzone', class extends HTMLElement {
+  connectedCallback() { if (this.shadowRoot) return; this.attachShadow({ mode: 'open' }).innerHTML = '<label>Choose a file or drop it here</label> <input type="file">'; }
+});
+
+const EXP_EDITOR = '<spl-autocomplete data-test="job-title-autocomplete" label="Title*"></spl-autocomplete>'
+  + '<spl-autocomplete data-test="company-autocomplete" label="Company"></spl-autocomplete>'
+  + '<oc-textarea data-test="experience-description"><spl-textarea></spl-textarea></oc-textarea>'
+  + '<oc-datepicker data-test="experience-date-from"><spl-date-field></spl-date-field></oc-datepicker>'
+  + '<oc-datepicker data-test="experience-date-to"><spl-date-field></spl-date-field></oc-datepicker>'
+  + '<oc-checkbox><spl-checkbox>I currently work here</spl-checkbox></oc-checkbox>'
+  + '<div class="msgs"></div>'
+  + '<oc-button data-test="experience-cancel"><spl-button aria-label="Cancel adding experience entry">Cancel</spl-button></oc-button>'
+  + '<oc-button data-test="experience-save"><spl-button aria-label="Save experience entry">Save</spl-button></oc-button>';
+const EDU_EDITOR = '<spl-autocomplete data-test="institution-autocomplete" label="Institution*"></spl-autocomplete>'
+  + '<oc-input data-test="education-major"><spl-input label="Major"></spl-input></oc-input>'
+  + '<oc-input data-test="education-degree"><spl-input label="Degree"></spl-input></oc-input>'
+  + '<oc-datepicker data-test="education-date-from"><spl-date-field></spl-date-field></oc-datepicker>'
+  + '<oc-datepicker data-test="education-date-to"><spl-date-field></spl-date-field></oc-datepicker>'
+  + '<oc-checkbox data-test="education-current"><spl-checkbox>I currently attend</spl-checkbox></oc-checkbox>'
+  + '<div class="msgs"></div>'
+  + '<oc-button data-test="education-cancel"><spl-button>Cancel</spl-button></oc-button>'
+  + '<oc-button data-test="education-save"><spl-button>Save</spl-button></oc-button>';
+let pending = null;
+const year = (iso) => iso ? iso.slice(0, 4) : '';
+const esc = (s) => { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; };
+const val = (form, dt) => {
+  const h = form.querySelector('[data-test="' + dt + '"]');
+  if (!h) return '';
+  const x = h.matches('spl-autocomplete') ? h : h.querySelector('spl-date-field, spl-input, spl-textarea');
+  return x ? x.value : '';
+};
+function openEditor(kind) {
+  if (document.querySelector('oc-' + kind + '-edit-form')) return;
+  const entry = document.createElement('oc-' + kind + '-entry');
+  const form = document.createElement('oc-' + kind + '-edit-form');
+  form.innerHTML = kind === 'experience' ? EXP_EDITOR : EDU_EDITOR;
+  entry.appendChild(form);
+  document.getElementById(kind === 'experience' ? 'exp-list' : 'edu-list').appendChild(entry);
+}
+function save(kind) {
+  const form = document.querySelector('oc-' + kind + '-edit-form');
+  const entry = form.parentElement;
+  const from = val(form, kind + '-date-from'), to = val(form, kind + '-date-to'), current = form.querySelector('spl-checkbox').checked;
+  const msgs = form.querySelector('.msgs');
+  if (kind === 'experience') {
+    const title = val(form, 'job-title-autocomplete'), company = val(form, 'company-autocomplete'), desc = val(form, 'experience-description');
+    if (!title) { msgs.innerHTML = '<span class="error">Title is required</span>'; return; }
+    if (!from) { msgs.innerHTML = '<span class="error">Please provide start date</span>'; return; }
+    if (!to && !current) { msgs.innerHTML = '<span class="error">Please provide end date</span>'; return; }
+    entry.innerHTML = '<div data-test="experience-entry"><p data-test="experience-entry-title">' + esc(title) + ' <span data-test="experience-entry-date">'
+      + year(from) + ' - ' + (current ? 'Present' : year(to)) + '</span></p><p data-test="experience-entry-company">' + esc(company) + '</p>'
+      + '<p data-test="experience-entry-description">' + esc(desc) + '</p>'
+      + '<spl-button data-test="experience-entry-edit" aria-label="Edit experience ' + esc(title) + '"></spl-button>'
+      + '<spl-button data-test="experience-entry-delete" aria-label="Delete experience ' + esc(title) + '"></spl-button></div>';
+    window.__descs = (window.__descs || []).concat([desc]);
+  } else {
+    const inst = val(form, 'institution-autocomplete'), major = val(form, 'education-major'), degree = val(form, 'education-degree');
+    if (!inst) { msgs.innerHTML = '<span class="error">Institution is required</span>'; return; }
+    entry.innerHTML = '<div data-test="education-entry"><p data-test="education-entry-institution">' + esc(inst) + ' <span data-test="education-entry-date">'
+      + year(from) + ' - ' + (current ? 'Present' : year(to)) + '</span></p><p data-test="education-entry-major">' + esc(major) + '</p>'
+      + '<p data-test="education-entry-degree">' + esc(degree) + '</p>'
+      + '<spl-button data-test="education-entry-delete" aria-label="Delete education ' + esc(inst) + '"></spl-button></div>';
+  }
+  window.__saves = (window.__saves || 0) + 1;
+}
+document.addEventListener('click', (e) => {
+  const el = e.composedPath().find(n => n.getAttribute && (n.getAttribute('data-test') || n.id));
+  if (!el) return;
+  const dt = el.getAttribute('data-test') || el.id;
+  if (dt === 'add-experience') openEditor('experience');
+  else if (dt === 'add-education') openEditor('education');
+  else if (dt === 'experience-cancel' || dt === 'education-cancel') { const f = document.querySelector('oc-' + dt.split('-')[0] + '-edit-form'); if (f) f.parentElement.remove(); }
+  else if (dt === 'experience-save') save('experience');
+  else if (dt === 'education-save') save('education');
+  else if (dt === 'experience-entry-delete' || dt === 'education-entry-delete') { pending = el.closest('oc-experience-entry, oc-education-entry'); document.getElementById('dlg').setAttribute('open', ''); }
+  else if (dt === 'dlg-yes') { if (pending) pending.remove(); pending = null; document.getElementById('dlg').removeAttribute('open'); }
+  else if (dt === 'dlg-no') { pending = null; document.getElementById('dlg').removeAttribute('open'); }
+});
+</script>
+</body></html>

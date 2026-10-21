@@ -51,3 +51,30 @@ async def test_a_password_help_submit_is_not_an_application_submit():
         assert el.submit is False
     finally:
         await ex.close()
+
+
+CHOOSER_ONLY = """<html><body><button id="up" type="button" style="width:120px;height:30px">Upload resume</button><span id="got"></span>
+<script>
+  document.getElementById('up').addEventListener('click', () => {
+    const i = document.createElement('input'); i.type = 'file';
+    i.addEventListener('change', () => { document.getElementById('got').textContent = i.files[0].name; });
+    i.click();
+  });
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_an_upload_button_that_only_opens_the_file_chooser_still_takes_the_file(tmp_path):
+    """Google Careers (2026-10-21): no file input on the page; the button opens the browser's chooser."""
+    f = tmp_path / "Surya_Thirukonda_Resume.pdf"
+    f.write_bytes(b"%PDF-1.4 test")
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(CHOOSER_ONLY)
+        await ex.page.evaluate("() => document.getElementById('up').setAttribute('data-goat-ref', 'e1')")
+        await ex.set_file("e1", str(f))
+        assert await ex.page.evaluate("() => document.getElementById('got').textContent") == f.name
+    finally:
+        await ex.close()

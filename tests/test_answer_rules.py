@@ -1721,3 +1721,137 @@ async def test_a_no_option_is_named_in_the_log_even_when_the_question_contains_n
     from goat import records as rec
     dec = [r for r in rec.decisions(ctx.job_id) if r["ref"] == "e14"]
     assert dec and dec[-1]["field_label"].endswith(" / No"), dec
+
+
+def test_a_stored_description_with_escaped_line_breaks_is_typed_with_real_ones(store):
+    """Aerospace (Workday) and CapTech (SmartRecruiters), 2026-10-21: the questionnaire keeps line breaks as a literal
+    backslash-n, and the two characters went into the forms between bullets."""
+    d, ctx = _dispatcher(_job())
+    bs, nl = chr(92), chr(10)
+    answers.save_answer("experience.work.1.description", "• Built one thing." + bs + "n• Shipped another.", answer_type="text",
+                        source="questionnaire")
+    val, tag, err = d._resolve_value("experience.work.1.description", None, None, "Description")
+    assert err is None and bs + "n" not in val
+    assert val.split(nl) == ["• Built one thing.", "• Shipped another."]
+    answers.save_answer("motivation.why_company", "Line one." + bs + "nLine two.", answer_type="text", source="questionnaire")
+    val, tag, err = d._resolve_value("motivation.why_company", None, None, "Why this company")
+    assert err is None and val == "Line one." + nl + "Line two."
+
+
+@pytest.mark.asyncio
+async def test_the_postings_own_clearance_wording_decides_not_the_models_paraphrase(store):
+    """RTX (2026-10-21): five bounces, then a sixth hold that dropped 'after day one' from its reason stood although the
+    posting said the clearance is obtained after hire. Now the posting decides, and a sixth hold goes to Surya."""
+    from goat.budget import Parked
+    job = _job()
+    d, ctx = _dispatcher(job)
+
+    async def page_text(n=0):
+        return "Software Engineering Intern (Summer 2027) Apply"
+    ctx.ex.page_text = page_text
+    ctx.posting_text = ("U.S. Citizen, U.S. Person, or Immigration Status Requirements: The ability to obtain and maintain a U.S. "
+                        "government issued security clearance is required. Security Clearance Type: DoD Clearance: Secret. "
+                        "Security Clearance Status: Active and existing security clearance required after day 1")
+    reason = "eligibility: This RTX internship requires an active, existing DoD Secret clearance; Surya has never held a clearance."
+    for _ in range(5):
+        out, _ = await d.t_park(reason)
+        assert "not needed to apply" in out["error"]
+    ctx.park_attempts = 4          # the gate-checked park passes are spent (they need a live page)
+    with pytest.raises(Parked) as held:
+        await d.t_park(reason)
+    assert str(held.value).startswith("review_needed: the posting says the clearance is obtained after hire")
+    # a clearance he must already hold is a real requirement
+    d2, ctx2 = _dispatcher(_job(listing="L2"))
+    ctx2.ex.page_text = page_text
+    ctx2.posting_text = "Security Clearance Status: Active and existing security clearance required on day 1"
+    assert not d2.posting_clearance_later()
+
+
+
+def test_eightfolds_profile_use_options_word_his_yes_and_no():
+    """Qualcomm (2026-10-21): the 'ANY ROLES GLOBALLY' option is the Yes of consent.keep_profile_future_roles."""
+    from goat.agent.tools import key_option_polarity
+    k = "consent.keep_profile_future_roles"
+    yes = ("Use my profile data for ANY ROLES GLOBALLY THAT MAY MATCH MY SKILLS, including those I haven't applied to. My profile "
+           "data may also be used for recruiting initiatives (e.g., Talent Community and Events).")
+    assert key_option_polarity(k, yes) == "yes"
+    assert key_option_polarity(k, "Use my profile data ONLY for the role(s) I have applied to.") == "no"
+    assert key_option_polarity("identity.first_name", yes) is None
+
+
+@pytest.mark.asyncio
+async def test_the_profile_use_yes_is_ticked_from_the_stored_yes(store, monkeypatch):
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher(_job())
+    q = "How would you like us to use your profile data?"
+    yes = "Use my profile data for ANY ROLES GLOBALLY THAT MAY MATCH MY SKILLS, including those I haven't applied to."
+    no = "Use my profile data ONLY for the role(s) I have applied to."
+    items = [{"ref": "e1", "tag": "input", "type": "radio", "label": yes, "group": q},
+             {"ref": "e2", "tag": "input", "type": "radio", "label": no, "group": q}]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        return [FieldResult(p["ref"], True, "checked", "") for p in plan]
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("consent.keep_profile_future_roles", "Yes", answer_type="choice", source="questionnaire")
+    out, _ = await d.t_fill_batch([{"ref": "e1", "answer_key": "consent.keep_profile_future_roles", "value": None, "source": None, "label": q}])
+    assert out["results"][0]["status"] == "set", out
+    out, _ = await d.t_fill_batch([{"ref": "e2", "answer_key": "consent.keep_profile_future_roles", "value": None, "source": None, "label": q}])
+    assert out["results"][0]["status"] == "failed", out
+
+
+@pytest.mark.asyncio
+async def test_a_profile_use_choice_bundling_the_talent_community_takes_only_this_role(store, monkeypatch):
+    """Qualcomm (2026-10-21): 'ANY ROLES ... Talent Community and Events' vs 'ONLY THE ROLE I AM APPLYING FOR ... I will NOT
+    be contacted about ... Talent Community': he never joins a talent community, so the second option is his answer."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher(_job())
+    q = "Use my profile data"
+    anyr = ("Use my profile data for ANY ROLES GLOBALLY THAT MAY MATCH MY SKILLS, including those I haven't applied to. My profile "
+            "data may also be used for recruiting initiatives (e.g., Talent Community and Events).")
+    only = ("Use my profile data for ONLY THE ROLE I AM APPLYING FOR. I will NOT be contacted about other roles or recruiting "
+            "opportunities (e.g., Talent Community and Events), even if they match my skills.")
+    items = [{"ref": "e46", "tag": "input", "type": "radio", "label": anyr, "group": q},
+             {"ref": "e47", "tag": "input", "type": "radio", "label": only, "group": q}]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        return [FieldResult(p["ref"], True, "checked", "") for p in plan]
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("consent.keep_profile_future_roles", "Yes", answer_type="choice", source="questionnaire")
+    answers.save_answer("policy.may_join_talent_community", "No", answer_type="choice", source="seed:delegation.yaml")
+    out, _ = await d.t_fill_batch([{"ref": "e46", "answer_key": "consent.keep_profile_future_roles", "value": None, "source": None, "label": q}])
+    assert out["results"][0]["status"] == "failed", out
+    out, _ = await d.t_fill_batch([{"ref": "e47", "answer_key": "consent.keep_profile_future_roles", "value": None, "source": None, "label": q}])
+    assert out["results"][0]["status"] == "set", out
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_did_not_load_is_looked_at_before_the_hold(store, monkeypatch):
+    """Phillips 66 (2026-10-21): 'the password-reset page did not load', two seconds after the click, held the run."""
+    from goat.browser.snapshot import Snapshot
+    import goat.agent.tools as toolsmod
+    d, ctx = _dispatcher(_job())
+    ctx.park_attempts = 1
+    items = [{"ref": f"e{n}", "tag": "input", "type": "text", "label": f"Field {n}"} for n in range(4)]
+
+    async def take(ex, *a, **k):
+        return Snapshot(url="https://career4.successfactors.com/career", title="Career Opportunities: Password Help", headings=[],
+                        items=items, groups=[], errors={}, challenge={})
+    monkeypatch.setattr(toolsmod.snapmod, "take", take)
+
+    async def no_sleep(*a, **k):
+        return None
+    monkeypatch.setattr(toolsmod.asyncio, "sleep", no_sleep)
+    out, _ = await d.t_park("portal_error: the password-reset page did not load")
+    assert "the page has loaded" in out["error"]

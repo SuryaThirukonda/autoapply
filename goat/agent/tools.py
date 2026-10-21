@@ -686,6 +686,43 @@ def answer_polarity(text: str) -> str | None:
     return None
 
 
+# Options that say Yes or No to one stored question in their own words. Eightfold's profile-use consent (Qualcomm,
+# 2026-10-21): "Use my profile data for ANY ROLES GLOBALLY THAT MAY MATCH MY SKILLS, including those I haven't applied to"
+# is the Yes of consent.keep_profile_future_roles and "... ONLY for the role(s) I applied to" its No; the Yes was refused
+# as 'not a Yes option', the radio stayed unsourced and the run was held.
+KEY_OPTION_POLARITY = {
+    "consent.keep_profile_future_roles": (
+        re.compile(r"\b(any|all|other|future)\s+(roles?|positions?|jobs?|opportunit\w+|openings?)\b|\bmatch(es|ing)?\s+my\s+skills\b|"
+                   r"\btalent\s+(community|pool|network)\b", re.I),
+        re.compile(r"\bonly\b.{0,60}\b(roles?|positions?|jobs?|requisitions?)\b.{0,40}\bappl", re.I)),
+}
+
+
+# A profile-use choice that also enrolls him in the talent community (Qualcomm, 2026-10-21: "... My profile data may also
+# be used for recruiting initiatives (e.g., Talent Community and Events)" against "ONLY THE ROLE I AM APPLYING FOR. I will
+# NOT be contacted about ... Talent Community"): his delegation never joins a talent community, so the 'only this role'
+# option is his answer there, whatever consent.keep_profile_future_roles says.
+TALENT_BUNDLE = re.compile(r"\btalent\s+(community|pool|network)\b|\brecruiting\s+(initiatives|events)\b", re.I)
+
+
+def talent_community_allowed(company: str = "", portal: str = "") -> bool:
+    a = answers.get("policy.may_join_talent_community", company, portal)
+    return bool(a and a.has_value and answers.norm(str(a.answer)) in ("yes", "true"))
+
+
+def key_option_polarity(key: str | None, option: str) -> str | None:
+    """'yes' / 'no' when `option` words the answer to stored question `key` (KEY_OPTION_POLARITY), else None."""
+    pats = KEY_OPTION_POLARITY.get(str(key or ""))
+    if not pats:
+        return None
+    yes, no = pats
+    if no.search(option or ""):
+        return "no"
+    if yes.search(option or ""):
+        return "yes"
+    return None
+
+
 # The reasons a park may name (goat.states.HOLD_REASONS plus the outcomes the worker and the website know).
 from ..states import HOLD_REASONS as _HOLD_REASONS  # noqa: E402
 PARK_REASONS = tuple(dict.fromkeys(list(_HOLD_REASONS) + [
@@ -924,9 +961,11 @@ class ToolDispatcher:
                 db.event(self.ctx.job_id, "page:cookie_wall", {"clicked": wall["clicked"], "action": wall.get("action"),
                                                                "blocking": wall.get("blocking"), "host": host})
         snap = await snapmod.take(self.ctx.ex, with_text=with_text)
-        # Workday renders its forms late: an apply page with almost nothing on it is usually still loading.
-        for _ in range(3):
-            if "/apply" not in (snap.url or "") or len([i for i in snap.items if i.get("tag") != "a"]) > 2:
+        # Workday renders its forms late: an apply page with almost nothing on it is usually still loading. So does SAP
+        # SuccessFactors' application page (portalcareer): CenturyLink's run parked on it, empty, right after its account
+        # was created (2026-10-21).
+        for _ in range(4):
+            if not re.search(r"/apply|portalcareer", snap.url or "") or len([i for i in snap.items if i.get("tag") != "a"]) > 2:
                 break
             await asyncio.sleep(2.5)
             snap = await snapmod.take(self.ctx.ex, with_text=with_text)
@@ -958,8 +997,28 @@ class ToolDispatcher:
                     snap = await snapmod.take(self.ctx.ex, with_text=with_text)
             except Exception as e:
                 db.event(self.ctx.job_id, "adapter:consents:error", {"error": str(e)[:200]})
+        # SmartRecruiters' Experience / Education cards are written by the harness: the agent could not see their buttons
+        # and the résumé parse adds wrong cards (CapTech, Wellmark, 2026-10-21). Checked on every snapshot of the form (a
+        # read when nothing is missing); at most three passes that change something per run.
+        sections_note = ""
+        if self.ctx.portal == "smartrecruiters" and self.ctx.control_failures.get("sections:auto", 0) < 3:
+            try:
+                from ..adapters.smartrecruiters_sections import SmartRecruitersSections
+                filler = SmartRecruitersSections(self.ctx.ex, self.ctx.job, self.ctx.page_no)
+                if await filler.applies():
+                    rep = await filler.run()
+                    if rep.added or rep.updated or rep.failed:
+                        self.ctx.control_failures["sections:auto"] = self.ctx.control_failures.get("sections:auto", 0) + 1
+                        db.event(self.ctx.job_id, "adapter:sections", {**rep.summary(), "by": "snapshot"})
+                        snap = await snapmod.take(self.ctx.ex, with_text=with_text)
+                    sections_note = ("HARNESS: the Experience and Education cards hold his stored entries"
+                                     + (f" (added {len(rep.added)}, replaced {len(rep.updated)})" if rep.added or rep.updated else "")
+                                     + (f"; FAILED: {'; '.join(rep.failed)[:300]}" if rep.failed else "")
+                                     + ". Leave those cards alone.\n")
+            except Exception as e:  # noqa: BLE001 - best effort; the model can call fill_sections
+                db.event(self.ctx.job_id, "adapter:sections:error", {"error": f"{type(e).__name__}: {e}"[:300]})
         self.ctx.last_snapshot = snap
-        text = snapmod.render(snap)
+        text = sections_note + snapmod.render(snap)
         if with_text and snap.text:
             text += "\n\nPAGE TEXT:\n" + snap.text[:6000]
         return {"outline": text}, None
@@ -976,6 +1035,14 @@ class ToolDispatcher:
                                               listing_id=self.ctx.job.get("listing_id"))
             if val is None:
                 return None, "", f"{answer_key}: {why}"
+            if isinstance(val, str) and "\\n" in val:
+                # The questionnaire keeps line breaks as a literal backslash-n: Aerospace's Workday role description and
+                # CapTech's SmartRecruiters one carried the two characters between bullets (2026-10-21).
+                if re.match(r"^experience\.work\.\d+\.description$", answer_key):
+                    from ..adapters.workday_sections import bullets_to_lines
+                    val = bullets_to_lines(val)
+                else:
+                    val = val.replace("\\n", "\n")
             tag = f"standing:{answer_key}" if not answer_key.startswith("bank.") else f"bank:{answer_key[5:]}"
             if why and not a.is_blank:
                 tag += f" ({why[:80]})"
@@ -1243,6 +1310,13 @@ class ToolDispatcher:
                 opt_label = (item.get("label") or "").strip()
                 says_no = answers.norm(opt_label) in ("no", "false", "n") or bool(NEGATED.match(opt_label))
                 says_yes = answers.norm(opt_label) in ("yes", "true", "y") or bool(AFFIRM_LABEL.match(opt_label))
+                kp = key_option_polarity(f.get("answer_key"), opt_label)
+                if kp:
+                    says_yes, says_no = kp == "yes", kp == "no"
+                if f.get("answer_key") == "consent.keep_profile_future_roles" and TALENT_BUNDLE.search(opt_label) \
+                        and not talent_community_allowed(self.ctx.job.get("company", ""), self.ctx.portal):
+                    v = "no"
+                    src = "standing:policy.may_join_talent_community (the profile-use choice bundles the talent community)"
                 if v in ("no", "false", "off", "unchecked", "n"):
                     if says_no:
                         val = "true"
@@ -1615,6 +1689,14 @@ class ToolDispatcher:
             wants += [w.strip() for w in str(variants.answer).split(";") if w.strip()]
         ok = bool(shown) and (fill.best_option([{"text": shown}], wants) is not None
                               or any(answers.norm(w) and answers.norm(w) in answers.norm(shown) for w in wants))
+        if not ok and typ in ("checkbox", "radio"):
+            # an option that words his Yes / No in its own terms (Eightfold's profile-use consent)
+            kp = key_option_polarity(key, shown)
+            want = answer_polarity(str(a.answer))
+            if key == "consent.keep_profile_future_roles" and TALENT_BUNDLE.search(shown) \
+                    and not talent_community_allowed(self.ctx.job.get("company", ""), self.ctx.portal):
+                want = "no"
+            ok = kp is not None and kp == want
         if not ok:
             return {"ref": ref, "status": "failed",
                     "error": f"the page shows {shown[:60]!r} but the stored answer for {key} is {str(a.answer)[:80]!r}: pick the option that "
@@ -1803,7 +1885,10 @@ class ToolDispatcher:
 
     async def t_fill_sections(self):
         from ..adapters.workday_sections import WorkdaySections
-        if self.ctx.portal == "greenhouse":
+        if self.ctx.portal == "smartrecruiters":
+            from ..adapters.smartrecruiters_sections import SmartRecruitersSections
+            rep = await SmartRecruitersSections(self.ctx.ex, self.ctx.job, self.ctx.page_no).run()
+        elif self.ctx.portal == "greenhouse":
             from ..adapters.greenhouse_sections import GreenhouseSections, is_employment_page
             snap = await snapmod.take(self.ctx.ex)
             if not is_employment_page(snap):
@@ -1938,6 +2023,17 @@ class ToolDispatcher:
                 return {"error": f"'{lab[:60]}' is a graduate-school slot; Surya is an undergraduate (BS, graduating May 2028). Upload the "
                                  "transcript into the Undergraduate Transcript slot and leave this one empty."}, None
         item_now = (self.ctx.last_snapshot.find(ref) if self.ctx.last_snapshot else None) or {}
+        if self.ctx.portal == "smartrecruiters":
+            try:
+                inside = await self.ctx.ex.eval(js.JS_INSIDE_TAG, [ref, ["oc-apply-with-resume"]])
+            except Exception:
+                inside = ""
+            if inside:
+                # Wellmark (2026-10-21): the box at the top fills the whole form from the résumé and turned project names
+                # into Experience cards with missing dates
+                return {"error": "this is SmartRecruiters' 'autocomplete your application' box: it rewrites Experience and "
+                                 "Education from the résumé, wrongly. Never upload there: upload into the Resume box lower on "
+                                 "the page."}, None
         from ..adapters import is_job_match_upload
         if is_job_match_upload(" ".join([str(item_now.get("label") or ""), str(item_now.get("placeholder") or "")]),
                                getattr(self.ctx.ex, "url", "") or "", self.ctx.portal):
@@ -2793,6 +2889,20 @@ class ToolDispatcher:
                                  r"(the\s+)?first\s+day)|within\s+\d+\s+(days|weeks|months)\s+of\s+(hire|start|employment)|"
                                  r"upon\s+(hire|start)|ability\s+to\s+obtain|able\s+to\s+obtain|eligib\w*\s+(to|for)\s+obtain",
                                  re.I)
+    # The posting's own wording decides, not the model's paraphrase: RTX's sixth hold (2026-10-21) said only "requires an
+    # active, existing DoD Secret clearance" and stood, while the posting said "The ability to obtain and maintain a U.S.
+    # government issued security clearance is required ... Active and existing security clearance required after day 1".
+    POSTING_CLEARANCE_LATER = re.compile(r"clearance[^.\n]{0,60}\b(after|following)\s+(day\s*(one|1)|(the\s+)?start|hire)\b|"
+                                         r"\b(ability|able|eligib\w*)\s+to\s+obtain\b[^.\n]{0,80}clearance|"
+                                         r"\bobtain\s+and\s+maintain\b[^.\n]{0,80}clearance", re.I)
+    POSTING_CLEARANCE_NOW = re.compile(r"clearance[^.\n]{0,60}\b(required|needed)\s+(on|by|before|prior\s+to)\s+(day\s*(one|1)|(the\s+)?start|hire)\b|"
+                                       r"\b(must|required\s+to)\s+(currently\s+)?(hold|have|possess)\s+an?\s+(active|current)\b[^.\n]{0,40}clearance",
+                                       re.I)
+
+    def posting_clearance_later(self) -> bool:
+        """The posting asks for a clearance he obtains once hired, and never for one he must already hold."""
+        text = self.ctx.posting_text or ""
+        return bool(self.POSTING_CLEARANCE_LATER.search(text)) and not self.POSTING_CLEARANCE_NOW.search(text)
 
     _SEASON_MONTH = {"spring": 5, "summer": 8, "fall": 12, "autumn": 12, "winter": 12, "jan": 1, "january": 1, "feb": 2, "february": 2,
                      "mar": 3, "march": 3, "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7, "aug": 8, "august": 8,
@@ -3054,6 +3164,22 @@ class ToolDispatcher:
         stalled = bool(self.NOT_LOADING.search(reason)) and not low.startswith(
             ("answer_", "ready_for_you", "eligibility", "bot_check", "credentials", "host_mismatch", "code_not", "shadow_mode"))
         if stalled and self.ctx.park_attempts >= 1:
+            # The page may have loaded since: Phillips 66 (2026-10-21) parked "the password-reset page did not load" two
+            # seconds after clicking 'Forgot your password?' without looking, and its one bounce had gone on an earlier
+            # error page. Looked at before holding, twice a run.
+            if self.ctx.control_failures.get("park:stalled_check", 0) < 2:
+                self.ctx.control_failures["park:stalled_check"] = self.ctx.control_failures.get("park:stalled_check", 0) + 1
+                try:
+                    await asyncio.sleep(2.0)
+                    snap_s = await snapmod.take(self.ctx.ex)
+                    live = [i for i in snap_s.items if i.get("tag") != "a"]
+                except Exception:
+                    snap_s, live = None, []
+                if snap_s is not None and len(live) > 2:
+                    self.ctx.last_snapshot = snap_s
+                    db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "stalled_check": len(live)})
+                    return {"error": f"not parked: the page has loaded ({(snap_s.title or snap_s.url or '')[:80]}, {len(live)} "
+                                     "controls). Take a snapshot and continue."}, None
             raise Parked(f"portal_error: the portal did not load or stalled ({reason[:150]})", "hold")
         if stalled:
             self.ctx.park_attempts += 1
@@ -3099,9 +3225,14 @@ class ToolDispatcher:
             return {"error": "not parked: a skill, tool or technology the posting asks for (knowledge, familiarity, proficiency) is "
                              "not an eligibility rule; Surya applies anyway and his résumé shows what he has. Continue the "
                              "application."}, None
-        if low.startswith("eligibility") and re.search(r"clearance", reason, re.I) and self.CLEARANCE_LATER.search(reason) \
-                and not re.search(r"\b(to|before you|in order to)\s+apply\b|\bprior to (hire|start|applying)\b", reason, re.I) \
-                and self.ctx.control_failures.get("park:clearance_later", 0) < 5:
+        clearance_later = bool(re.search(r"clearance", reason, re.I)) and (bool(self.CLEARANCE_LATER.search(reason)) or self.posting_clearance_later()) \
+            and not re.search(r"\b(to|before you|in order to)\s+apply\b|\bprior to (hire|start|applying)\b", reason, re.I)
+        if low.startswith("eligibility") and clearance_later and self.ctx.control_failures.get("park:clearance_later", 0) >= 5:
+            # still holding after five answers: not an eligibility hold; Surya decides (Release re-runs it)
+            reason = "review_needed: the posting says the clearance is obtained after hire, and the agent held anyway: " + \
+                     reason.split(":", 1)[-1].strip()
+            low = reason.lower()
+        if low.startswith("eligibility") and clearance_later and self.ctx.control_failures.get("park:clearance_later", 0) < 5:
             # five bounces, not two: RTX's run filled every page, reached Review twice, and its third park over the same
             # (earlier attempt's) clearance note stood instead of submitting (2026-10-21)
             self.ctx.control_failures["park:clearance_later"] = self.ctx.control_failures.get("park:clearance_later", 0) + 1
