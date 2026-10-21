@@ -38,6 +38,21 @@ JUDGE_SCHEMA = {
     "additionalProperties": False,
 }
 
+def surya_answers(job_id: int | None) -> str:
+    """The questions this job put to Surya that he answered, with his answers ('(none)' when there are none)."""
+    if job_id is None:
+        return "(none)"
+    try:
+        rows = db.connect().execute(
+            "SELECT question, answer FROM pending_questions WHERE job_id=? AND answered_at IS NOT NULL AND answer IS NOT NULL "
+            "AND answer != '' ORDER BY id", (int(job_id),)).fetchall()
+    except Exception:  # noqa: BLE001 - the judge runs without it
+        return "(none)"
+    lines = [f"- Q: {str(r['question'] or '')[:300]}\n  A: {str(r['answer'] or '')[:300]}" for r in rows
+             if not str(r["answer"] or "").startswith("__")]
+    return "\n".join(lines) if lines else "(none)"
+
+
 JUDGE_INSTRUCTIONS = (
     "You audit a finished draft of an online job application before it is submitted. You get the decision log (every "
     "field the agent set: label, value it read back, the source of that value), the text of the final page and a "
@@ -51,6 +66,9 @@ JUDGE_INSTRUCTIONS = (
     "'Bachelor's degree' for his BS, 'Texas A & M University' for Texas A&M (Dimensional, 2026-10-20; Micron, 2026-10-21). "
     "A Title / Salutation of 'Mr' or 'Mr.' logged from identity.salutation is his stored answer (male, he/him), never an "
     "unsourced value (AutoZone, 2026-10-21; onsemi passed with the same). "
+    "SURYA'S OWN ANSWERS lists what he answered himself to questions this application asked: those are his decisions for "
+    "the fields they name, and a value that follows one is intended even where the profile says otherwise (AutoZone, "
+    "2026-10-21: he told it to give his current Revio role today's end date where Oracle required one). "
     "His year in school is Sophomore on US forms; a portal that counts years to graduation words the same year "
     "'Penultimate academic year' / 'Penultimate year' / 'Second Year' / '2nd Year' / 'Year 2' (he graduates May 2028, so "
     "2026-27 is the second of his three years), and that wording logged from education.class_standing or its variants "
@@ -231,6 +249,7 @@ class Judge:
             return None
         content = [
             {"type": "input_text", "text": "DECISION LOG\n" + self._log_text(decisions, job_id)},
+            {"type": "input_text", "text": "SURYA'S OWN ANSWERS (to questions this application asked him)\n" + surya_answers(job_id)},
             {"type": "input_text", "text": "FINAL PAGE OUTLINE (every control with the value it holds now; the page text below does not show "
                                            "what is typed inside boxes)\n" + (outline or "(none)")[:16000]},
             {"type": "input_text", "text": "FINAL PAGE TEXT\n" + (page_text or "")[:12000]},

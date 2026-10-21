@@ -320,3 +320,23 @@ def test_the_judge_knows_his_title_is_a_stored_answer():
     """AutoZone (2026-10-21): 'Mr' from identity.salutation was failed as unsourced; onsemi passed with the same."""
     from goat.judge import JUDGE_INSTRUCTIONS
     assert "identity.salutation" in JUDGE_INSTRUCTIONS and "'Mr'" in JUDGE_INSTRUCTIONS
+
+
+
+def test_the_judge_gets_suryas_own_answers_to_this_applications_questions(tmp_path):
+    """AutoZone (2026-10-21): he answered 'Add an end date of today' for his current Revio role and the judge, which never
+    saw that answer, failed the end date against the profile."""
+    from goat import db
+    from goat.judge import surya_answers, JUDGE_INSTRUCTIONS
+    db.reset_for_tests(tmp_path / "t.db")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('A1','AutoZone','IT Intern','https://x/1','oracle')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,priority) VALUES(7,'A1','filling','no_account',0)")
+        con.execute("INSERT INTO pending_questions(job_id,key,question,options,field_type,asked_at,deadline_at,answered_at,answer) "
+                    "VALUES(7,'q.x','Oracle requires an End Date for your current Revio role. How would you like to proceed?','[]','x',1,2,3,'Add an end date of today')")
+        con.execute("INSERT INTO pending_questions(job_id,key,question,options,field_type,asked_at,deadline_at,answered_at,answer) "
+                    "VALUES(7,'q.y','Unanswered?','[]','x',1,2,NULL,NULL)")
+    got = surya_answers(7)
+    assert "Add an end date of today" in got and "Unanswered" not in got, got
+    assert surya_answers(8) == "(none)"
+    assert "SURYA'S OWN ANSWERS" in JUDGE_INSTRUCTIONS
