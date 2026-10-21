@@ -528,6 +528,15 @@ def citizenship_block(snap) -> bool:
     return any(CITIZENSHIP_LABEL.search(str(i.get("label") or "")) for i in (getattr(snap, "items", None) or []))
 
 
+def sign_in_link(snap) -> dict | None:
+    """A page's own 'Sign In' / 'Log In' link when no sign-in form is showing (no password box)."""
+    items = getattr(snap, "items", None) or []
+    if any((i.get("type") or "").lower() == "password" for i in items):
+        return None
+    return next((i for i in items if i.get("tag") in ("a", "button")
+                 and re.fullmatch(r"\s*(sign ?in|log ?in|candidate (sign ?in|log ?in))\s*", str(i.get("label") or ""), re.I)), None)
+
+
 def other_resume_slot(snap, ref: str, portal: str) -> dict | None:
     """A résumé file box on the page other than this one and other than an Oracle profile import box."""
     from ..adapters import is_profile_import_upload
@@ -3343,7 +3352,8 @@ class ToolDispatcher:
             self.ctx.control_failures["park:create_needed"] = self.ctx.control_failures.get("park:create_needed", 0) + 1
             target = ""
             try:
-                for back in (False, True):
+                went_back = False
+                for _step in range(4):
                     snap_c = await snapmod.take(self.ctx.ex)
                     self.ctx.last_snapshot = snap_c
                     hit = next((i for i in snap_c.items if i.get("tag") in ("a", "button")
@@ -3351,11 +3361,21 @@ class ToolDispatcher:
                     if hit is not None:
                         target = f" Click '{str(hit.get('label') or '')[:40]}' [{hit['ref']}] now."
                         break
-                    if back or not self.ctx.sign_in_url:
+                    # a careers landing page's own 'Sign In' link opens the form that carries 'Create an account'
+                    # (NetApp's SuccessFactors home showed only that link when the sign-in address was opened again,
+                    # 2026-10-21)
+                    lone = sign_in_link(snap_c)
+                    if lone is not None:
+                        await self.ctx.ex.click_ref(lone["ref"])
+                        await self.ctx.ex.settle()
+                        target = " The harness opened the Sign In form."
+                        continue
+                    if went_back or not self.ctx.sign_in_url:
                         break
                     # the run wandered off the sign-in page (NetApp went to the careers home, 2026-10-21): go back to it
                     await self.ctx.ex.goto(self.ctx.sign_in_url)
                     await self.ctx.ex.settle()
+                    went_back = True
                     target = " The harness went back to the sign-in page."
             except Exception:  # noqa: BLE001 - the steps below still say what to do
                 pass

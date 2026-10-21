@@ -2135,3 +2135,16 @@ def test_a_stuck_park_that_lists_what_is_left_is_not_final_and_the_citizenship_d
     snap = SimpleNamespace(items=[{"label": "* Country 1 Name"}, {"label": "* Type of Status 1"}, {"label": "Date Obtained 1"}])
     assert citizenship_block(snap)
     assert not citizenship_block(SimpleNamespace(items=[{"label": "Certification Name"}, {"label": "Date Obtained"}]))
+
+
+
+def test_a_landing_pages_sign_in_link_is_the_way_to_the_sign_up_link():
+    """NetApp (SuccessFactors, 2026-10-21): the sign-in address opened again showed only the careers home's 'Sign In' link."""
+    from types import SimpleNamespace
+    from goat.agent.tools import sign_in_link
+    home = SimpleNamespace(items=[{"ref": "e1", "tag": "a", "label": "Sign In"}, {"ref": "e3", "tag": "a", "label": "People Central"}])
+    assert sign_in_link(home)["ref"] == "e1"
+    form = SimpleNamespace(items=[{"ref": "e1", "tag": "input", "type": "text", "label": "Email Address:*"},
+                                  {"ref": "e2", "tag": "input", "type": "password", "label": "Password:*"},
+                                  {"ref": "e4", "tag": "button", "label": "Sign In"}])
+    assert sign_in_link(form) is None
