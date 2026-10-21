@@ -2032,3 +2032,20 @@ def test_an_apply_menu_is_navigation_never_a_decision():
         assert APPLY_NAV.match(lab), lab
     for lab in ("Applied before?", "Application questions", "How did you apply?", "Apply to other roles?"):
         assert not APPLY_NAV.match(lab), lab
+
+
+
+def test_a_portal_where_he_already_signed_in_and_applied_is_never_signed_up_again(store):
+    """EA (Avature, 2026-10-21): the fourth EA application looped 32 times through first-time-applicant sign-up."""
+    from goat import db, states
+    from goat.agent.tools import prior_account_job
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('EA1','Electronic Arts','SWE Intern','https://jobs.ea.com/en_US/careers/JobDetail/x/1','other')")
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('EA2','Electronic Arts','Analytics Intern','https://jobs.ea.com/en_US/careers/JobDetail/y/2','other')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,priority) VALUES(91,'EA1',?,'account',0)", (states.SUBMITTED,))
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,priority) VALUES(92,'EA2',?,'account',0)", (states.QUEUED,))
+        con.execute("INSERT INTO events(job_id,ts,kind,detail) VALUES(91,1,'tool:credentials','{}')")
+    job = {"id": 92, "company": "Electronic Arts"}
+    assert prior_account_job(job, "jobs.ea.com") == 91
+    assert prior_account_job(job, "career4.successfactors.com") is None
+    assert prior_account_job({"id": 92, "company": "Acme"}, "jobs.ea.com") is None

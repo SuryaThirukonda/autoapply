@@ -473,6 +473,26 @@ CREATE_STEPS = ("no reset email came, so this tenant most likely has no account 
 APPLY_NAV = re.compile(r"^\s*(apply( now| for this (job|position|role))?|apply (with|using) .{0,30}|start (your |an )?application|"
                        r"i'?m interested)\s*[»›>]*\s*$", re.I)
 
+def prior_account_job(job: dict, host: str) -> int | None:
+    """Another job for this company on this same host that used the credentials tool and was submitted: his account
+    there exists. EA's Avature (2026-10-21): three EA applications signed in with the universal password, and the
+    fourth looped 32 times through 'First time applicant' account creation."""
+    from urllib.parse import urlparse
+    company = (job.get("company") or "").strip().lower()
+    host = (host or "").lower()
+    if not company or not host:
+        return None
+    rows = db.connect().execute(
+        "SELECT j.id, l.url, j.apply_url FROM jobs j JOIN listings l ON l.id=j.listing_id WHERE LOWER(l.company)=? AND j.id != ? "
+        "AND j.status IN (?, ?) AND EXISTS (SELECT 1 FROM events e WHERE e.job_id=j.id AND e.kind='tool:credentials') "
+        "ORDER BY j.id DESC", (company, int(job.get("id") or 0), states.SUBMITTED, states.CONFIRMED)).fetchall()
+    for r in rows:
+        hosts = {(urlparse(u or "").hostname or "").lower() for u in (r[1], r[2])}
+        if host in hosts:
+            return int(r[0])
+    return None
+
+
 # The control that opens a portal's sign-up form.
 CREATE_ACCOUNT_LINK = re.compile(r"^\s*(create (an |your |new )?(account|profile)|sign ?up|register( now| here)?|new (user|candidate)|"
                                  r"don'?t have an account)", re.I)
@@ -2635,6 +2655,13 @@ class ToolDispatcher:
             return {"error": "this is the Sign In form (one password box). Click 'Create Account' first, take a snapshot, then call "
                              "credentials mode 'create' with the password and verify-password boxes."}, None
         if mode == "create":
+            prior = prior_account_job(self.ctx.job, self.ctx.portal_host)
+            if prior is not None and self.ctx.control_failures.get("creds:known_account", 0) < 3:
+                self.ctx.control_failures["creds:known_account"] = self.ctx.control_failures.get("creds:known_account", 0) + 1
+                db.event(self.ctx.job_id, "creds:account_known", {"job": prior, "host": self.ctx.portal_host})
+                return {"error": f"his account on this portal already exists: job {prior} for this company signed in here and was "
+                                 "submitted. Use credentials mode 'login_universal' on the Log in form (its username / email box and "
+                                 "its password box), then click Log in. Never use 'create' or a first-time-applicant form here."}, None
             self.ctx.create_tried = True
         ex = self.ctx.ex
         host = self.ctx.portal_host
