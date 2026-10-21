@@ -378,3 +378,52 @@ async def test_screening_questions_carry_their_slotted_text_and_their_pickers_pi
     assert readback.values_equal("May 2028", "Spring 2028", "choice", "What is your anticipated graduation date?")
     assert leading_group(["decline", "Prefer not to answer", "Asian"]) == ["decline", "Prefer not to answer"]
     assert leading_group(["I am not a protected veteran", "No", "I do not wish to self-identify"]) == ["I am not a protected veteran", "No"]
+
+
+MULTI = """<html><body>
+<script>
+customElements.define('spl-multiselect-autocomplete', class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    this.value = [];
+    const r = this.attachShadow({ mode: 'open' });
+    const opts = [['a1', 'Not Applicable'], ['a2', 'I currently work at Microsoft'], ['a3', 'I previously worked at LinkedIn']];
+    r.innerHTML = '<style>.menu{display:none} .menu.open{display:block} spl-select-option{display:block;height:22px}</style>'
+      + '<label for="i"><slot name="label-content"></slot><span aria-hidden="true">*</span></label>'
+      + '<spl-tags-list></spl-tags-list><input id="i" type="text" role="combobox" aria-expanded="false"><div class="menu"></div>';
+    const menu = r.querySelector('.menu'), inp = r.querySelector('input');
+    for (const [id, t] of opts) {
+      const o = document.createElement('spl-select-option'); o.setAttribute('value', id); o.textContent = t;
+      o.addEventListener('click', () => { const i = this.value.indexOf(id); if (i >= 0) this.value.splice(i, 1); else this.value.push(id); });
+      menu.appendChild(o);
+    }
+    inp.addEventListener('click', () => menu.classList.add('open'));
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') menu.classList.remove('open'); });
+  }
+});
+</script>
+<div id="host"></div>
+<script>
+document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML =
+  '<spl-multiselect-autocomplete id="q_ms"><span slot="label-content">Do you currently or have you previously worked at LinkedIn or Microsoft?</span></spl-multiselect-autocomplete>';
+</script>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_multiselect_takes_one_pick_names_it_and_is_not_untoggled():
+    """LinkedIn (SmartRecruiters screening, 2026-10-21): the multi-select read back as an option id, choose could not
+    open it, and a second click would have unticked the pick."""
+    from goat.browser import fill
+    ex = await _open(MULTI)
+    try:
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if (i.get("label") or "").startswith("Do you currently or have you previously worked"))
+        r = await fill.choose(ex, ref, ["Not Applicable", "No"])
+        assert r.ok and r.readback == "Not Applicable", r
+        r = await fill.choose(ex, ref, ["Not Applicable", "No"])
+        assert r.ok and r.readback == "Not Applicable", r
+        held = await ex.page.evaluate("() => document.getElementById('host').shadowRoot.querySelector('spl-multiselect-autocomplete').value")
+        assert held == ["a1"], held
+    finally:
+        await ex.close()

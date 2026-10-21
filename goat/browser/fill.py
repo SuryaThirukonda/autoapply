@@ -927,7 +927,7 @@ JS_SPL_HOST = js._COMMON_WRAP("""
   if (!el) return null;
   let n = el;
   for (let i = 0; i < 60 && n; i++) {
-    if (n.tagName === 'SPL-AUTOCOMPLETE' || n.tagName === 'SPL-SELECT') return { id: n.id || '', tag: n.tagName.toLowerCase() };
+    if (/^SPL-(MULTISELECT-)?AUTOCOMPLETE$|^SPL-SELECT$/.test(n.tagName)) return { id: n.id || '', tag: n.tagName.toLowerCase(), multi: n.tagName.indexOf('MULTI') >= 0 };
     const r = n.getRootNode ? n.getRootNode() : null;
     n = n.parentElement || (r && r.host) || null;
   }
@@ -955,6 +955,11 @@ async def _choose_spl(ex: Executor, ref: str, wants: list[str]) -> FieldResult |
     if not isinstance(host, dict) or not host.get("id"):
         return None
     hid, tag = str(host["id"]), str(host.get("tag") or "spl-autocomplete")
+    # a multi-select toggles: an option it already holds is never clicked again (that would untick it)
+    held = str((await ex.read_ref(ref)).get("shown") or "")
+    held_parts = [x.strip() for x in held.split(";") if x.strip()]
+    if host.get("multi") and held_parts and best_option([{"text": x} for x in held_parts], [w for w in wants if w]) is not None:
+        return FieldResult(ref, True, held)
     box = ex.page.locator(f'[data-goat-ref="{ref}"]').first
     opts: list[dict] = []
     for attempt in range(2):
@@ -982,6 +987,8 @@ async def _choose_spl(ex: Executor, ref: str, wants: list[str]) -> FieldResult |
         return FieldResult(ref, False, "", f"no option matched {wants[:3]}; the list offers: {[o['text'] for o in opts][:12]}")
     idx = next((o["idx"] for o in opts if o["text"] == pick.get("text")), pick.get("_idx"))
     await ex.page.locator(f'{tag}[id="{hid}"] spl-select-option').nth(int(idx)).click(timeout=5000)
+    if host.get("multi"):
+        await ex.page.keyboard.press("Escape")      # a multi-select keeps its list open after a pick
     shown = ""
     for _ in range(12):
         await asyncio.sleep(0.2)
@@ -989,6 +996,10 @@ async def _choose_spl(ex: Executor, ref: str, wants: list[str]) -> FieldResult |
         shown = str(info.get("value") or info.get("shown") or "").strip()
         if shown:
             break
+    if host.get("multi") and shown:
+        parts = [x.strip() for x in shown.split(";") if x.strip()]
+        ok = best_option([{"text": x} for x in parts], [pick["text"]]) is not None
+        return FieldResult(ref, ok, shown, "" if ok else f"picked '{pick['text']}' but the box holds '{shown}'")
     ok = bool(shown) and (_norm(shown) == _norm(pick["text"]) or best_option([{"text": shown}], [pick["text"]]) is not None)
     return FieldResult(ref, ok, shown, "" if ok else f"picked '{pick['text']}' but the box shows '{shown}'")
 

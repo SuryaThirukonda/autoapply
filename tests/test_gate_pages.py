@@ -562,3 +562,44 @@ async def test_a_pick_that_contains_its_label_word_reads_back_whole():
         assert item.get("shown") == "Bachelor's Degree", item
     finally:
         await ex.close()
+
+
+
+def test_a_resume_attached_on_an_earlier_step_is_not_demanded_again(store):
+    """LinkedIn (SmartRecruiters, 2026-10-21): the screening step's own file box made the gate ask for the résumé again."""
+    from goat import records
+    from goat.gate import run_gate
+    records.record_decision(1, 1, "resume upload", "Surya_Thirukonda_Resume_SWE.pdf", "resume", "e17")
+    items = [{"ref": "e40", "tag": "input", "type": "file", "label": "Additional documents", "value": ""},
+             {"ref": "e60", "tag": "button", "type": "submit", "label": "Submit", "submitish": True}]
+    snap = Snapshot(url="https://jobs.smartrecruiters.com/oneclick-ui/company/X/publication/1/screening", title="Preliminary questions",
+                    headings=["Preliminary questions"], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    g = run_gate(job={"id": 1, "company": "LinkedIn", "title": "Intern", "url": "u"}, snapshot=snap, page_text="Preliminary questions",
+                 expected_resume="Surya_Thirukonda_Resume_SWE.pdf", free_text_answers=[], portal="smartrecruiters", page_no=2)
+    assert not any("resume" in r for r in g.reasons), g.reasons
+
+
+
+LONG_LABEL = """<html><body>
+<label id="QL" for="wrap">Answering "No" to the following questions will not bar you from being considered for employment at
+Qualcomm. This information will enable Qualcomm to recognize whether you may need assistance with obtaining approval to work
+in the U.S.<br><br>Are you currently legally authorized to work in the US?</label>
+<div id="wrap"><input id="input-55" role="combobox" aria-labelledby="QL" aria-expanded="false" value=""></div>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_long_label_keeps_its_question_first():
+    """Qualcomm (Eightfold, 2026-10-21): the work-authorization box read as its preamble and was answered No."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(LONG_LABEL)
+        snap = await snapshot.take(ex)
+        item = next(i for i in snap.items if i.get("tag") == "input")
+        assert item["label"].startswith("Are you currently legally authorized to work in the US?"), item["label"]
+    finally:
+        await ex.close()

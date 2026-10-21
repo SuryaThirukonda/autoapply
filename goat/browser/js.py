@@ -94,7 +94,16 @@ _COMMON = r"""
       if (!t) { const sec = el.closest('[data-automation-id="multiSelectContainer"]'); const lab = sec && sec.parentElement && sec.parentElement.querySelector('label, [data-automation-id="formLabel"]'); if (lab) t = txt(lab); }
       t = (t || 'selected items') + ' (selected items; choose on this control adds another)';
     }
-    return t.replace(/\s+/g, ' ').trim().slice(0, 200);
+    t = t.replace(/\s+/g, ' ').trim();
+    // a long label that explains first and asks last keeps its question when it is cut: Qualcomm's "Answering 'No' to the
+    // following questions will not bar you ... approval to work in the U.S. Are you currently legally authorized to work
+    // in the US?" was cut before the question, read as 'need assistance' and answered No (2026-10-21)
+    if (t.length > 160) {
+      const qs = t.match(/[^.?!]*\?/g);
+      const q = qs && qs.length ? qs[qs.length - 1].trim() : '';
+      if (q.length > 8 && !t.startsWith(q)) t = q + ' (' + t.replace(q, '').trim() + ')';
+    }
+    return t.slice(0, 200);
   }
   function* allRoots(root) {
     yield root;
@@ -126,6 +135,17 @@ _COMMON = r"""
       const h = r && r.host ? r.host : null;
       if (!h) return '';
       let v = h.value;
+      // a design-system select keeps option ids (SmartRecruiters' spl-autocomplete / spl-multiselect-autocomplete): its
+      // options' own text is the pick; an id with no option to name it is no value (LinkedIn, 2026-10-21)
+      const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (Array.isArray(v) || (typeof v === 'string' && ID_RE.test(v.trim()))) {
+        const ids = (Array.isArray(v) ? v : [v]).map(x => String(x).trim());
+        const names = h.shadowRoot ? Array.from(h.shadowRoot.querySelectorAll('spl-select-option, [role="option"]'))
+          .filter(o => ids.includes(String(o.getAttribute('value') || '')))
+          .map(o => (o.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean) : [];
+        if (names.length) return names.join('; ');
+        n = h; continue;
+      }
       if (v && typeof v === 'object') v = v.displayString || v.text || v.name || v.label || '';
       if (typeof v === 'string' && v.trim()) return v.trim();
       n = h;
@@ -653,7 +673,13 @@ JS_PAGE_ERRORS = r"""
       if (owner) { const q = questionOf(owner); if (q) return q; }
     } catch (e) { /* fall through */ }
     let p = el, hops = 0;
-    while (p && hops < 6) { const l = p.querySelector ? p.querySelector('label, [class*="label" i]') : null; if (l) { const t = txt(l); if (t && t.length < 120) return t.slice(0, 120); } p = p.parentElement; hops++; }
+    // a design-system label shows its words through a <slot> (SmartRecruiters' screening boxes read '*', 2026-10-21)
+    const slotText = (n) => { const ps = []; const w = (x, d) => { if (!x || d > 30) return; if (x.nodeType === 3) { ps.push(x.nodeValue || ''); return; }
+      if (x.nodeType !== 1) return; if (x.tagName === 'SLOT') { for (const a of x.assignedNodes({ flatten: true })) w(a, d + 1); return; }
+      for (const c of x.childNodes) w(c, d + 1); }; w(n, 0); return ps.join(' ').replace(/\s+/g, ' ').trim(); };
+    while (p && hops < 6) { const l = p.querySelector ? p.querySelector('label, [class*="label" i]') : null;
+      if (l) { const t = (l.querySelector && l.querySelector('slot')) ? slotText(l) : txt(l); if (t && t.replace(/[\s*:]+/g, '') && t.length < 120) return t.slice(0, 120); }
+      p = p.parentElement; hops++; }
     const al = el.getAttribute && (el.getAttribute('aria-label') || ''); return (al || '').slice(0, 120);
   }
   function push(arr, obj, key) { if (seenText.has(key)) return; seenText.add(key); arr.push(obj); }

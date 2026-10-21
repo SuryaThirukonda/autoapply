@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -52,6 +53,21 @@ def rank_queue(con, now: int | None = None) -> int:
             con.execute("UPDATE jobs SET priority=? WHERE id=?", (p, r["id"]))
             changed += 1
     return changed
+
+
+# SAP SuccessFactors keeps one session per server for every company it hosts (career4: CenturyLink, Phillips 66,
+# NetApp, Corning, Westinghouse). Right after CenturyLink's run, Phillips 66's 'Apply now' opened "An error occurred
+# while processing your request", and NetApp's had the same (2026-10-21). A fresh SuccessFactors job starts signed out.
+SF_COOKIE_DOMAIN = re.compile(r".*successfactors\.(com|eu)")
+
+
+async def clear_sf_session(ex) -> bool:
+    """Drop SuccessFactors' session cookies from the browser context; True when it was done."""
+    try:
+        await ex._context.clear_cookies(domain=SF_COOKIE_DOMAIN)
+        return True
+    except Exception:  # noqa: BLE001 - best effort
+        return False
 
 
 def claim_next() -> dict | None:
@@ -445,6 +461,9 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
     tab_id = None
     try:
         await ex.start()
+        if (job.get("ats") or "").lower() == "successfactors" and not job.get("tab_target_id"):
+            if await clear_sf_session(ex):
+                db.event(job_id, "sf:session_cleared", {})
         page = None
         reopened = False                    # the form on screen is not the held one (new tab, re-open or reload)
         if job.get("tab_target_id"):

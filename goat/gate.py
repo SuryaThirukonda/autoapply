@@ -352,7 +352,11 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
             reasons.append(f"resume slot holds {shown!r}, expected {expected_resume}")
     elif expected_resume and snapshot.file_inputs():
         shown = " ".join((fi.get("value") or "") for fi in snapshot.file_inputs()).lower()
-        if expected_resume.lower() not in shown and expected_resume.lower() not in (page_text or "").lower():
+        # a résumé attached on an earlier step of this attempt is not shown again on a later one (LinkedIn's
+        # SmartRecruiters screening step has its own file box; the run went 'ready_for_you' over it, 2026-10-21)
+        earlier = any(str(d.get("source") or "") == "resume" and str(d.get("value") or "").lower() == expected_resume.lower()
+                      and d.get("page") != page_no for d in decs)
+        if not earlier and expected_resume.lower() not in shown and expected_resume.lower() not in (page_text or "").lower():
             reasons.append(f"resume not shown on page: expected {expected_resume}")
 
     # 5b. every value on the page has a sourced decision from THIS attempt (by ref, else by label words).

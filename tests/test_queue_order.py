@@ -75,3 +75,22 @@ def test_an_answered_question_resumes_before_the_posting_order(store, monkeypatc
         con.execute("UPDATE jobs SET blocked_on_question_key='q.team' WHERE id=2")
     answers.save_answer("q.team", "Backend", answer_type="text", source="telegram")
     assert _claims(2) == [2, 1]
+
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_successfactors_job_starts_signed_out():
+    """Phillips 66 / NetApp (2026-10-21): another company's SuccessFactors session on the same server broke 'Apply now'."""
+    from goat.browser.executor import Executor, HostPolicy
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex._context.add_cookies([
+            {"name": "JSESSIONID", "value": "a", "domain": "career4.successfactors.com", "path": "/"},
+            {"name": "route", "value": "b", "domain": ".successfactors.com", "path": "/"},
+            {"name": "keep", "value": "c", "domain": "jobs.lever.co", "path": "/"}])
+        assert await worker.clear_sf_session(ex)
+        left = sorted(c["domain"] for c in await ex._context.cookies())
+        assert left == ["jobs.lever.co"], left
+    finally:
+        await ex.close()
