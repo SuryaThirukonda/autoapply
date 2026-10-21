@@ -250,3 +250,10 @@ def test_fact_check_knows_his_availability_window():
     """Inversion Space (2026-10-20): 'May 18, 2027 through August 14, 2027 (12 weeks)' was called an unsupported commitment."""
     from goat.judge import FACT_CHECK_INSTRUCTIONS
     assert "May 18, 2027 to August 14, 2027" in FACT_CHECK_INSTRUCTIONS
+
+
+
+def test_judge_knows_the_how_did_you_hear_answer_is_ordered():
+    """Verizon (2026-10-20): 'Job Board' (his second preference; no LinkedIn offered) was failed as a wrong value."""
+    from goat.judge import JUDGE_INSTRUCTIONS
+    assert "ordered preference (LinkedIn, then Job Board" in JUDGE_INSTRUCTIONS
