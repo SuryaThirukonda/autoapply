@@ -743,6 +743,7 @@ async def test_oracle_tiles_show_their_hover_edit_and_names_and_the_gate_checks_
                                    high_school="Clements High School")
         assert len(got) == 3, got
         assert "gives its employer as 'Quantitative Systems, FastAPI, QuestDB, Docker'" in got[0] and "Mai Shan Yun" in got[0]
+        assert "Never remove it" in got[0]
         assert f"Edit [{snap.tiles[0]['edit']}]" in got[0]
         assert "'Engineering Honors' / 'Texas A&M University' is not his" in got[1]
         assert got[2].startswith("Education has no Texas A&M University entry: click ADD EDUCATION")
@@ -862,9 +863,10 @@ def test_an_unnamed_imported_tile_is_named_by_the_gate():
     """Vertiv (Oracle, 2026-10-21): 'Unnamed Job Title' over his Southwest dates went to the judge."""
     from goat.gate import oracle_tile_problems
     tiles = [{"section": "Work History", "title": "Unnamed Job Title", "sub": "Southwest Airlines 10/2025 - 12/2025", "edit": "e7", "del": "e8"}]
-    got = oracle_tile_problems(tiles, [], entries=HIS_ENTRIES + [{"n": 5, "company": "Southwest Airlines", "title": "Data Analyst"}],
+    got = oracle_tile_problems(tiles, [], entries=HIS_ENTRIES + [{"n": 5, "company": "Southwest Airlines", "title": "Data Analyst",
+                                                                  "start": "10/01/2025", "end": "12/15/2025"}],
                                school="Texas A&M University", high_school="", required_blocks=[])
-    assert len(got) == 1 and "has no real title" in got[0] and "Edit [e7]" in got[0], got
+    assert len(got) == 1 and "his Southwest Airlines entry with no real title" in got[0] and "Edit [e7]" in got[0], got
 
 
 
@@ -903,7 +905,28 @@ async def test_oracles_timeline_entries_are_controls_and_go_through_the_tile_che
         got = oracle_tile_problems(snap.tiles, snap.items, entries=HIS_ENTRIES, school="Texas A&M University",
                                    high_school="Clements High School", required_blocks=[])
         assert len(got) == 2, got
-        assert "has no real title" in got[0] and f"click the entry [{snap.tiles[0]['edit']}] and then its Edit" in got[0]
+        assert "has no real title" in got[0] and f"click the entry [{snap.tiles[0]['edit']}] and then its Remove" in got[0]
         assert "'Engineering Honors'" in got[1] and "then its Remove" in got[1]
     finally:
         await ex.close()
+
+
+
+def test_a_tile_that_is_one_of_his_roles_is_edited_never_removed():
+    """Vertiv (Oracle, 2026-10-21): offered 'edit, or remove a tile that is none of his roles', the run removed his Revio role
+    and his Southwest entry ('Unnamed Job Title' over its dates)."""
+    from goat.gate import oracle_tile_problems, entry_by_dates
+    entries = HIS_ENTRIES + [{"n": 5, "company": "Southwest Airlines", "title": "Data Analyst", "start": "10/01/2025", "end": "12/15/2025"}]
+    assert entry_by_dates("From October 2025 to December 2025", entries)["company"] == "Southwest Airlines"
+    assert entry_by_dates("10/2025 - 12/2025", entries)["company"] == "Southwest Airlines"
+    assert entry_by_dates("From March 2024 to May 2024", entries) is None
+    tiles = [{"section": "Work History", "title": "Unnamed Job Title", "sub": "", "dates": "From October 2025 to December 2025",
+              "edit": "e7", "del": "", "timeline": True},
+             {"section": "Work History", "title": "Founding Software Engineer Part-time", "sub": "FastAPI, React, Supabase, Docker",
+              "dates": "From February 2026 to No date provided", "edit": "e8", "del": "", "timeline": True},
+             {"section": "Work History", "title": "Unnamed Job Title", "sub": "", "dates": "From March 2024 to May 2024",
+              "edit": "e9", "del": "", "timeline": True}]
+    got = oracle_tile_problems(tiles, [], entries=entries, school="Texas A&M University", high_school="", required_blocks=[])
+    assert "his Southwest Airlines entry" in got[0] and "Never remove it" in got[0], got[0]
+    assert "his Revio role" in got[1] and "Never remove it" in got[1] and "Remove" not in got[1].replace("Never remove", ""), got[1]
+    assert "match none of his roles" in got[2] and "then its Remove" in got[2], got[2]

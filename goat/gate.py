@@ -221,6 +221,32 @@ _EDU_SECTION = re.compile(r"education", re.I)
 _HIS_DEGREE = re.compile(r"bachelor|undergraduate|computer science|\bb\.?\s?s\b", re.I)
 
 
+_MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+
+
+def _month_years(text: str) -> list[tuple[int, int]]:
+    """(month, year) pairs in 'From October 2025 to December 2025' or '10/2025 - 12/2025' or '10/01/2025'."""
+    out = []
+    for m in re.finditer(r"\b(" + "|".join(_MONTHS) + r")\s+((?:19|20)\d{2})\b", text or "", re.I):
+        out.append((_MONTHS.index(m.group(1).lower()) + 1, int(m.group(2))))
+    for m in re.finditer(r"\b(\d{1,2})/(?:\d{1,2}/)?((?:19|20)\d{2})\b", text or ""):
+        out.append((int(m.group(1)), int(m.group(2))))
+    return out
+
+
+def entry_by_dates(text: str, entries: list[dict]) -> dict | None:
+    """His stored work entry whose start (and end, when both show one) match the dates a tile shows."""
+    shown = _month_years(text)
+    if not shown:
+        return None
+    for e in entries:
+        start = _month_years(e.get("start") or "")
+        end = _month_years(e.get("end") or "")
+        if start and shown[0] == start[0] and (len(shown) < 2 or not end or shown[1] == end[0]):
+            return e
+    return None
+
+
 def oracle_tile_problems(tiles: list[dict], items: list[dict], company: str = "", portal: str = "", *,
                          entries: list[dict] | None = None, school: str | None = None, high_school: str | None = None,
                          required_blocks: list[str] | None = None) -> list[str]:
@@ -255,9 +281,15 @@ def oracle_tile_problems(tiles: list[dict], items: list[dict], company: str = ""
         # Oracle's placeholder for an imported entry with no title (Vertiv, 2026-10-21: 'Unnamed Job Title' over his
         # Southwest dates, failed by the judge)
         if re.match(r"\s*unnamed\b", t.get("title") or "", re.I):
-            out.append(f"the {t.get('section') or 'Work History'} tile '{t.get('title')}' / '{t.get('sub') or t.get('dates')}' has no real title "
-                       f"(Oracle's résumé import): {_edit(t)} and set Job Title, Employer Name and dates from the stored entry with "
-                       f"those dates (experience.work.N.*), then SAVE; if it duplicates a tile already there, {_delete(t)}")
+            mine = entry_by_dates(f"{t.get('sub') or ''} {t.get('dates') or ''}", entries)
+            if mine is not None:
+                # Vertiv (2026-10-21): the run removed his Southwest entry this way, offered 'edit or remove'
+                out.append(f"the {t.get('section') or 'Work History'} tile '{t.get('title')}' / '{t.get('sub') or t.get('dates')}' is his "
+                           f"{mine['company']} entry with no real title (Oracle's résumé import): {_edit(t)} and set Job Title, Employer "
+                           f"Name and dates from experience.work.{mine['n']}.*, then SAVE. Never remove it: it is one of his roles")
+            else:
+                out.append(f"the {t.get('section') or 'Work History'} tile '{t.get('title')}' / '{t.get('sub') or t.get('dates')}' has no real "
+                           f"title (Oracle's résumé import) and its dates match none of his roles: {_delete(t)}")
             continue
         employer = _TILE_DATES.sub("", t.get("sub") or "").strip(" ,-")
         if not employer or any(_same_company(employer, e["company"]) for e in entries):
@@ -265,11 +297,15 @@ def oracle_tile_problems(tiles: list[dict], items: list[dict], company: str = ""
         tn = answers.norm(t.get("title") or "")
         role = next((e for e in entries if tn and (answers.norm(e.get("title") or "").startswith(tn)
                                                    or tn.startswith(answers.norm(re.split(r"\s*[(,]", e.get("title") or "", 1)[0]) or "-"))), None)
-        which = f" (his {role['company']} role: experience.work.{role['n']}.*)" if role else ""
-        out.append(f"the {t.get('section') or 'Work History'} tile '{t.get('title')}' gives its employer as '{employer}', which is none "
-                   f"of his employers{which}: {_edit(t)}, set Employer Name to his stored company for that role and Job Title, "
-                   "dates and Achievements from the same experience.work.N.* entry, then SAVE; for a tile that is none of his roles, "
-                   f"{_delete(t)}")
+        role = role or entry_by_dates(f"{t.get('sub') or ''} {t.get('dates') or ''}", entries)
+        if role is not None:
+            # never 'or remove it' for one of his roles: Vertiv's run removed his Revio role (2026-10-21)
+            out.append(f"the {t.get('section') or 'Work History'} tile '{t.get('title')}' gives its employer as '{employer}', but it is his "
+                       f"{role['company']} role: {_edit(t)}, set Employer Name to '{role['company']}' and Job Title, dates and "
+                       f"Achievements from experience.work.{role['n']}.*, then SAVE. Never remove it: it is one of his roles")
+        else:
+            out.append(f"the {t.get('section') or 'Work History'} tile '{t.get('title')}' gives its employer as '{employer}', which is none of "
+                       f"his employers, and its title and dates match none of his roles: {_delete(t)}")
     school_key = answers.norm(re.split(r"\s*[-(,]", school or "", 1)[0]) if school else ""
     hs_key = answers.norm(high_school or "")
     his = []
