@@ -856,6 +856,7 @@ def test_his_education_entry_is_asked_for_only_where_the_block_is_required():
     assert oracle_tile_problems(work, items, required_blocks=["Work History"], **kw) == []
     got = oracle_tile_problems(work, items, required_blocks=["Work History", "Education"], **kw)
     assert len(got) == 1 and got[0].startswith("Education has no Texas A&M University entry"), got
+    assert "pick 'Other'" in got[0], got
 
 
 

@@ -328,7 +328,9 @@ def oracle_tile_problems(tiles: list[dict], items: list[dict], company: str = ""
     if add_edu is not None and school_key and edu_required and not any(t.get("timeline") or school_key in answers.norm(f"{t.get('title')} {t.get('sub')}")
                                                                        for t in his):
         out.append(f"Education has no {school} entry: click ADD EDUCATION [{add_edu['ref']}] and enter it from education.* (school, "
-                   "degree Bachelor of Science, major Computer Science, graduation May 2028), then SAVE")
+                   "degree Bachelor of Science, major Computer Science, graduation May 2028), then SAVE. If the School search offers no "
+                   "Texas A&M University, pick 'Other' (his rule: 'Try Texas A&M, otherwise, pick other') and type Texas A&M "
+                   "University in an 'Other' school box if one appears (Arconic, 2026-10-21)")
     return out
 
 
