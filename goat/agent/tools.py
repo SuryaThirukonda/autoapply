@@ -142,6 +142,7 @@ class RunContext:
     creds_mode: str = ""           # the last credentials mode filled (login / login_universal / create / set_password)
     reset_needed: bool = False     # a Sign In with the universal password failed on this tenant
     sign_in_url: str = ""          # the page where that Sign In failed (the way back to its sign-up control)
+    creds_page_url: str = ""       # the sign-in page where credentials were last typed
     reset_link_tried: bool = False # open_password_reset_link was called this run
     reset_not_received: bool = False  # ...and no reset email came
     create_tried: bool = False     # credentials mode 'create' was used this run
@@ -467,6 +468,19 @@ CREATE_STEPS = ("no reset email came, so this tenant most likely has no account 
                 "password box, confirm_password_ref = the verify-password box), tick the terms box if there is one, click Create Account, "
                 "then call open_verification_link if the portal asks you to verify the email. Park credentials_unknown only if the "
                 "portal says the account already exists.")
+
+
+# An address holding a one-time session crumb: SuccessFactors' page after a Sign In click ('career?_s.crb=...') shows
+# 'An error occurred while processing your request' when it is opened again (Phillips 66, 2026-10-21).
+SESSION_URL = re.compile(r"[?&;](_s[.]crb|_s[.]token|jsessionid|sessionid)=", re.I)
+
+
+def way_back_url(*urls: str) -> str:
+    """The first of these addresses that can be opened again (it carries no session crumb)."""
+    for u in urls:
+        if u and not SESSION_URL.search(u):
+            return u
+    return ""
 
 
 # A posting page's own Apply menu ('Apply now' with 'Apply with LinkedIn' / 'Apply now' inside) is navigation, not a field.
@@ -2020,7 +2034,8 @@ class ToolDispatcher:
             m = SIGN_IN_FAILED.search(text) if self.ctx.creds_mode != "create" else None
             if m:
                 self.ctx.reset_needed = True
-                self.ctx.sign_in_url = getattr(self.ctx.ex, "url", "") or self.ctx.sign_in_url
+                self.ctx.sign_in_url = way_back_url(self.ctx.creds_page_url, getattr(self.ctx.ex, "url", "") or "") \
+                    or self.ctx.sign_in_url
                 self.ctx.control_failures["creds:login_failed"] = self.ctx.control_failures.get("creds:login_failed", 0) + 1
                 db.event(self.ctx.job_id, "creds:sign_in_failed", {"host": self.ctx.portal_host, "quote": m.group(0)[:80]})
                 out["sign_in"] = "failed"
@@ -2666,6 +2681,9 @@ class ToolDispatcher:
         ex = self.ctx.ex
         host = self.ctx.portal_host
         email = SETTINGS.creds.application_email
+        if mode in ("login", "login_universal"):
+            # the sign-in page itself: the way back to its sign-up control if this sign-in fails
+            self.ctx.creds_page_url = way_back_url(getattr(ex, "url", "") or "") or self.ctx.creds_page_url
 
         async def _type_into(ref: str, text: str, secret: bool) -> None:
             # A password manager's inline menu (Bitwarden's 'Unlock your account to view autofill suggestions') opens

@@ -2049,3 +2049,17 @@ def test_a_portal_where_he_already_signed_in_and_applied_is_never_signed_up_agai
     assert prior_account_job(job, "jobs.ea.com") == 91
     assert prior_account_job(job, "career4.successfactors.com") is None
     assert prior_account_job({"id": 92, "company": "Acme"}, "jobs.ea.com") is None
+
+
+
+def test_the_way_back_to_a_sign_in_page_is_never_a_session_bound_address():
+    """Phillips 66 (SuccessFactors, 2026-10-21): the address after the failed Sign In carried '_s.crb=' and reopening it
+    showed 'An error occurred while processing your request'; the sign-in page itself was the way back."""
+    from goat.agent.tools import way_back_url
+    crumb = "https://career4.successfactors.com/career?_s.crb=cLy%252bQl2XRuCeOlWtcoU8z4S4LCqUzFT8qy1DUi76rk8%253d"
+    page = "https://career4.successfactors.com/careers?company=Phillips66"
+    assert way_back_url(page, crumb) == page
+    assert way_back_url(crumb, page) == page
+    assert way_back_url(crumb) == ""
+    assert way_back_url("", "https://x.example.com/login;jsessionid=AB12") == ""
+    assert way_back_url("https://jobs.example.com/apply?site=3&sid=9") == "https://jobs.example.com/apply?site=3&sid=9"
