@@ -239,6 +239,15 @@ def workday_tenant_tokens(portal: str | None, portal_host: str) -> list[str]:
     return [tenant]
 
 
+# Career-site platforms that mail verification codes for their tenants from their own domain: Qualcomm's Eightfold site
+# sent "Verify your email" from confirm@eightfold.ai, the search looked only for qualcomm.com, and the run waited 15 minutes
+# for a code that was in the inbox (2026-10-21). Used for portals goat does not know by name; the time window (after the
+# request) keeps another employer's code out.
+PLATFORM_SENDERS = ("eightfold.ai", "phenompeople.com", "avature.net", "icims.com", "smartrecruiters.com", "myworkday.com",
+                    "successfactors.com", "successfactors.eu", "sapsf.com", "oraclecloud.com", "taleo.net", "jobvite.com",
+                    "greenhouse.io", "lever.co", "ashbyhq.com", "ultipro.com", "ukg.com")
+
+
 def sender_allowed(from_header: str, portal: str | None, portal_host: str, extra: tuple[str, ...] | list[str] = ()) -> bool:
     """Known portal: From must be one of the portal's sender domains/addresses. Unknown portal:
     From domain must share the portal host's registrable domain. `extra`: the employer's own mail domain
@@ -251,7 +260,7 @@ def sender_allowed(from_header: str, portal: str | None, portal_host: str, extra
     spec = PORTALS.get((portal or "").lower())
     if spec is None:
         rd = registrable_domain(portal_host)
-        return bool(rd) and registrable_domain(domain) == rd
+        return (bool(rd) and registrable_domain(domain) == rd) or registrable_domain(domain) in PLATFORM_SENDERS
     if tenant_mismatch(from_header, portal_host):
         return False
     for s in spec["senders"]:
@@ -583,7 +592,7 @@ def build_code_query(portal: str, portal_host: str, after_ts: int, extra_senders
         senders = list(spec["senders"])
         hints = spec["subject_hints"]
     else:
-        senders = [registrable_domain(portal_host)]
+        senders = [registrable_domain(portal_host)] + list(PLATFORM_SENDERS)
         hints = ["code", "Verify", "verification", "Confirm"]
     senders += [t for t in extra_senders if t and t not in senders]
     q = f"from:({' OR '.join(senders)}) after:{int(after_ts)} newer_than:1d"

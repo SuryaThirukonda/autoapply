@@ -926,6 +926,7 @@ JS_READ_REF = r"""
   let shown = '';
   const c = /cx-select-input/.test(String(el.className || '')) ? null : el.closest('[class*="__control"], [class*="control"], [class*="Control"], [data-automation-id^="formField"], .field, .form-group');
   if (c) shown = txt(c).slice(0, 300);
+  if (!value && tag === 'input') { const hv = hostPickedValue(el); if (hv) shown = hv.slice(0, 300); }
   el.scrollIntoView({ block: 'center', inline: 'nearest' });
   let r2 = el.getBoundingClientRect();
   // A react-select search input can be a few pixels wide (Greenhouse job boards: 3.5 px): a click there
@@ -967,6 +968,9 @@ JS_READ_REFS = r"""
     }
     const c = /cx-select-input/.test(String(el.className || '')) ? null : el.closest('[class*="__control"], [class*="control"], [class*="Control"]');
     if (c && tag === 'input' && out[ref].value === '') { const s = txt(c).slice(0, 300); if (s && !PLACEHOLDER.test(s)) out[ref].shown = s; }
+    // a pick kept on the field's custom-element host while its box was emptied (SmartRecruiters' City, ServiceNow
+    // 2026-10-21: the read-back before Next called it '' and blocked the page five times)
+    if (tag === 'input' && out[ref].value === '' && !out[ref].shown) { const hv = hostPickedValue(el); if (hv) out[ref].shown = hv.slice(0, 300); }
   }
   return JSON.stringify(out);
 }

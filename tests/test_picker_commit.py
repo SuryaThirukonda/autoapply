@@ -358,3 +358,41 @@ async def test_a_workday_chip_list_reads_its_chips_as_its_value():
         assert chips and chips[0].get("value") == "Job Posting" and chips[0].get("selected_items") == 1, chips
     finally:
         await ex.close()
+
+
+
+STATE_ONLY_BOXES = """<html><body>
+<input type="checkbox" id="privacy"><label for="privacy">I have read and agree to the Privacy Policy</label>
+<input type="radio" id="all" name="c0" value="all"><label for="all">ANY ROLES GLOBALLY</label>
+<input type="radio" id="only" name="c1" value="applied_only"><label for="only">ONLY THE ROLE I AM APPLYING FOR</label>
+<script>
+  // like Eightfold: the page keeps its own state and only a real click changes it
+  window.state = {privacy: false, choice: ''};
+  const sync = () => { document.getElementById('privacy').checked = state.privacy;
+    document.getElementById('all').checked = state.choice === 'all'; document.getElementById('only').checked = state.choice === 'applied_only'; };
+  document.getElementById('privacy').addEventListener('click', (e) => { if (!e.isTrusted) { e.preventDefault(); return; } state.privacy = !state.privacy; setTimeout(sync, 0); });
+  for (const id of ['all', 'only']) document.getElementById(id).addEventListener('click', (e) => { if (!e.isTrusted) { e.preventDefault(); return; } state.choice = e.target.value; setTimeout(sync, 0); });
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_tick_boxes_on_a_state_keeping_site_get_real_clicks(monkeypatch):
+    """Qualcomm's Eightfold consent step (2026-10-21): script-set ticks never reached the page's state."""
+    assert fill.EIGHTFOLD_URL.search("https://careers.qualcomm.com/careers/apply?pid=446720740525&domain=qualcomm.com&hl=en")
+    assert not fill.EIGHTFOLD_URL.search("https://boards.greenhouse.io/acme/jobs/1")
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(STATE_ONLY_BOXES)
+        snap = await snapshot.take(ex)
+        refs = {i.get("label"): i["ref"] for i in snap.items if i.get("type") == "checkbox"}
+        refs.update({o["label"]: o["ref"] for g in snap.groups for o in g.get("options", [])})
+        privacy = next(r for k, r in refs.items() if k and "Privacy" in k)
+        only = next(r for k, r in refs.items() if k and "ONLY" in k)
+        monkeypatch.setattr(fill, "needs_real_typing", lambda ex: True)
+        out = await fill.fill_batch(ex, [{"ref": privacy, "value": "true"}, {"ref": only, "value": "true"}])
+        assert all(r.ok for r in out), out
+        assert await ex.page.evaluate("() => window.state") == {"privacy": True, "choice": "applied_only"}
+    finally:
+        await ex.close()

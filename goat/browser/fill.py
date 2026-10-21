@@ -78,13 +78,53 @@ async def ashby_resave(ex: Executor) -> list[dict]:
 REAL_TYPING_HOSTS = re.compile(r"(^|\.)(eightfold\.ai|jobs\.netflix\.net|careers\.microsoft\.com)$", re.I)
 
 
+# An Eightfold career site on the employer's own host (careers.qualcomm.com/careers/apply?pid=...&domain=qualcomm.com):
+# the privacy box and the profile-use radio of its 'Please review before continuing' step were set by script, the page
+# kept them unset ('You must agree to the Privacy Policy'), and four Qualcomm runs could not get past it (2026-10-21).
+EIGHTFOLD_URL = re.compile(r"/careers(/apply)?/?\?(.*&)?pid=\d+.*\bdomain=", re.I)
+
+
 def needs_real_typing(ex: Executor) -> bool:
     from urllib.parse import urlparse
+    url = getattr(ex, "url", "") or ""
     try:
-        host = urlparse(getattr(ex, "url", "") or "").hostname or ""
+        host = urlparse(url).hostname or ""
     except Exception:
         host = ""
-    return bool(REAL_TYPING_HOSTS.search(host))
+    return bool(REAL_TYPING_HOSTS.search(host)) or bool(EIGHTFOLD_URL.search(url))
+
+
+def _wants_checked(value) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    v = str(value or "").strip().lower()
+    if v in ("true", "checked", "yes", "on", "1"):
+        return True
+    if v in ("false", "unchecked", "no", "off", "0", ""):
+        return False
+    return None
+
+
+async def _click_boxes(ex: Executor, fields: list[dict]) -> list[FieldResult]:
+    """Set tick boxes and radios with a real click (the page's own handlers run), then read them back."""
+    out = []
+    for f in fields:
+        ref, want = str(f["ref"]), _wants_checked(f.get("value"))
+        try:
+            now = (await ex.read_ref(ref)).get("value") == "checked"
+            if now != want:
+                loc = ex.page.locator(f'[data-goat-ref="{ref}"]').first
+                try:
+                    await loc.click(timeout=5000)
+                except Exception:
+                    await loc.click(timeout=5000, force=True)
+                await asyncio.sleep(0.3)
+                now = (await ex.read_ref(ref)).get("value") == "checked"
+            out.append(FieldResult(ref=ref, ok=now == want, readback="checked" if now else "unchecked",
+                                   error="" if now == want else "the box did not take the click"))
+        except Exception as e:  # noqa: BLE001 - reported per field
+            out.append(FieldResult(ref=ref, ok=False, readback="", error=f"click failed: {type(e).__name__}"))
+    return out
 
 
 async def _type_boxes(ex: Executor, fields: list[dict]) -> list[FieldResult]:
@@ -113,14 +153,19 @@ async def fill_batch(ex: Executor, fields: list[dict]) -> list[FieldResult]:
     if not fields:
         return []
     if needs_real_typing(ex):
-        typed, rest = [], []
+        typed, clicked, rest = [], [], []
         for f in fields:
             v = f.get("value")
+            try:
+                info = await ex.read_ref(str(f["ref"]))
+            except Exception:
+                info = {}
+            kind = str(info.get("type") or "").lower()
+            want = _wants_checked(v)
+            if info.get("tag") == "input" and kind in ("checkbox", "radio") and want is not None and (kind == "checkbox" or want):
+                clicked.append(f)
+                continue
             if isinstance(v, str) and v and "\n" not in v and len(v) <= 400:
-                try:
-                    info = await ex.read_ref(str(f["ref"]))
-                except Exception:
-                    info = {}
                 # never a picker's search box: Netflix's veteran question (2026-10-21) got his whole answer list typed into
                 # it ('No match found for I am not a protected veteran; ...'); choose works those
                 if (info.get("tag") in ("input", "textarea") and not info.get("combo") and info.get("expanded") is None
@@ -128,8 +173,8 @@ async def fill_batch(ex: Executor, fields: list[dict]) -> list[FieldResult]:
                     typed.append(f)
                     continue
             rest.append(f)
-        if typed:
-            done = await _type_boxes(ex, typed)
+        if typed or clicked:
+            done = (await _type_boxes(ex, typed) if typed else []) + (await _click_boxes(ex, clicked) if clicked else [])
             return done + (await fill_batch_js(ex, rest) if rest else [])
     return await fill_batch_js(ex, fields)
 

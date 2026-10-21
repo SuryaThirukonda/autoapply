@@ -245,3 +245,18 @@ async def test_a_pick_kept_on_the_host_is_the_fields_value_and_shadow_text_is_pa
         assert "Surya_Thirukonda_Resume_SWE.pdf" in await ex.page_text(30000)
     finally:
         await ex.close()
+
+
+@pytest.mark.asyncio
+async def test_the_read_back_takes_a_pick_kept_on_the_host():
+    """ServiceNow (2026-10-21): the read-back before Next called City '' while its host held the pick."""
+    ex = await _open(HOST_PICK)
+    try:
+        snap = await snapshot.take(ex)
+        city = next(i for i in snap.items if (i.get("label") or "").startswith("City"))
+        live = await ex.eval(js.JS_READ_REFS, [city["ref"]])
+        assert live[city["ref"]].get("shown") == "Sugar Land, TX, US", live
+        one = await ex.read_ref(city["ref"])
+        assert one.get("shown") == "Sugar Land, TX, US", one
+    finally:
+        await ex.close()

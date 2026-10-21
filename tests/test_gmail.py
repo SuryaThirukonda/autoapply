@@ -139,7 +139,8 @@ def test_build_code_query_is_narrow():
     assert q.startswith("from:(greenhouse-mail.io OR greenhouse.io) after:1700000000 newer_than:1d")
     assert 'subject:"Security code"' in q
     q2 = gmail.build_code_query("custom", "jobs.acme.com", 5)
-    assert q2.startswith("from:(acme.com) after:5")
+    # a portal known only by its host also takes the career-site platforms' senders (Qualcomm on Eightfold, 2026-10-21)
+    assert q2.startswith("from:(acme.com OR eightfold.ai") and " after:5 " in q2
 
 
 # ---------------------------------------------------------------- polling with a fake client
@@ -485,3 +486,12 @@ def test_an_oracle_code_from_the_employers_initials_domain_is_found():
     frm = "TI <ti_myhiring_no-reply@recruiting.ti.com>"
     assert g.sender_allowed(frm, "oracle", "edbz.fa.us2.oraclecloud.com", toks)
     assert not g.sender_allowed("Promo <deals@tickets.example.com>", "oracle", "edbz.fa.us2.oraclecloud.com", toks)
+
+
+def test_a_platform_sender_counts_for_a_portal_known_only_by_its_host():
+    """Qualcomm (2026-10-21): the Eightfold site's code came from confirm@eightfold.ai; the search looked only for qualcomm."""
+    from goat.mail import gmail
+    assert gmail.sender_allowed("Eightfold <confirm@eightfold.ai>", "other", "careers.qualcomm.com", ["qualcomm"])
+    assert not gmail.sender_allowed("Deals <promo@shop.example.com>", "other", "careers.qualcomm.com", ["qualcomm"])
+    q = gmail.build_code_query("other", "careers.qualcomm.com", 1792579000, ["qualcomm"])
+    assert "eightfold.ai" in q and "qualcomm.com" in q
