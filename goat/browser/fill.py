@@ -1248,7 +1248,13 @@ async def _shows_file(ex: Executor, path: Path) -> bool:
     """True when the page already displays this file. Portals render the chip in their own wording
     (upper-cased, extension dropped), so match on the stem."""
     text = (await ex.page_text(30000)).lower()
-    return path.stem.lower() in text or path.name.lower() in text
+    if path.stem.lower() in text or path.name.lower() in text:
+        return True
+    # SmartRecruiters draws the file chip inside a drop zone's shadow root ('Delete file <name>'): page text misses it
+    try:
+        return bool(await ex.eval(js.JS_FILE_SHOWN, [path.stem, path.name]))
+    except Exception:
+        return False
 
 
 async def upload_file(ex: Executor, ref: str, path: Path) -> FieldResult:

@@ -153,7 +153,8 @@ function openEditor(kind) {
   if (document.querySelector('oc-' + kind + '-edit-form')) return;
   const entry = document.createElement('oc-' + kind + '-entry');
   const form = document.createElement('oc-' + kind + '-edit-form');
-  form.innerHTML = kind === 'experience' ? EXP_EDITOR : EDU_EDITOR;
+  // window.EDU_NO_DATES: an Education editor without From / To (Wellmark, 2026-10-21)
+  form.innerHTML = kind === 'experience' ? EXP_EDITOR : (window.EDU_NO_DATES ? EDU_EDITOR.replace(/<oc-datepicker[^]*?<\/oc-datepicker>/g, '') : EDU_EDITOR);
   entry.appendChild(form);
   document.getElementById(kind === 'experience' ? 'exp-list' : 'edu-list').appendChild(entry);
 }
@@ -176,8 +177,9 @@ function save(kind) {
   } else {
     const inst = val(form, 'institution-autocomplete'), major = val(form, 'education-major'), degree = val(form, 'education-degree');
     if (!inst) { msgs.innerHTML = '<span class="error">Institution is required</span>'; return; }
-    entry.innerHTML = '<div data-test="education-entry"><p data-test="education-entry-institution">' + esc(inst) + ' <span data-test="education-entry-date">'
-      + year(from) + ' - ' + (current ? 'Present' : year(to)) + '</span></p><p data-test="education-entry-major">' + esc(major) + '</p>'
+    entry.innerHTML = '<div data-test="education-entry"><p data-test="education-entry-institution">' + esc(inst)
+      + (from ? ' <span data-test="education-entry-date">' + year(from) + ' - ' + (current ? 'Present' : year(to)) + '</span>' : '')
+      + '</p><p data-test="education-entry-major">' + esc(major) + '</p>'
       + '<p data-test="education-entry-degree">' + esc(degree) + '</p>'
       + '<spl-button data-test="education-entry-delete" aria-label="Delete education ' + esc(inst) + '"></spl-button></div>';
   }

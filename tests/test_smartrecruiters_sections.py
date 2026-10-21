@@ -167,3 +167,37 @@ def test_month_year_from_every_stored_date_shape():
     assert sr.month_year("May 2028") == "05/2028"
     assert sr.month_year("") == ""
     assert json.loads(json.dumps(sr.month_year("2025-10-01"))) == "10/2025"
+
+
+@pytest.mark.asyncio
+async def test_an_education_editor_without_dates_still_takes_his_school_and_is_not_redone(stored):
+    """Wellmark (2026-10-21): the Education editor has no From / To; the filler waited 30 s for one and raised."""
+    ex = await _open()
+    try:
+        await ex.page.evaluate("() => { window.EDU_NO_DATES = true; }")
+        rep = await sr.SmartRecruitersSections(ex, {"id": 1, "company": "Acme"}, 1).run()
+        assert "education: Texas A&M University" in rep.added and not [f for f in rep.failed if f.startswith("education")], rep.failed
+        edu = await sr.SmartRecruitersSections(ex, {"id": 1, "company": "Acme"}, 1).cards("education")
+        assert [(c["name"], c["date"]) for c in edu] == [("Texas A&M University", "")]
+        again = await sr.SmartRecruitersSections(ex, {"id": 1, "company": "Acme"}, 1).run()
+        assert again.added == [] and again.updated == [] and "education: Texas A&M University" in again.present
+    finally:
+        await ex.close()
+
+
+DROPZONE = """<html><body><oc-resume-upload><spl-dropzone></spl-dropzone></oc-resume-upload>
+<script>customElements.define('spl-dropzone', class extends HTMLElement { connectedCallback() {
+  this.attachShadow({ mode: 'open' }).innerHTML = '<span>Surya_Thirukonda_Resume_SWE.pdf</span><button aria-label="Delete file Surya_Thirukonda_Resume_SWE.pdf">x</button>'; } });</script>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_file_shown_inside_a_shadow_root_counts_as_attached():
+    """Wellmark (2026-10-21): 'page does not show Surya_Thirukonda_Resume_SWE.pdf' although the drop zone showed it."""
+    from goat.browser import fill
+    ex = await _open(DROPZONE)
+    try:
+        assert await fill._shows_file(ex, Path("Surya_Thirukonda_Resume_SWE.pdf"))
+        assert not await fill._shows_file(ex, Path("Other_File.pdf"))
+    finally:
+        await ex.close()

@@ -31,6 +31,8 @@ SAVE = {"experience": '[data-test="experience-save"] button', "education": '[dat
 CANCEL = {"experience": '[data-test="experience-cancel"] button', "education": '[data-test="education-cancel"] button'}
 DELETE = {"experience": '[data-test="experience-entry-delete"] button', "education": '[data-test="education-entry-delete"] button'}
 DIALOG = "spl-dialog[open]"
+WAIT_MS = 6000          # a control that is not there is skipped or reported, never waited on for 30 s (Wellmark's
+                        # Education editor has no dates, 2026-10-21)
 DIALOG_YES = 'spl-dialog[open] spl-button[type="primary"] button'
 
 JS_CARDS = r"""
@@ -130,9 +132,15 @@ class SmartRecruitersSections:
         return str(a.answer).strip() if a and a.has_value and a.answer is not None else ""
 
     # ------------------------------------------------------------------ primitives
+    async def _has(self, selector: str) -> bool:
+        try:
+            return bool(await self.page.locator(selector).count())
+        except Exception:
+            return False
+
     async def _type_into(self, selector: str, text: str, delay: int = 25) -> None:
         box = self.page.locator(selector).first
-        await box.click()
+        await box.click(timeout=WAIT_MS)
         await self.page.keyboard.press("Control+a")
         await self.page.keyboard.press("Backspace")
         if text:
@@ -160,12 +168,20 @@ class SmartRecruitersSections:
                 return got
         return ""
 
-    async def _month_year(self, kind: str, which: str, value: str) -> bool:
+    async def _month_year(self, kind: str, which: str, value: str) -> bool | None:
+        """True when the box took the date, False when it did not, None when this form has no such box."""
+        dt = f"{kind}-date-{which}"
+        sel = f'{FORM[kind]} [data-test="{dt}"] input[type="text"]'
+        if not await self._has(sel):
+            return None
         mmyyyy = month_year(value)
         if not mmyyyy:
             return False
-        dt = f"{kind}-date-{which}"
-        await self._type_into(f'{FORM[kind]} [data-test="{dt}"] input[type="text"]', mmyyyy, delay=40)
+        await self._type_into(sel, mmyyyy, delay=40)
+        # Enter commits the typed month (the picker parses it then); Escape alone left Wellmark's From empty, and every
+        # entry failed with 'From was not taken' (2026-10-21). Escape then closes the calendar.
+        await self.page.keyboard.press("Enter")
+        await asyncio.sleep(0.3)
         await self.page.keyboard.press("Escape")
         for _ in range(15):
             await asyncio.sleep(0.2)
@@ -174,9 +190,12 @@ class SmartRecruitersSections:
                 return True
         return False
 
-    async def _tick(self, kind: str) -> bool:
+    async def _tick(self, kind: str) -> bool | None:
+        sel = f"{FORM[kind]} spl-checkbox input[type=\"checkbox\"]"
+        if not await self._has(sel):
+            return None
         if not (await self.editor(kind)).get("current"):
-            await self.page.locator(f"{FORM[kind]} spl-checkbox input[type=\"checkbox\"]").first.click()
+            await self.page.locator(sel).first.click(timeout=WAIT_MS)
         for _ in range(10):
             if (await self.editor(kind)).get("current"):
                 return True
@@ -190,7 +209,7 @@ class SmartRecruitersSections:
             text = await self.page.evaluate(JS_DIALOG_TEXT)
             if text:
                 if re.search(pattern, text, re.I):
-                    await self.page.locator(DIALOG_YES).first.click()
+                    await self.page.locator(DIALOG_YES).first.click(timeout=WAIT_MS)
                     await asyncio.sleep(0.6)
                     return True
                 return False
@@ -199,12 +218,14 @@ class SmartRecruitersSections:
     async def _cancel(self, kind: str) -> None:
         loc = self.page.locator(CANCEL[kind]).first
         if await loc.count():
-            await loc.click()
+            await loc.click(timeout=WAIT_MS)
             await asyncio.sleep(0.5)
             await self._confirm_dialog(r"discard|lose|unsaved|cancel|leave")
 
     async def _open(self, kind: str) -> bool:
-        await self.page.locator(ADD[kind]).first.click()
+        if not await self._has(ADD[kind]):
+            return False
+        await self.page.locator(ADD[kind]).first.click(timeout=WAIT_MS)
         for _ in range(20):
             await asyncio.sleep(0.15)
             if (await self.editor(kind)).get("open"):
@@ -212,7 +233,7 @@ class SmartRecruitersSections:
         return False
 
     async def _save(self, kind: str) -> tuple[bool, list[str]]:
-        await self.page.locator(SAVE[kind]).first.click()
+        await self.page.locator(SAVE[kind]).first.click(timeout=WAIT_MS)
         for _ in range(25):
             await asyncio.sleep(0.2)
             st = await self.editor(kind)
@@ -222,7 +243,7 @@ class SmartRecruitersSections:
 
     async def _delete(self, kind: str, idx: int) -> bool:
         before = len(await self.cards(kind))
-        await self.page.locator(CARD[kind]).nth(idx).locator(DELETE[kind]).first.click()
+        await self.page.locator(CARD[kind]).nth(idx).locator(DELETE[kind]).first.click(timeout=WAIT_MS)
         await self._confirm_dialog(r"delete")
         for _ in range(15):
             await asyncio.sleep(0.2)
@@ -232,6 +253,16 @@ class SmartRecruitersSections:
 
     # ------------------------------------------------------------------ work entries
     async def add_work(self, ent: dict) -> tuple[bool, str]:
+        try:
+            return await self._add_work(ent)
+        except Exception as e:  # noqa: BLE001 - reported per entry; the next entry still runs
+            try:
+                await self._cancel("experience")
+            except Exception:
+                pass
+            return False, f"{type(e).__name__}: {str(e).splitlines()[0][:120]}"
+
+    async def _add_work(self, ent: dict) -> tuple[bool, str]:
         n, form = ent["n"], FORM["experience"]
         if not await self._open("experience"):
             return False, "the Add experience editor did not open"
@@ -240,14 +271,14 @@ class SmartRecruitersSections:
         if answers.norm(title) != answers.norm(ent["title"]) or answers.norm(company) != answers.norm(ent["company"]):
             await self._cancel("experience")
             return False, f"Title / Company were not taken (title {title!r}, company {company!r})"
-        if not await self._month_year("experience", "from", ent["start"]):
+        if await self._month_year("experience", "from", ent["start"]) is False:
             await self._cancel("experience")
             return False, f"From was not taken ({ent['start']!r})"
         if ent["current"]:
-            if not await self._tick("experience"):
+            if await self._tick("experience") is False:
                 await self._cancel("experience")
                 return False, "'I currently work here' did not tick"
-        elif ent["end"] and not await self._month_year("experience", "to", ent["end"]):
+        elif ent["end"] and await self._month_year("experience", "to", ent["end"]) is False:
             await self._cancel("experience")
             return False, f"To was not taken ({ent['end']!r})"
         desc = bullets_to_lines(ent["description"]) if ent["description"] else ""
@@ -305,6 +336,16 @@ class SmartRecruitersSections:
 
     # ------------------------------------------------------------------ education
     async def add_school(self, school: str) -> tuple[bool, str]:
+        try:
+            return await self._add_school(school)
+        except Exception as e:  # noqa: BLE001 - reported, never raised
+            try:
+                await self._cancel("education")
+            except Exception:
+                pass
+            return False, f"{type(e).__name__}: {str(e).splitlines()[0][:120]}"
+
+    async def _add_school(self, school: str) -> tuple[bool, str]:
         form = FORM["education"]
         major, degree = self._answer("education.major"), self._answer("education.degree")
         start, grad = self._answer("education.start"), self._answer("education.graduation")
@@ -314,14 +355,14 @@ class SmartRecruitersSections:
         if answers.norm(got) != answers.norm(school):
             await self._cancel("education")
             return False, f"Institution was not taken ({got!r})"
-        if major:
+        if major and await self._has(f'{form} [data-test="education-major"] input'):
             await self._type_into(f'{form} [data-test="education-major"] input', major)
-        if degree:
+        if degree and await self._has(f'{form} [data-test="education-degree"] input'):
             await self._type_into(f'{form} [data-test="education-degree"] input', degree)
-        if not await self._month_year("education", "from", start):
+        if await self._month_year("education", "from", start) is False:
             await self._cancel("education")
             return False, f"From was not taken ({start!r})"
-        if grad and not await self._month_year("education", "to", grad):
+        if grad and await self._month_year("education", "to", grad) is False:
             await self._cancel("education")
             return False, f"To was not taken ({grad!r})"
         st = (await self.editor("education")).get("fields", {})
@@ -355,7 +396,7 @@ class SmartRecruitersSections:
             if c["editing"]:
                 continue
             if any(_same_text(c["name"], v) for v in names):
-                if mine is None and all(y in c["date"] for y in years) and (not major or _same_text(c["major"], major)):
+                if mine is None and (not c["date"] or all(y in c["date"] for y in years)) and (not major or not c["major"] or _same_text(c["major"], major)):
                     mine = c
                     rep.present.append(f"education: {school}")
                 else:
@@ -384,8 +425,14 @@ class SmartRecruitersSections:
             return self.rep
         # an editor left open (by the model or an earlier run) is closed first; its entry is redone from the store
         for kind in ("experience", "education"):
-            if (await self.editor(kind)).get("open"):
-                await self._cancel(kind)
-        await self.experience()
-        await self.education()
+            try:
+                if (await self.editor(kind)).get("open"):
+                    await self._cancel(kind)
+            except Exception:
+                pass
+        for kind, step in (("experience", self.experience), ("education", self.education)):
+            try:
+                await step()
+            except Exception as e:  # noqa: BLE001 - one section's trouble never stops the other
+                self.rep.failed.append(f"{kind}: {type(e).__name__}: {str(e).splitlines()[0][:120]}")
         return self.rep

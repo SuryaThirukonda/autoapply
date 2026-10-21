@@ -344,3 +344,28 @@ def test_a_cookie_settings_button_needs_no_sourced_decision():
     assert COOKIE_CONTROL.search("Manage cookies")
     assert not COOKIE_CONTROL.search("How did you hear about this position?")
     assert not COOKIE_CONTROL.search("Country")
+
+
+
+ICON_ONLY = """<html><body><form>
+<div class="field"><label for="g">* Gender</label><span class="ctl"><input id="g" type="text" role="combobox" aria-required="true" required value="">
+<span class="icon">\ue1ef</span></span></div>
+</form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_dropdown_showing_only_its_icon_glyph_is_empty():
+    """L3Harris (SuccessFactors, 2026-10-21): an empty dropdown 'showed' its arrow glyph U+E1EF and passed as answered."""
+    from goat.browser import snapshot
+    from goat.browser.executor import Executor, HostPolicy
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(ICON_ONLY)
+        snap = await snapshot.take(ex)
+        item = next(i for i in snap.items if "Gender" in (i.get("label") or ""))
+        assert not item.get("shown"), item
+        assert any("Gender" in (r.get("label") or "") for r in snap.errors.get("empty_required", [])), snap.errors
+    finally:
+        await ex.close()

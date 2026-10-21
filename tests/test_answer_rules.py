@@ -1855,3 +1855,28 @@ async def test_a_page_that_did_not_load_is_looked_at_before_the_hold(store, monk
     monkeypatch.setattr(toolsmod.asyncio, "sleep", no_sleep)
     out, _ = await d.t_park("portal_error: the password-reset page did not load")
     assert "the page has loaded" in out["error"]
+
+
+
+@pytest.mark.asyncio
+async def test_na_goes_into_a_box_that_asks_for_it(store, monkeypatch):
+    """CenturyLink (2026-10-21): '(Enter N/A if not applicable.)' refused N/A as a yes/no value; the run parked."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher(_job())
+    items = [{"ref": "e39", "tag": "textarea", "type": "", "label": "* If yes, please describe the circumstances under which you left "
+              "this employment. (Enter 'N/A' if not applicable.)"},
+             {"ref": "e40", "tag": "textarea", "type": "", "label": "Anything else we should know?"}]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        return [FieldResult(p["ref"], True, str(p["value"]), "") for p in plan]
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    out, _ = await d.t_fill_batch([{"ref": "e39", "answer_key": None, "value": "N/A", "source": "generated", "label": "circumstances"}])
+    assert out["results"][0]["status"] == "set", out
+    out, _ = await d.t_fill_batch([{"ref": "e40", "answer_key": None, "value": "N/A", "source": "generated", "label": "anything else"}])
+    assert out["results"][0]["status"] == "failed", out

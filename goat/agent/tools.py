@@ -710,6 +710,11 @@ def talent_community_allowed(company: str = "", portal: str = "") -> bool:
     return bool(a and a.has_value and answers.norm(str(a.answer)) in ("yes", "true"))
 
 
+# A box whose own label or placeholder asks for N/A when it does not apply ("(Enter 'N/A' if not applicable.)",
+# "If you did not answer 'Yes', please enter 'N/A'").
+NA_INSTRUCTION = re.compile(r"\b(enter|type|write|input|put|use|respond with|answer)\s+['\"\u201c\u201d\u2018\u2019]?n\s*/\s*a\b", re.I)
+
+
 def key_option_polarity(key: str | None, option: str) -> str | None:
     """'yes' / 'no' when `option` words the answer to stored question `key` (KEY_OPTION_POLARITY), else None."""
     pats = KEY_OPTION_POLARITY.get(str(key or ""))
@@ -1016,6 +1021,7 @@ class ToolDispatcher:
                                      + (f"; FAILED: {'; '.join(rep.failed)[:300]}" if rep.failed else "")
                                      + ". Leave those cards alone.\n")
             except Exception as e:  # noqa: BLE001 - best effort; the model can call fill_sections
+                self.ctx.control_failures["sections:auto"] = self.ctx.control_failures.get("sections:auto", 0) + 1
                 db.event(self.ctx.job_id, "adapter:sections:error", {"error": f"{type(e).__name__}: {e}"[:300]})
         self.ctx.last_snapshot = snap
         text = sections_note + snapmod.render(snap)
@@ -1181,7 +1187,14 @@ class ToolDispatcher:
                     "section. A résumé or generated literal never replaces his entries; if a check calls the stored "
                     "entry wrong, leave it as it is.")})
                 continue
-            val, src, err = self._resolve_value(f.get("answer_key"), f.get("value"), f.get("source"), f.get("label", ""))
+            if not f.get("answer_key") and str(f.get("value") or "").strip().upper() in ("N/A", "NA") and not is_choice \
+                    and NA_INSTRUCTION.search(f"{(item or {}).get('label') or ''} {(item or {}).get('placeholder') or ''}"):
+                # The box itself asks for N/A when its question does not apply: CenturyLink's "If yes, please describe the
+                # circumstances ... (Enter 'N/A' if not applicable.)" was refused as a yes/no value and the run parked
+                # (2026-10-21).
+                val, src, err = "N/A", "generated (the field asks for N/A when it does not apply)", None
+            else:
+                val, src, err = self._resolve_value(f.get("answer_key"), f.get("value"), f.get("source"), f.get("label", ""))
             if err:
                 results.append({"ref": f["ref"], "status": "failed", "error": err})
                 continue

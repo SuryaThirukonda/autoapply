@@ -16,7 +16,8 @@ _COMMON = r"""
              parseFloat(s.opacity || '1') > 0.01;
     } catch (e) { return false; }
   };
-  const txt = (el) => ((el && (el.innerText || el.textContent)) || '').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+  // icon-font glyphs (private use area) are not text: an empty SuccessFactors dropdown shows only its arrow glyph U+E1EF
+  const txt = (el) => ((el && (el.innerText || el.textContent)) || '').replace(/[\u200B-\u200D\u2060\uFEFF\uE000-\uF8FF]/g, '').replace(/\s+/g, ' ').trim();
   const PLACEHOLDER = /^(select one|select\.\.\.|select…|select|choose one|choose|search|please select|-- select --|--|)$/i;
   // A field whose own label ends in "*" is required even without a required / aria-required attribute (Epic Games'
   // "Email*:", "School*:", "Gender Identity*:", 2026-10-19: the gate passed with all of them blank). The label is the
@@ -210,7 +211,12 @@ JS_SNAPSHOT = r"""
         if (isCombo && !item.value && !ownValue) {
           let c = el.closest('[class*="__control"], [class*="control"], [class*="Control"], [class*="__value-container"]');
           if (!c || !txt(c)) { c = null; let p = el.parentElement; for (let i = 0; i < 5 && p; i++, p = p.parentElement) { const t = txt(p); if (t && t.length < 240) { c = p; break; } } }
-          const shown = c ? txt(c) : '';
+          let shown = c ? txt(c) : '';
+          // the walk up can reach the field's own box (L3Harris, 2026-10-21: an empty SuccessFactors dropdown read
+          // '* Gender' once its icon glyph was gone): its label texts are not a pick, however long the question
+          if (c && shown) { for (const l of c.querySelectorAll('label, legend')) { const lt = txt(l); if (lt) shown = shown.replace(lt, ''); } }
+          if (shown && item.label && shown.includes(item.label)) shown = shown.replace(item.label, '');
+          shown = shown.replace(/^[\s*:]+|[\s*:]+$/g, '').trim();
           if (shown && !PLACEHOLDER.test(shown)) item.shown = shown.slice(0, 200);
           item.combo = true;
         }
@@ -516,7 +522,7 @@ JS_PAGE_ERRORS = r"""
   const seenRoots = new Set(), seenText = new Set();
   function vis(el) { try { const r = el.getBoundingClientRect(); const s = el.ownerDocument.defaultView.getComputedStyle(el);
       return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && parseFloat(s.opacity || '1') > 0.01; } catch (e) { return false; } }
-  function txt(el) { return (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim(); }
+  function txt(el) { return (el.innerText || el.textContent || '').replace(/[\u200B-\u200D\u2060\uFEFF\uE000-\uF8FF]/g, '').replace(/\s+/g, ' ').trim(); }
   // The question a field belongs to: its own label when that says something, else the nearest question text above it
   // (Greenhouse's file questions label the hidden input just "Attach").
   function questionOf(field) {
@@ -655,8 +661,12 @@ JS_PAGE_ERRORS = r"""
           if (isCombo && !/cx-select-input/.test(String(el.className || ''))) {
             let c = el.closest('[class*="__control"], [class*="control"], [class*="Control"], [class*="__value-container"]');
             if (!c || !txt(c)) { c = null; let p = el.parentElement; for (let i = 0; i < 5 && p; i++, p = p.parentElement) { const t = txt(p); if (t && t.length < 240) { c = p; break; } } }
-            const shown = c ? txt(c) : '';
-            if (shown && !/^(select one|select\.\.\.|select|choose one|choose|search)$/i.test(shown)) empty = false;
+            let shown = c ? txt(c) : '';
+            if (c && shown) { for (const l of c.querySelectorAll('label, legend')) { const lt = txt(l); if (lt) shown = shown.replace(lt, ''); } }
+            const own = nearestLabel(el) || '';
+            if (shown && own && shown.includes(own)) shown = shown.replace(own, '');
+            shown = shown.replace(/^[\s*:]+|[\s*:]+$/g, '').trim();
+            if (shown && !/^(select one|select\.\.\.|select|choose one|choose|search|no selection)$/i.test(shown)) empty = false;
           }
         }
       }
@@ -953,7 +963,7 @@ JS_FIELD_CHOICES = r"""
 JS_LIST_OPTIONS = r"""
 () => {
   const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1; };
-  const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/[\uE000-\uF8FF]/g, '').replace(/\s+/g, ' ').trim();
   // Oracle Candidate Experience selects open a role=grid popup whose options are gridcells (Amex, 2026-10-19);
   // SAP SuccessFactors' paginated selects list role=menuitem links inside a role=menu (L3Harris, 2026-10-20)
   const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], li[role="presentation"] div[role="option"], .select__option, [class*="__option"], [class*="option" i][id*="option" i], ul[role="listbox"] li, [role="listbox"] [role="option"], [role="grid"] [role="gridcell"], [role="menu"] [role="menuitem"]')).filter(o => !o.closest('[data-automation-id="selectedItemList"]'));
@@ -974,7 +984,7 @@ JS_LIST_OPTIONS = r"""
 # where to click it now. Prefers an option inside an open listbox over a chip of an already-chosen value.
 JS_SCROLL_OPTION = r"""
 (text) => {
-  const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/[\uE000-\uF8FF]/g, '').replace(/\s+/g, ' ').trim();
   const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], .select__option, [class*="__option"], ul[role="listbox"] li, [role="grid"] [role="gridcell"], [role="menu"] [role="menuitem"]'))
     .filter(o => txt(o).slice(0, 160) === text && o.getBoundingClientRect().width > 1);
   if (!opts.length) return JSON.stringify({ ok: false });
@@ -1015,7 +1025,7 @@ JS_FIELD_COMMIT = r"""
 # checkbox inside it, else give the option element itself a full pointer/mouse/click sequence.
 JS_COMMIT_OPTION = r"""
 (text) => {
-  const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/[\uE000-\uF8FF]/g, '').replace(/\s+/g, ' ').trim();
   const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], .select__option, [class*="__option"], ul[role="listbox"] li'))
     .filter(o => txt(o).slice(0, 160) === text && o.getBoundingClientRect().width > 1 && !o.closest('[data-automation-id="selectedItemList"]'));
   if (!opts.length) return JSON.stringify({ ok: false });
@@ -1241,5 +1251,21 @@ JS_INSIDE_TAG = r"""
     n = n.parentNode && n.parentNode.nodeType === 11 ? n.parentNode.host : n.parentNode;
   }
   return '';
+}
+"""
+
+
+# Whether a file name shows anywhere the page text cannot see: inside shadow roots or in an aria-label (SmartRecruiters'
+# drop zone keeps 'Delete file Surya_Thirukonda_Resume_SWE.pdf' in its shadow root, Wellmark 2026-10-21).
+JS_FILE_SHOWN = r"""
+(names) => {
+""" + _COMMON + r"""
+  const want = names.map(n => String(n || '').toLowerCase()).filter(Boolean);
+  const hit = (t) => { t = String(t || '').toLowerCase(); return want.some(w => t.includes(w)); };
+  for (const root of allRoots(document)) {
+    if (root !== document && hit(root.textContent)) return true;
+    try { for (const e of root.querySelectorAll('[aria-label]')) if (hit(e.getAttribute('aria-label'))) return true; } catch (e) {}
+  }
+  return false;
 }
 """
