@@ -468,6 +468,11 @@ CREATE_STEPS = ("no reset email came, so this tenant most likely has no account 
                 "portal says the account already exists.")
 
 
+# The control that opens a portal's sign-up form.
+CREATE_ACCOUNT_LINK = re.compile(r"^\s*(create (an |your |new )?(account|profile)|sign ?up|register( now| here)?|new (user|candidate)|"
+                                 r"don'?t have an account)", re.I)
+
+
 # What the page shows right now, for credential decisions: visible password boxes, headings and the title. A Workday
 # application step heading ('My Information') with no password box means the account was created or signed in and
 # the form is open (Tencent, Intel, Humana, Hitachi, GlobalFoundries, Elanco, POET, Cleveland-Cliffs, 2026-10-19/20:
@@ -824,6 +829,21 @@ def followup_parent_answer(ref: str, page_decisions: list[dict], window: int = 1
     return (best[1], best[2]) if best else (None, "")
 
 
+def sf_account_note(snap) -> str:
+    """The SuccessFactors Create Account steps, for its form wherever the listing came from: NetApp's and Phillips 66's
+    career sites are typed 'other', the SuccessFactors hints never reached the model, and it parked over the account
+    form five times (2026-10-21)."""
+    url = str(getattr(snap, "url", "") or "")
+    pw = [i for i in (getattr(snap, "items", None) or []) if i.get("type") == "password"]
+    if not re.search(r"successfactors\.(com|eu)|sapsf\.(com|eu)", url, re.I) or len(pw) < 2:
+        return ""
+    return ("HARNESS: this is SuccessFactors' Create Account form. The password rules under 'Choose Password' are always "
+            "shown; his password meets them. Fill every required box (Retype Email Address, First Name, Last Name, "
+            "Country/Region Code, Phone Number, Country/Region of Residence, any privacy box) from the stored answers with "
+            "fill_batch / choose, call credentials mode 'create' for the two password boxes, then click Create Account. "
+            "Never park on this page.\n")
+
+
 def key_option_polarity(key: str | None, option: str) -> str | None:
     """'yes' / 'no' when `option` words the answer to stored question `key` (KEY_OPTION_POLARITY), else None."""
     pats = KEY_OPTION_POLARITY.get(str(key or ""))
@@ -1141,7 +1161,7 @@ class ToolDispatcher:
                 self.ctx.control_failures["sections:auto"] = self.ctx.control_failures.get("sections:auto", 0) + 1
                 db.event(self.ctx.job_id, "adapter:sections:error", {"error": f"{type(e).__name__}: {e}"[:300]})
         self.ctx.last_snapshot = snap
-        text = sections_note + snapmod.render(snap)
+        text = sf_account_note(snap) + sections_note + snapmod.render(snap)
         if with_text and snap.text:
             text += "\n\nPAGE TEXT:\n" + snap.text[:6000]
         return {"outline": text}, None
@@ -3144,6 +3164,26 @@ class ToolDispatcher:
         if perr:
             db.event(self.ctx.job_id, "park:portal_error", {"reason": reason[:200], "page": perr})
             raise Parked(f"portal_error: {perr}", "hold")
+        # No reset email came, so the tenant has no account for his email, and none was created yet: NetApp, Corning and
+        # MetLife each parked over that instead of creating one (2026-10-21). Three refusals point at the sign-up control.
+        probe_c = await self._account_probe() if (self.ctx.reset_not_received and not self.ctx.create_tried) else {}
+        if self.ctx.reset_not_received and not self.ctx.create_tried and not self.ctx.account_exists \
+                and (probe_c.get("pw") or 0) < 2 \
+                and self.ctx.control_failures.get("park:create_needed", 0) < 3 and not ACCOUNT_EXISTS.search(page_now or ""):
+            self.ctx.control_failures["park:create_needed"] = self.ctx.control_failures.get("park:create_needed", 0) + 1
+            target = ""
+            try:
+                snap_c = await snapmod.take(self.ctx.ex)
+                self.ctx.last_snapshot = snap_c
+                hit = next((i for i in snap_c.items if i.get("tag") in ("a", "button")
+                            and CREATE_ACCOUNT_LINK.search(str(i.get("label") or ""))), None)
+                if hit is not None:
+                    target = f" Click '{str(hit.get('label') or '')[:40]}' [{hit['ref']}] now."
+            except Exception:  # noqa: BLE001 - the steps below still say what to do
+                pass
+            db.event(self.ctx.job_id, "park:create_needed", {"reason": reason[:200], "target": target[:80]})
+            return {"error": "not parked: no reset email came, so this portal has no account for his email and none was "
+                             "created yet." + target + " " + CREATE_STEPS}, None
         state = "ready_for_you" if reason.lower().startswith("ready_for_you") else "hold"
         low = reason.lower()
         # A park that names no hold reason ("incomplete", "run_incomplete", "not completed", "ready"): Highmark Health's

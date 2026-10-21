@@ -603,3 +603,27 @@ async def test_a_long_label_keeps_its_question_first():
         assert item["label"].startswith("Are you currently legally authorized to work in the US?"), item["label"]
     finally:
         await ex.close()
+
+
+
+def test_successfactors_hints_say_the_password_rules_are_no_rejection():
+    """Acuity and Corning (2026-10-21) parked over SuccessFactors' always-shown password rules."""
+    from goat.adapters import for_portal
+    h = for_portal("successfactors").hints
+    assert "always shown" in h and "Retype Email Address" in h and "credentials mode 'create'" in h
+
+
+
+def test_a_successfactors_create_account_form_gets_its_steps_whatever_the_listing_type():
+    """NetApp (2026-10-21): typed 'other', so the SuccessFactors hints never reached the model on the account form."""
+    from goat.agent.tools import sf_account_note
+    items = [{"ref": "e2", "tag": "input", "type": "text", "label": "Email Address"},
+             {"ref": "e4", "tag": "input", "type": "password", "label": "Choose Password"},
+             {"ref": "e6", "tag": "input", "type": "password", "label": "Retype Password"}]
+    snap = Snapshot(url="https://career4.successfactors.com/career?company=netappinc", title="Create an Account", headings=[],
+                    items=items, groups=[], errors={}, challenge={})
+    assert "Create Account form" in sf_account_note(snap)
+    snap.items = items[:2]
+    assert sf_account_note(snap) == ""        # a sign-in page has one password box
+    snap.items, snap.url = items, "https://boards.greenhouse.io/x"
+    assert sf_account_note(snap) == ""

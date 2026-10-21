@@ -1994,3 +1994,31 @@ async def test_an_if_yes_box_follows_the_question_drawn_right_above_it(store, mo
     await d.t_fill_batch([{"ref": "e38", "answer_key": "bank.prior-employee", "value": None, "source": None, "label": "Former employee"}])
     await d.t_fill_batch([{"ref": "e40", "answer_key": "background.reason_for_leaving", "value": None, "source": None, "label": "If yes"}])
     assert sent.get("e40") == "N/A", sent
+
+
+
+@pytest.mark.asyncio
+async def test_a_park_after_no_reset_email_points_at_create_account(store, monkeypatch):
+    """NetApp, Corning, MetLife (2026-10-21): no reset email came and the run parked instead of creating the account."""
+    from goat.agent import tools as toolsmod
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher({"id": 433, "company": "NetApp", "ats": "other"})
+
+    async def page_text(n=30000):
+        return "Career Opportunities: Sign In Already have an account? Not a registered user yet? Create an account"
+    ctx.ex.page_text = page_text
+    items = [{"ref": "e1", "tag": "input", "type": "text", "label": "Email Address:*"},
+             {"ref": "e2", "tag": "input", "type": "password", "label": "Password:*"},
+             {"ref": "e6", "tag": "a", "label": "Create an account"}]
+
+    async def take(ex, with_text=False):
+        s = Snapshot(url="https://career4.successfactors.com/career?company=netappinc", title="Sign In", headings=[], items=items,
+                     groups=[], errors={}, challenge={})
+        for i in items:
+            s.refs[i["ref"]] = i
+        return s
+    monkeypatch.setattr(toolsmod.snapmod, "take", take)
+    ctx.reset_not_received = True
+    out, _ = await d.t_park("portal_error: password reset email was not received")
+    assert "Create an account" in out["error"] and "[e6]" in out["error"], out
+    assert ctx.control_failures.get("park:create_needed") == 1
