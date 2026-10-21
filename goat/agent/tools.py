@@ -137,6 +137,8 @@ class RunContext:
     code_asks: int = 0             # code questions put to Surya this run
     retry_code: str = field(default="", repr=False)   # a code of his that did not land in the boxes: typed once more
     park_attempts: int = 0
+    parks_total: int = 0           # gate-checked parks this run, counted or not
+    decisions_at_park: int = -1    # decisions recorded for the job at the last checked park
     posting_text: str = ""         # the posting page's text at open (pay figures, requirements)
     verify_link_tried: bool = False
     creds_mode: str = ""           # the last credentials mode filled (login / login_universal / create / set_password)
@@ -499,6 +501,31 @@ def single_password_signup(snap, url: str = "") -> bool:
 
 # A date box's own placeholder is never its value (Oracle's 'Month' read back as set, AutoZone 2026-10-21)
 DATE_PLACEHOLDER = re.compile(r"^\s*(month|year|day|mm|dd|yyyy|mm/dd/yyyy|mm/yyyy|select( one)?|choose( one)?|-+)?\s*$", re.I)
+
+
+# The second, third ... pick of a ranking (Amazon's 'Second US location preference').
+RANK_LABEL = re.compile(r"\b(second|third|fourth|fifth|2nd|3rd|4th|5th)\b[^.?]{0,40}?\b(preference|choice|priority|pick|location|option)s?\b|"
+                        r"\b(preference|choice|priority)\s*(#|no\.?|number)?\s*[2-5]\b", re.I)
+
+
+def rank_wants(wants: list[str], taken: list[str]) -> list[str]:
+    """The wants an earlier rank of the same question has not taken yet (all of them when every one is taken)."""
+    keep = [w for w in wants if not any(fill.best_option([{"text": t}], [w]) is not None for t in taken if t)]
+    return keep or wants
+
+
+# A 'stuck' park that only lists what is left to fill ("remains incomplete", "still unanswered", "need completion").
+STUCK_TODO = re.compile(r"\b(incomplete|need(s|ed)? (to be )?(completion|completed|filled|answered)|remain(s|ing)? "
+                        r"(unanswered|incomplete|empty|unfilled|unresolved)|not yet (filled|answered|read|completed)|"
+                        r"still (unanswered|empty|need|required|incomplete)|must be (filled|completed|answered))\b", re.I)
+# A date a status was obtained, next to the citizenship / status block
+OBTAINED_DATE = re.compile(r"\b(date obtained|obtained date|date of acquisition|acquired on|date acquired)\b", re.I)
+CITIZENSHIP_LABEL = re.compile(r"\b(type of status|country \d+ name|citizenship|permanent residen|date of acquisition)\b", re.I)
+
+
+def citizenship_block(snap) -> bool:
+    """The page holds a citizenship / status block (Westinghouse's export-control questions)."""
+    return any(CITIZENSHIP_LABEL.search(str(i.get("label") or "")) for i in (getattr(snap, "items", None) or []))
 
 
 def other_resume_slot(snap, ref: str, portal: str) -> dict | None:
@@ -1238,6 +1265,13 @@ class ToolDispatcher:
 
     def _resolve_value(self, answer_key: str | None, value: str | None, source: str | None, label: str) -> tuple[str | None, str, str | None]:
         """-> (value, source_tag, error)"""
+        if answer_key and answer_key.startswith("background.certification") and OBTAINED_DATE.search(label or "") \
+                and citizenship_block(self.ctx.last_snapshot):
+            # Westinghouse's export-control block ('Country 1 Name', 'Type of Status 1', 'Date Obtained 1') got his AWS
+            # certification date twice (2026-10-21): that date is when he obtained the citizenship or status listed.
+            return None, "", ("this 'Date Obtained' belongs to the citizenship / status block (Country N Name, Type of Status N): "
+                              "it is the date he obtained that status, not a certification date. For a U.S. citizen by birth it is "
+                              "his date of birth, which is not stored: ask_user for it.")
         if answer_key:
             a = answers.get(answer_key, self.ctx.job.get("company", ""), self.ctx.portal)
             if a is None:
@@ -1870,6 +1904,16 @@ class ToolDispatcher:
                     stored_wants = head + stored_wants
         elif not wants:
             return {"error": "give options or an answer_key"}, None
+        if answer_key and RANK_LABEL.search(label or ""):
+            # A ranking never repeats a pick: Amazon's first, second and third US location preferences all became
+            # 'TX - Dallas' from his ordered list (2026-10-21). Picks this key already made on this page are skipped.
+            taken = [str(d.get("value") or "") for d in records.decisions(self.ctx.job_id)
+                     if d.get("page") == self.ctx.page_no and d.get("ref") != ref and str(d.get("source") or "").endswith(answer_key)]
+            keep = rank_wants(wants, taken)
+            if keep != wants:
+                db.event(self.ctx.job_id, "choose:rank_skip", {"ref": ref, "taken": taken[:4], "skipped": [w for w in wants if w not in keep][:6]})
+                stored_wants = [w for w in stored_wants if w in keep] or keep
+                wants = keep
         model_opts = [o for o in (options or []) if o]
         his_wants = [w for w in wants if w not in model_opts or w in stored_wants]
         if answer_key and not stored_wants:
@@ -3643,13 +3687,22 @@ class ToolDispatcher:
             # the model gets the concrete blockers instead of giving up. Four checks, not two: Epic Games spent both
             # within 30 s (one on the posting page before Apply opened the form) and its third park went through
             # with "requires an unavailable resume attachment" on a form whose blockers were all fillable (2026-10-19).
-            self.ctx.park_attempts += 1
+            # A park after fields were set since the last one, or one that only lists what is left to fill, does not use
+            # up a check: Westinghouse set fields between parks and its fifth park stood with every blocker fillable
+            # (2026-10-21). Ten checked parks in all, then every one counts.
+            n_dec = db.connect().execute("SELECT COUNT(*) FROM decisions WHERE job_id=?", (self.ctx.job_id,)).fetchone()[0]
+            progressed = self.ctx.decisions_at_park >= 0 and n_dec > self.ctx.decisions_at_park
+            self.ctx.decisions_at_park = n_dec
+            self.ctx.parks_total += 1
+            free = not extra and self.ctx.parks_total <= 10 and (progressed or (low.startswith("stuck") and bool(STUCK_TODO.search(reason))))
+            if not free:
+                self.ctx.park_attempts += 1
             snap = await snapmod.take(self.ctx.ex)
             self.ctx.last_snapshot = snap
             page_text = await self.ctx.ex.page_text(30000)
             gate = run_gate(job=self.ctx.job, snapshot=snap, page_text=page_text, expected_resume=self.ctx.resume_file,
                             free_text_answers=[f["answer"] for f in self.ctx.free_text], portal=self.ctx.portal, page_no=self.ctx.page_no)
-            db.event(self.ctx.job_id, "park:checked", {"reason": reason[:200], "gate": gate.as_dict()})
+            db.event(self.ctx.job_id, "park:checked", {"reason": reason[:200], "gate": gate.as_dict(), "counted": not free})
             self.ctx.gate_result = gate.as_dict()
             if gate.passed:
                 return {"error": "not parked: the code gate PASSES on this page. A problem an EARLIER attempt recorded is not on "

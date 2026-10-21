@@ -2099,3 +2099,39 @@ def test_a_date_boxs_placeholder_is_never_its_value():
         assert DATE_PLACEHOLDER.match(p), p
     for v in ("February", "2026", "02/01/2026", "Feb 2026"):
         assert not DATE_PLACEHOLDER.match(v), v
+
+
+
+def test_a_ranking_never_repeats_a_pick():
+    """Amazon (2026-10-21): the first, second and third US location preferences all became 'TX - Dallas'."""
+    from goat.agent.tools import RANK_LABEL, rank_wants
+    from goat.browser.fill import best_option
+    for lab in ("Second US location preference", "Third US location preference", "2nd choice", "Preference #2", "fourth priority location"):
+        assert RANK_LABEL.search(lab), lab
+    for lab in ("First US location preference", "Location preference", "Preferred location"):
+        assert not RANK_LABEL.search(lab), lab
+    chain = ["All offered locations", "Dallas", "Houston", "Austin", "Dallas, TX", "Houston, TX", "Austin, TX", "Seattle"]
+    opts = [{"text": t} for t in ("WA - Seattle", "TX - Dallas", "TX - Houston", "TX - Austin")]
+    second = rank_wants(chain, ["TX - Dallas"])
+    assert best_option(opts, second)["text"] == "TX - Houston"
+    third = rank_wants(chain, ["TX - Dallas", "TX - Houston"])
+    assert best_option(opts, third)["text"] == "TX - Austin"
+    assert rank_wants(["Dallas"], ["TX - Dallas"]) == ["Dallas"]
+
+
+
+def test_a_stuck_park_that_lists_what_is_left_is_not_final_and_the_citizenship_date_is_no_certificate():
+    """Westinghouse (2026-10-21): five 'stuck ... remains incomplete' parks in 2.5 minutes, the fifth stood with every
+    blocker fillable; 'Date Obtained 1' in the export-control block got his AWS certification date."""
+    from types import SimpleNamespace
+    from goat.agent.tools import STUCK_TODO, OBTAINED_DATE, citizenship_block
+    for r in ("stuck: SuccessFactors application remains incomplete; required employment fields need completion",
+              "stuck: multiple required export-control and employment questions still unanswered",
+              "stuck: required form completion includes selections not yet read from the full page"):
+        assert STUCK_TODO.search(r), r
+    for r in ("stuck: the Edit button does nothing and the page reloads", "stuck: the portal refuses navigation back to My Experience"):
+        assert not STUCK_TODO.search(r), r
+    assert OBTAINED_DATE.search("Date Obtained 1")
+    snap = SimpleNamespace(items=[{"label": "* Country 1 Name"}, {"label": "* Type of Status 1"}, {"label": "Date Obtained 1"}])
+    assert citizenship_block(snap)
+    assert not citizenship_block(SimpleNamespace(items=[{"label": "Certification Name"}, {"label": "Date Obtained"}]))
