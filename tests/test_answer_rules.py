@@ -1357,3 +1357,78 @@ async def test_a_basis_of_authorization_change_question_is_no_for_a_citizen(stor
          "employment authorization in the U.S. will change within the next 1-3 years? Do not answer this question if you are a U.S citizen")
     out, _ = await d.t_lookup_answer(q, ["Yes", "No"])
     assert out["answer"] == "No" and out["key"] == "work_authorization.basis_change"
+
+
+
+def test_a_label_without_its_opening_words_finds_his_answer(store):
+    """IGS Energy (2026-10-20): 'Salary requirements negotiable?' missed his web answer to 'Are your salary requirements
+    negotiable?'."""
+    answers.save_answer("q.are_your_salary_requirements_negotiable", "Yes", answer_type="choice", source="web",
+                        aliases=["Are your salary requirements negotiable?"])
+    a = answers.lookup("Salary requirements negotiable?")
+    assert a is not None and a.key == "q.are_your_salary_requirements_negotiable" and a.answer == "Yes"
+    assert answers.lookup("Is there salary requirements negotiable?").key == "q.are_your_salary_requirements_negotiable"
+    answers.save_answer("q.do_you_require_sponsorship", "No", answer_type="choice", source="web",
+                        aliases=["Do you require sponsorship?"])
+    hit = answers.lookup("Will you require sponsorship?")          # two words left: never matched this way
+    assert hit is None or hit.key != "q.do_you_require_sponsorship" or hit.via != "alias_core"
+
+
+def _salary_dispatcher(monkeypatch, label, tag="input", digits_only=False):
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher({"id": 195, "company": "IGS Energy", "ats": "workday"})
+    snap = Snapshot(url="u", title="t", headings=[], items=[{"ref": "e44", "tag": tag, "label": label, "value": ""}],
+                    groups=[], errors={}, challenge={})
+    for i in snap.items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    typed = []
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        out = []
+        for p in plan:
+            typed.append(p["value"])
+            rb = "".join(ch for ch in str(p["value"]) if ch.isdigit()) if digits_only else p["value"]
+            out.append(FieldResult(p["ref"], rb == p["value"], rb, ""))
+        return out
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("compensation.desired_annual", "41600", answer_type="text", source="questionnaire")
+    answers.save_answer("bank.desired-hourly-rate", "20", answer_type="text", source="seed:answer_bank.json")
+    answers.save_answer("bank.salary-desired", "$20/hr", answer_type="text", source="seed:answer_bank.json")
+    return d, typed
+
+
+@pytest.mark.asyncio
+async def test_a_salary_box_takes_his_yearly_figure_not_a_bare_20(store, monkeypatch):
+    """IGS Energy (2026-10-20): 20 in 'What is your desired base salary?' reads as $20 a year."""
+    d, typed = _salary_dispatcher(monkeypatch, "What is your desired base salary?")
+    out, _ = await d.t_fill_batch([{"ref": "e44", "answer_key": "bank.desired-hourly-rate", "value": None, "source": None,
+                                    "label": "Desired base salary"}])
+    assert typed == ["41600"] and out["results"][0]["status"] == "set"
+    from goat import records as rec
+    dec = [r for r in rec.decisions(195) if r["field_label"] == "Desired base salary"]
+    assert dec and dec[-1]["source"] == "standing:compensation.desired_annual"
+
+
+@pytest.mark.asyncio
+async def test_his_hourly_text_in_a_digits_only_salary_box_is_retyped_as_yearly(store, monkeypatch):
+    d, typed = _salary_dispatcher(monkeypatch, "What is your desired base salary?", digits_only=True)
+    out, _ = await d.t_fill_batch([{"ref": "e44", "answer_key": "bank.salary-desired", "value": None, "source": None,
+                                    "label": "Desired base salary"}])
+    assert typed == ["$20/hr", "41600"], typed
+    assert out["results"][0]["status"] == "set" and out["results"][0]["readback"] == "41600"
+
+
+@pytest.mark.asyncio
+async def test_an_hourly_rate_box_and_a_salary_text_box_keep_his_hourly_figure(store, monkeypatch):
+    d, typed = _salary_dispatcher(monkeypatch, "Desired hourly rate")
+    await d.t_fill_batch([{"ref": "e44", "answer_key": "bank.desired-hourly-rate", "value": None, "source": None, "label": "Desired hourly rate"}])
+    assert typed == ["20"]
+    d, typed = _salary_dispatcher(monkeypatch, "What is your desired salary?")
+    await d.t_fill_batch([{"ref": "e44", "answer_key": "bank.salary-desired", "value": None, "source": None, "label": "Desired salary"}])
+    assert typed == ["$20/hr"]                                     # a box that keeps text keeps his wording
+    d, typed = _salary_dispatcher(monkeypatch, "What are your salary expectations?", tag="textarea")
+    await d.t_fill_batch([{"ref": "e44", "answer_key": "bank.desired-hourly-rate", "value": None, "source": None, "label": "Salary expectations"}])
+    assert typed == ["20"]                                         # only one-line boxes change

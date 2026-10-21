@@ -674,6 +674,22 @@ SALARY_QUESTION = re.compile(r"\b(desired|expected|expectations?|target|requeste
                              r"\b(salary|compensation|pay) (range|expectations?|requirements?)\b", re.I)
 
 
+# "What is your desired base salary?" (IGS Energy, 2026-10-20): the box kept only digits, so his "$20/hr" became 20,
+# and 20 in a SALARY box reads as twenty dollars a year (the posting's own range was annual, $31,200 - $62,400; the
+# judge failed the draft twice). A one-line box that asks for a salary, not an hourly rate or wage, takes his yearly
+# figure where his hourly figure would land as a bare number: compensation.desired_annual (41600, "the desired ANNUAL
+# figure when a form demands a yearly number"). A box that keeps text keeps his "$20/hr".
+ANNUAL_PAY_BOX = re.compile(r"\bsalar(y|ies)\b", re.I)
+HOURLY_PAY_WORDS = re.compile(r"\b(hourly|hours?|hr|rate|wages?)\b", re.I)
+BARE_PAY_NUMBER = re.compile(r"^\s*\$?\s*\d{1,3}(\.\d+)?\s*$")
+HOURLY_PAY_TEXT = re.compile(r"^\s*\$?\s*\d{1,3}(\.\d+)?\s*(/\s*h(ou)?r\b|per hour\b|an hour\b)", re.I)
+
+
+def annual_pay_box(label: str) -> bool:
+    """A box that asks for a salary (a yearly figure), not an hourly rate or wage."""
+    return bool(ANNUAL_PAY_BOX.search(label or "")) and not HOURLY_PAY_WORDS.search(label or "")
+
+
 # "Did you find this opportunity through a campus event / a conference / a career fair? If yes, which ...?" (Cigna,
 # 2026-10-20): his source is online (stored How-did-you-hear: LinkedIn, then job boards), so the answer is No.
 OTHER_SOURCE_QUESTION = re.compile(
@@ -994,6 +1010,13 @@ class ToolDispatcher:
                     and str(val).strip().lower() in ("no", "none", "n/a", "na") \
                     and re.search(r"\bn/?a\b", f"{f.get('label') or ''} {item.get('label') or ''}", re.I):
                 val = "N/A"
+            salary_box = bool(item and item.get("tag") == "input" and item.get("type") not in ("radio", "checkbox")
+                              and annual_pay_box(f"{f.get('label') or ''} {item.get('label') or ''}"))
+            if salary_box and BARE_PAY_NUMBER.match(str(val)):
+                a_year = answers.get("compensation.desired_annual", self.ctx.job.get("company", ""), self.ctx.portal)
+                if a_year is not None and a_year.has_value:
+                    db.event(self.ctx.job_id, "answer:annual_salary", {"ref": f.get("ref"), "from": str(val)[:20], "to": str(a_year.answer)})
+                    val, src = str(a_year.answer), "standing:compensation.desired_annual"
             # A text box that asks for the posting's own locations gets every one of them (he is open to all), whatever
             # location key was named (Northrop Grumman, 2026-10-19).
             posting_locs: list[str] = []
@@ -1138,10 +1161,21 @@ class ToolDispatcher:
                 # the bare question with 'checked', ABA's judge read it as Yes (2026-10-19)
                 dec_label = f"{dec_label[:120]} / {opt[:60]}"
             plan.append({"ref": f["ref"], "value": val, "_src": src, "_label": dec_label, "_text": not is_choice,
-                         "_key": f.get("answer_key"), "_source": f.get("source")})
+                         "_key": f.get("answer_key"), "_source": f.get("source"), "_salary_box": salary_box})
         if plan:
             res = await fill.fill_batch(self.ctx.ex, [{"ref": p["ref"], "value": p["value"]} for p in plan])
             by = {r.ref: r for r in res}
+            # his "$20/hr" typed into a salary box that keeps only digits reads back as a bare 20: that box takes his
+            # yearly figure instead (IGS Energy, 2026-10-20)
+            redo = [p for p in plan if p.get("_salary_box") and HOURLY_PAY_TEXT.match(str(p["value"]))
+                    and by.get(p["ref"]) is not None and BARE_PAY_NUMBER.match(str(by[p["ref"]].readback or ""))]
+            a_year = answers.get("compensation.desired_annual", self.ctx.job.get("company", ""), self.ctx.portal) if redo else None
+            if redo and a_year is not None and a_year.has_value:
+                for p in redo:
+                    p["value"], p["_src"] = str(a_year.answer), "standing:compensation.desired_annual"
+                for r2 in await fill.fill_batch(self.ctx.ex, [{"ref": p["ref"], "value": p["value"]} for p in redo]):
+                    by[r2.ref] = r2
+                db.event(self.ctx.job_id, "answer:annual_salary", {"refs": [p["ref"] for p in redo], "to": str(a_year.answer)})
             for p in plan:
                 r = by.get(p["ref"])
                 if r is not None and not r.ok and str(r.error or "").startswith("picker:"):

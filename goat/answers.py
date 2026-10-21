@@ -42,7 +42,7 @@ class Answer:
     source: str
     note: str | None = None
     confidence: float = 1.0
-    via: str = "key"  # key | alias_exact | alias_substrings | classifier
+    via: str = "key"  # key | alias_exact | alias_core | alias_substrings | classifier
 
     @property
     def has_value(self) -> bool:
@@ -152,6 +152,17 @@ def all_keys() -> list[str]:
         "SELECT DISTINCT key FROM answers WHERE superseded_by IS NULL ORDER BY key")]
 
 
+# "Salary requirements negotiable?" is "Are your salary requirements negotiable?" without its opening words (IGS Energy,
+# 2026-10-20: Surya had just answered the full question on the website, the review page's short label missed that answer,
+# and the run judged the question itself). A question that equals an exact alias once both drop such an opening resolves
+# to it; three words at least remain, so "require sponsorship" alone never matches.
+_LEAD_WORDS = re.compile(r"^(?:are|is|do|does|have|has|will|would|can)\s+(?:you|your|there)\s+")
+
+
+def _core(q: str) -> str:
+    return _LEAD_WORDS.sub("", q or "").strip()
+
+
 def resolve_alias(question: str) -> tuple[str, float, str] | None:
     """Map question text to a key via aliases. Returns (key, confidence, via) or None."""
     q = norm(question)
@@ -164,6 +175,12 @@ def resolve_alias(question: str) -> tuple[str, float, str] | None:
         "ORDER BY confidence DESC, id DESC LIMIT 1", (q,)).fetchone()
     if row:
         return row["key"], float(row["confidence"]), "alias_exact"
+    core = _core(q)
+    if len(core.split()) >= 3:
+        for r in con.execute("SELECT alias, key, confidence FROM question_aliases WHERE kind='exact' AND approved=1 "
+                             "AND alias LIKE ? ORDER BY confidence DESC, id DESC", ("%" + core,)):
+            if _core(r["alias"]) == core:
+                return r["key"], float(r["confidence"]), "alias_core"
     best = None
     for r in con.execute("SELECT alias, key, confidence FROM question_aliases WHERE kind='substrings' AND approved=1"):
         try:
