@@ -3713,7 +3713,12 @@ class ToolDispatcher:
                     if real_challenge or not re.search(r"captcha|human|\bbot\b|challenge|verif", m.group(0), re.I)]
         # four gate-checked bounces, as for any eager park: American Express spent two (one on a timed-out session) and its
         # third, "Oracle VERIFY requires a human click" on a page already showing the form, stood (2026-10-19)
-        rfy_soft = low.startswith(("ready_for_you", "needs_you")) and self.ctx.park_attempts < 4 and (
+        # fields set since the last checked park keep a 'needs_you' / 'ready_for_you' park checkable too: Arconic had just
+        # fixed his Revio entry and was opening the Southwest one when its fourth 'needs_you' park stood (2026-10-21)
+        n_dec_now = db.connect().execute("SELECT COUNT(*) FROM decisions WHERE job_id=?", (self.ctx.job_id,)).fetchone()[0]
+        progressed_now = self.ctx.decisions_at_park >= 0 and n_dec_now > self.ctx.decisions_at_park
+        rfy_soft = low.startswith(("ready_for_you", "needs_you")) \
+            and (self.ctx.park_attempts < 4 or (progressed_now and self.ctx.parks_total < 10)) and (
             not stoppers or (bool(self.RFY_GIVE_UP.search(reason)) and not real_challenge))
         hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch", "needs_you")) \
             and not rfy_soft
@@ -3727,8 +3732,8 @@ class ToolDispatcher:
         free = False
         n_dec = -1
         if not hard:
-            n_dec = db.connect().execute("SELECT COUNT(*) FROM decisions WHERE job_id=?", (self.ctx.job_id,)).fetchone()[0]
-            progressed = self.ctx.decisions_at_park >= 0 and n_dec > self.ctx.decisions_at_park
+            n_dec = n_dec_now
+            progressed = progressed_now
             free = self.ctx.parks_total < 10 and (progressed or (low.startswith("stuck") and bool(STUCK_TODO.search(reason))))
         extra = not hard and not free and self.ctx.park_attempts >= 4 and self.ctx.control_failures.get("park:past_budget", 0) < 2 \
             and bool(self.ctx.last_snapshot is not None and has_submit_control(self.ctx.last_snapshot))
