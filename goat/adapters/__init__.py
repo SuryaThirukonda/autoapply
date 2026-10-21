@@ -772,7 +772,12 @@ class SuccessFactors(Adapter):
              "('Password must be at least 8 characters long ...') are always shown and are not a rejection: his password "
              "meets them. Fill every required account field (Retype Email Address, First Name, Last Name, Country/Region "
              "Code, Phone Number, Country/Region of Residence) from the stored answers, set both password boxes with "
-             "credentials mode 'create', then click Create Account (Acuity and Corning parked over that text, 2026-10-21).")
+             "credentials mode 'create', then click Create Account (Acuity and Corning parked over that text, 2026-10-21). "
+             "Its 'Terms of Use' / 'Data Privacy Acknowledgement' box is a link ('Read and accept the data privacy statement.', "
+             "'Please read our Candidate Privacy Notice'), not a dropdown: click it, then click the statement's own Accept / "
+             "I agree / I accept button; accepting it is delegated to you (Corning went ready_for_you trying choose on it, "
+             "2026-10-21). If Create Account answers 'Invalid password' under the rules, park credentials_unknown quoting "
+             "the rule it shows (Phillips 66 asks for 12 characters).")
 
     async def prefill(self, ex, snap: Snapshot, job: dict, page_no: int) -> PrefillResult:
         # Folded sections hide their fields from the prefill and the model (CenturyLink, 2026-10-21): open them first.
