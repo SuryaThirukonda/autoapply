@@ -596,16 +596,28 @@ class Executor:
                 raise
             # A 'Select files' button was named instead of its file input (Auto-Owners' Workday transcript slot,
             # 2026-10-20): use the file input in the same field or drop zone.
-            box = loc.first.locator("xpath=ancestor::*[.//input[@type='file']][1]")
-            if await box.count():
-                inp = box.locator("input[type=file]").first
+            # ... but only a field's own box: the nearest ancestor below <body> that holds exactly one file input (the page
+            # body holds the cover letter's too, and the résumé would land there)
+            box = loc.first.locator("xpath=ancestor::*[not(self::body) and not(self::html)][.//input[@type='file']][1]")
+            if await box.count() and await box.first.locator("input[type=file]").count() == 1:
+                inp = box.first.locator("input[type=file]").first
                 await inp.set_input_files(path)
             else:
                 # Google Careers (2026-10-21): the Upload button opens the browser's file chooser; no file input exists
                 # in the page until then, and the search above waited 30 s for one that never came.
-                async with self.page.expect_file_chooser(timeout=8000) as chooser:
-                    await loc.first.click()
-                await (await chooser.value).set_files(path)
+                # Corning (SuccessFactors, 2026-10-21): the attach icon opens an 'Upload a Resume' dialog with its own file
+                # box instead, and the wait for a chooser timed out. A file box that appears after the click takes the
+                # file; one that was on the page before (the cover letter's) never does.
+                await self.page.evaluate("() => document.querySelectorAll('input[type=file]').forEach(i => i.setAttribute('data-goat-pre', '1'))")
+                try:
+                    async with self.page.expect_file_chooser(timeout=8000) as chooser:
+                        await loc.first.click()
+                    await (await chooser.value).set_files(path)
+                except Exception:
+                    fresh = self.page.locator("input[type=file]:not([data-goat-pre])")
+                    if await fresh.count() == 0:
+                        raise
+                    await fresh.first.set_input_files(path)
         await asyncio.sleep(0.8)
         return await self.read_ref(ref)
 

@@ -930,3 +930,29 @@ def test_a_tile_that_is_one_of_his_roles_is_edited_never_removed():
     assert "his Southwest Airlines entry" in got[0] and "Never remove it" in got[0], got[0]
     assert "his Revio role" in got[1] and "Never remove it" in got[1] and "Remove" not in got[1].replace("Never remove", ""), got[1]
     assert "match none of his roles" in got[2] and "then its Remove" in got[2], got[2]
+
+
+
+ATTACH_DIALOG = """<html><body>
+<label for="cl">Cover Letter</label><input type="file" id="cl">
+<span role="button" id="51:_attachIcon" tabindex="0" style="display:inline-block;width:20px;height:20px"
+  onclick="if(!document.getElementById('dlg')){document.body.insertAdjacentHTML('beforeend', '<div role=dialog id=dlg><label for=rf>Resume</label><input type=file id=rf></div>')}">+</span>
+</body></html>"""
+
+
+async def test_an_attach_icon_that_opens_a_dialog_takes_the_file_in_the_dialogs_box(tmp_path):
+    """Corning (SuccessFactors, 2026-10-21): the attach icon opened an 'Upload a Resume' dialog, the wait for a file chooser
+    timed out, and the run held over a résumé it could not attach. The cover letter's box must stay empty."""
+    f = tmp_path / "Surya_Thirukonda_Resume_SWE.pdf"
+    f.write_bytes(b"%PDF-1.4 test")
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(ATTACH_DIALOG)
+        await ex.page.evaluate("() => document.getElementById('51:_attachIcon').setAttribute('data-goat-ref', 'e7')")
+        await ex.set_file("e7", str(f))
+        names = await ex.page.evaluate("() => [document.getElementById('cl').files.length, (document.getElementById('rf').files[0] || {}).name || '']")
+        assert names == [0, "Surya_Thirukonda_Resume_SWE.pdf"], names
+    finally:
+        await ex.close()
