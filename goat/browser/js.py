@@ -53,7 +53,10 @@ _COMMON = r"""
       const others = Array.from(p.querySelectorAll('input:not([type="hidden"]), select, textarea'))
         .filter(f => f !== el && !(choice && f.name && f.name === el.name));
       if (others.some(f => { const r = f.getBoundingClientRect(); return r.width > 0 && r.height > 0; })) return null;
-      const heads = Array.from(p.querySelectorAll('label, legend')).filter(l => !l.contains(el) && !l.querySelector('input, select, textarea'));
+      // an option's own label (for= a radio / tick box) is never the question: Applied Materials' and Qualcomm's Eightfold
+      // radio groups read as their first option ('Yes', 'Male', "I'm in my second to last year of school", 2026-10-21)
+      const heads = Array.from(p.querySelectorAll('label, legend')).filter(l => !l.contains(el) && !l.querySelector('input, select, textarea')
+        && !(choice && l.tagName === 'LABEL' && l.control && /^(radio|checkbox)$/.test(l.control.type || '')));
       if (heads.length) return heads[0];
     }
     return null;
@@ -168,14 +171,27 @@ JS_SNAPSHOT = r"""
   const SEL = 'input, textarea, select, button, a[href], [role="button"], [role="combobox"], [role="listbox"], [role="checkbox"], [role="radio"], [role="switch"], [role="tab"], [role="menuitem"], [role="option"], [contenteditable="true"], [data-automation-id="selectWidget"], [data-automation-id="promptOption"], [aria-haspopup]';
 
   function groupLabel(el) {
+    // A group that names its question by aria-labelledby says so first (Eightfold's radio groups, 2026-10-21).
+    const rg0 = el.closest('[role="radiogroup"], [role="group"], fieldset');
+    const lb0 = rg0 ? (rg0.getAttribute('aria-labelledby') || '') : '';
+    if (lb0) {
+      const rr = rg0.getRootNode ? rg0.getRootNode() : document; const id0 = lb0.split(/\s+/)[0];
+      const n0 = (rr && rr.getElementById ? rr.getElementById(id0) : null) || document.getElementById(id0);
+      if (n0) { const t = ctxt(n0); if (wordy(t) && t.length < 300) return t; }
+    }
     // The group's own box first: the nearest container holding only this group and a question label (Epic Games'
     // "Veteran Status*:" sits beside its options; a container classed "...Questions" held every demographic question,
     // so its first label named another question and "Hispanic or Latino", an option, read as a question, 2026-10-19).
     const own = boxHead(el); if (own) { const t0 = ctxt(own); if (wordy(t0) && t0.length < 300) return t0; }
     const fs = el.closest('fieldset, [role="group"], [role="radiogroup"], [data-automation-id^="formField"], .field, .form-group, .application-question, [class*="question" i]');
     if (fs) {
-      const lg = fs.querySelector('legend, [class*="legend" i], [id$="-label"], [class*="question" i] > :first-child, label:not([for]), .label, [class*="label" i]');
-      if (lg && !lg.contains(el)) { const t = txt(lg); if (t && t.length < 300) return t; }
+      // never one of the group's own option labels
+      const opts = new Set(Array.from(fs.querySelectorAll('input[type="radio"], input[type="checkbox"]')).map(i => {
+        const l = i.labels && i.labels[0]; return l ? txt(l) : ''; }).filter(Boolean));
+      const lg = Array.from(fs.querySelectorAll('legend, [class*="legend" i], [id$="-label"], [id$="_label"], [class*="question" i] > :first-child, label:not([for]), .label, [class*="label" i]'))
+        .find(x => !x.contains(el) && !x.querySelector('input[type="radio"], input[type="checkbox"]') && !opts.has(txt(x))
+          && !(x.tagName === 'LABEL' && x.control && /^(radio|checkbox)$/.test(x.control.type || '')));
+      if (lg) { const t = txt(lg); if (t && t.length < 300) return t; }
       const lb = fs.getAttribute('aria-labelledby'); if (lb) { const n = document.getElementById(lb.split(' ')[0]); if (n) return txt(n).slice(0, 300); }
     }
     // a question label in a sibling block above the options (Epic Games' "Gender Identity*:", 2026-10-19)
@@ -271,7 +287,9 @@ JS_SNAPSHOT = r"""
           // the walk up can reach the field's own box (L3Harris, 2026-10-21: an empty SuccessFactors dropdown read
           // '* Gender' once its icon glyph was gone): its label texts are not a pick, however long the question
           if (c && shown) { for (const l of c.querySelectorAll('label, legend')) { const lt = txt(l); if (lt) shown = shown.replace(lt, ''); } }
-          if (shown && item.label && shown.includes(item.label)) shown = shown.replace(item.label, '');
+          // the label is taken off only where it leads the text: 'Degree' is also inside "Bachelor's Degree", and DriveWealth's
+          // pick read back as "Bachelor's" through five submits (2026-10-21)
+          if (shown && item.label && shown.trim().startsWith(item.label)) shown = shown.trim().slice(item.label.length);
           shown = shown.replace(/^[\s*:]+|[\s*:]+$/g, '').trim();
           if (shown && !PLACEHOLDER.test(shown)) item.shown = shown.slice(0, 200);
           item.combo = true;
@@ -761,7 +779,7 @@ JS_PAGE_ERRORS = r"""
             let shown = c ? txt(c) : '';
             if (c && shown) { for (const l of c.querySelectorAll('label, legend')) { const lt = txt(l); if (lt) shown = shown.replace(lt, ''); } }
             const own = nearestLabel(el) || '';
-            if (shown && own && shown.includes(own)) shown = shown.replace(own, '');
+            if (shown && own && shown.trim().startsWith(own)) shown = shown.trim().slice(own.length);
             shown = shown.replace(/^[\s*:]+|[\s*:]+$/g, '').trim();
             if (shown && !/^(select one|select\.\.\.|select|choose one|choose|search|no selection)$/i.test(shown)) empty = false;
           }

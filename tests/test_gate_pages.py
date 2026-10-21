@@ -507,3 +507,58 @@ def test_oracle_issue_count_blocks_the_gate_and_its_import_box_is_never_the_resu
                  page_text="Skip to main content.\nYou have 7 issues that need to be fixed before you can submit your application.\nGo to Next Issue",
                  expected_resume=None, free_text_answers=[], portal="oracle")
     assert g.result == "blocked" and "Go to Next Issue" in g.reasons[0], g.reasons
+
+
+
+EF_RADIOS = """<html><body><form>
+<div class="field-1"><label id="Q1_label" for="Q1" class="label-385LH required-3upJY"><span>Which best describes your current
+academic status?</span></label>
+ <div id="Q1" role="radiogroup" aria-labelledby="Q1_label">
+  <div><input type="radio" id="a1" name="Q1" value="1"><label for="a1">I'm in my second to last year of school</label></div>
+  <div><input type="radio" id="a2" name="Q1" value="2"><label for="a2">I'm in my final year of school</label></div>
+ </div></div>
+<div class="field-2"><label for="Q2" class="label-385LH">Are you legally authorized to work in the United States?</label>
+ <div id="Q2">
+  <div><input type="radio" id="b1" name="Q2" value="y"><label for="b1">Yes</label></div>
+  <div><input type="radio" id="b2" name="Q2" value="n"><label for="b2">No</label></div>
+ </div></div>
+</form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_radio_group_is_named_by_its_question_never_its_first_option():
+    """Applied Materials / Qualcomm (Eightfold, 2026-10-21): groups read 'Yes', 'Male', "I'm in my second to last year"."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(EF_RADIOS)
+        snap = await snapshot.take(ex)
+        labels = [g.get("label") for g in snap.groups]
+        assert any(l and l.startswith("Which best describes your current academic status?") for l in labels), labels
+        assert any(l and l.startswith("Are you legally authorized to work in the United States?") for l in labels), labels
+    finally:
+        await ex.close()
+
+
+
+PICKED_DEGREE = """<html><body>
+<label for="deg">Degree</label>
+<div class="select__control"><div class="select__value-container"><div class="select__single-value">Bachelor's Degree</div>
+<input id="deg" role="combobox" aria-expanded="false" value=""></div></div>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_pick_that_contains_its_label_word_reads_back_whole():
+    """DriveWealth (Greenhouse, 2026-10-21): 'Degree' was cut out of "Bachelor's Degree" and the read-back blocked five submits."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(PICKED_DEGREE)
+        snap = await snapshot.take(ex)
+        item = next(i for i in snap.items if i.get("label") == "Degree")
+        assert item.get("shown") == "Bachelor's Degree", item
+    finally:
+        await ex.close()
