@@ -1582,6 +1582,19 @@ class ToolDispatcher:
             return {"ref": ref, "status": "failed",
                     "error": f"the page shows {shown[:60]!r} but the stored answer for {key} is {str(a.answer)[:80]!r}: pick the option that "
                              "says that, or ask_user when none does"}
+        # A self-identification answer is the decline option wherever the list offers one (Surya's standing rule); his own
+        # answer ('Asian') stands only on a list without one. Impulse Space's Ethnicity box took 'Asian' by hand and the
+        # computer-tool path accepted it without looking at the list (2026-10-21).
+        if wants and fill.DECLINE_OPT.search(wants[0]) and not fill.DECLINE_OPT.search(shown) and typ not in ("checkbox", "radio"):
+            try:
+                offered, _img = await fill.peek_options(self.ctx.ex, ref)
+            except Exception:
+                offered = []
+            dec = next((str(o) for o in (offered or []) if fill.DECLINE_OPT.search(str(o))), None)
+            if dec:
+                return {"ref": ref, "status": "failed",
+                        "error": f"this list offers {dec[:60]!r}: his self-identification answer is the decline option wherever one "
+                                 f"is offered. Pick {dec[:60]!r} (choose with answer_key {key} does it), then record it."}
         records.record_decision(self.ctx.job_id, self.ctx.page_no, f.get("label") or (item or {}).get("label", ""), shown[:300],
                                 f"standing:{key}", ref)
         return {"ref": ref, "status": "kept", "readback": shown[:120]}
@@ -2601,9 +2614,21 @@ class ToolDispatcher:
     ACCOUNT_LABEL = re.compile(r"^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|"
                                r"save & continue|verify|verify email|send code|resend|back|apply|apply now|apply manually)$", re.I)
 
+    def _final_apply_button(self, button_label: str | None) -> bool:
+        """SAP SuccessFactors' application form ends with an 'Apply' button (Westinghouse, 2026-10-21: the gate passed,
+        submit refused 'Apply' as a navigation button, and the run stalled). 'Apply' is the final button when the page is
+        a filled application form (many fields), not a posting with an Apply link."""
+        if (button_label or "").strip().lower() != "apply":
+            return False
+        snap = self.ctx.last_snapshot
+        fields = [i for i in (snap.items if snap else []) if i.get("tag") in ("input", "select", "textarea", "dropdown", "richtext")
+                  and i.get("type") not in ("hidden", "submit", "button")]
+        url = (getattr(self.ctx.ex, "url", "") or "").lower()
+        return len(fields) >= 8 or "portalcareer" in url
+
     async def t_submit(self, button_label: str | None):
         ctx = self.ctx
-        if button_label and self.ACCOUNT_LABEL.match(button_label.strip()):
+        if button_label and self.ACCOUNT_LABEL.match(button_label.strip()) and not self._final_apply_button(button_label):
             return {"error": f"'{button_label}' is a navigation / account button: press it with `click`. `submit` is only for the "
                              "application's final Submit button, once every page is filled."}, None
         if fill.autosaves(ctx.ex):
@@ -2700,6 +2725,13 @@ class ToolDispatcher:
     # paid; a straight hardware role is not.
     DISQUALIFIERS = re.compile(r"(master'?s|ph\.?d|doctoral|graduate program|active (secret|top secret|ts/sci|clearance)|returning intern|co-?op|fall 2027|spring 2028|quant|"
                                r"unpaid|hardware (engineer|design|role)|\b(fpga|asic|rtl|verilog|vhdl|pcb)\b|circuit design|analog design)", re.I)
+
+    # "Active and existing security clearance required after day 1" (RTX, 2026-10-21): needed once he works there, not to apply;
+    # he is a U.S. citizen who can obtain one. A clearance needed to apply or to start stays a hard requirement.
+    CLEARANCE_LATER = re.compile(r"(after|following|beyond)\s+(day\s*(one|1)|(the\s+)?start(\s+date)?|hire|hiring|onboarding|"
+                                 r"(the\s+)?first\s+day)|within\s+\d+\s+(days|weeks|months)\s+of\s+(hire|start|employment)|"
+                                 r"upon\s+(hire|start)|ability\s+to\s+obtain|able\s+to\s+obtain|eligib\w*\s+(to|for)\s+obtain",
+                                 re.I)
 
     _SEASON_MONTH = {"spring": 5, "summer": 8, "fall": 12, "autumn": 12, "winter": 12, "jan": 1, "january": 1, "feb": 2, "february": 2,
                      "mar": 3, "march": 3, "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7, "aug": 8, "august": 8,
@@ -3006,6 +3038,14 @@ class ToolDispatcher:
             return {"error": "not parked: a skill, tool or technology the posting asks for (knowledge, familiarity, proficiency) is "
                              "not an eligibility rule; Surya applies anyway and his résumé shows what he has. Continue the "
                              "application."}, None
+        if low.startswith("eligibility") and re.search(r"clearance", reason, re.I) and self.CLEARANCE_LATER.search(reason) \
+                and not re.search(r"\b(to|before you|in order to)\s+apply\b|\bprior to (hire|start|applying)\b", reason, re.I) \
+                and self.ctx.control_failures.get("park:clearance_later", 0) < 2:
+            self.ctx.control_failures["park:clearance_later"] = self.ctx.control_failures.get("park:clearance_later", 0) + 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "clearance after start"})
+            return {"error": "not parked: a clearance required after day one (or after hire, or one he must be able to obtain) "
+                             "is not needed to apply: he is a U.S. citizen who can obtain one, and the employer sponsors it once "
+                             "he starts. Continue the application."}, None
         if low.startswith("eligibility") and self.SATISFIED.search(reason) and not self.DISQUALIFIERS.search(non_grad) \
                 and not self.grad_window_excludes(reason) and self.ctx.park_attempts < 2:
             self.ctx.park_attempts += 1

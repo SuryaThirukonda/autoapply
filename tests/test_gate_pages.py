@@ -269,3 +269,44 @@ def test_a_required_message_beside_a_filled_field_is_stale(store):
     out = drop_stale_required(errs, snap)
     assert out["error_text"] == [errs["error_text"][1]]            # a format error stays even with a value
     assert out["alerts"] == errs["alerts"]                          # the empty field keeps its required message
+
+
+
+def test_a_prefilled_value_equal_to_his_stored_answer_is_sourced(store):
+    """Electronic Arts (2026-10-21): the portal kept 'Are you willing to relocate? = Yes' from his earlier EA application,
+    and the gate asked for a source the run never gave."""
+    from goat import answers
+    from goat.gate import run_gate
+    answers.save_answer("availability.willing_to_relocate", "Yes", answer_type="choice", source="questionnaire",
+                        aliases=["Are you willing to relocate?"])
+    job = _job()
+    items = [{"ref": "e26", "tag": "select", "label": "Are you willing to relocate?", "value": "Yes"},
+             {"ref": "e1", "tag": "button", "label": "Submit", "submitish": True}]
+    g = run_gate(job=job, snapshot=_snap(items), page_text="Are you willing to relocate?\nYes\nSubmit", expected_resume=None,
+                 free_text_answers=[], portal="other", page_no=1)
+    assert not any("e26" in r for r in g.reasons), g.reasons
+    items[0]["value"] = "No"
+    g = run_gate(job=job, snapshot=_snap(items), page_text="Are you willing to relocate?\nNo\nSubmit", expected_resume=None,
+                 free_text_answers=[], portal="other", page_no=1)
+    assert any("e26" in r for r in g.reasons), g.reasons
+
+
+
+def test_a_password_help_page_is_never_the_end_of_an_application(store):
+    """CenturyLink (2026-10-21): the run pressed 'Submit' on SuccessFactors' Password Help page and the gate passed."""
+    from goat.browser.snapshot import Snapshot
+    from goat.gate import run_gate
+    job = _job()
+    items = [{"ref": "e1", "tag": "input", "type": "email", "label": "Email Address", "value": "thirukondas@gmail.com"},
+             {"ref": "e2", "tag": "button", "label": "Submit", "submitish": True}]
+    snap = Snapshot(url="u", title="Career Opportunities: Password Help", headings=["Password Help"], items=items, groups=[],
+                    errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    g = run_gate(job=job, snapshot=snap, page_text="Password Help\nEmail Address\nSubmit", expected_resume=None,
+                 free_text_answers=[], portal="successfactors", page_no=1)
+    assert g.result == "blocked" and "account page" in g.reasons[0]
+    snap2 = Snapshot(url="u", title="Apply: Software Engineer Intern", headings=["Application Questions"], items=items, groups=[],
+                     errors={}, challenge={})
+    from goat.gate import ACCOUNT_PAGE
+    assert not ACCOUNT_PAGE.search("Apply: Software Engineer Intern | Application Questions")

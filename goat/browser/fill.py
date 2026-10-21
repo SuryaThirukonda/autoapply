@@ -424,7 +424,12 @@ ENUM_PREFIX = re.compile(r"^\s*(\d{1,2}|[a-zA-Z])[.)]\s+")
 
 def best_option(options: list[dict], wants: list[str]) -> dict | None:
     """best_option_core, then once more with each option's leading numbering ("2. ") set aside; the option returned
-    is always the one the page listed."""
+    is always the one the page listed. A list's own empty entry ('No Selection', 'Select One') is never an answer: L3Harris'
+    SuccessFactors list took 'No' for 'No Selection' twice (2026-10-21)."""
+    if not any(PLACEHOLDER.match(str(w or "").strip()) for w in wants if w):
+        real = [o for o in options if not PLACEHOLDER.match(str(o.get("text") or "").strip())]
+        if real and len(real) < len(options):
+            options = real
     hit = _best_option_core(options, wants)
     if hit is not None or not any(ENUM_PREFIX.match(str(o.get("text") or "")) for o in options):
         return hit
@@ -1124,6 +1129,16 @@ async def _committed(ex: Executor, ref: str, text: str) -> tuple[bool, str]:
             return True, ""
         return False, "no selected-item chip" + (f"; the field says {st['error']!r}" if st.get("error") else "")
     if st.get("invalid") and st.get("error") and not any(t in _norm(c) for c in st.get("chips") or []):
+        # SAP SuccessFactors' paginated selects clear their 'required' error only once the box loses focus (L3Harris,
+        # 2026-10-21: 'Not Protected Veteran (OFCCP)' was picked and reported not taken): leave the box, look again.
+        try:
+            await ex.eval("() => { const a = document.activeElement; if (a && a !== document.body && a.blur) a.blur(); return true; }")
+            await asyncio.sleep(0.6)
+            st3 = await ex.eval(js.JS_FIELD_COMMIT, ref)
+            if isinstance(st3, dict) and (not st3.get("found") or not (st3.get("invalid") and st3.get("error"))):
+                return True, ""
+        except Exception:
+            pass
         return False, f"the field still says {st['error']!r}"
     return True, ""
 

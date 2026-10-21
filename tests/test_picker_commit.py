@@ -232,3 +232,49 @@ async def test_a_box_that_shows_its_pick_only_after_blur_is_read_after_blur():
         assert await ex.page.evaluate("() => document.getElementById('v').value") == "Not Protected Veteran (OFCCP)"
     finally:
         await ex.close()
+
+
+
+def test_a_list_placeholder_is_never_the_answer():
+    """L3Harris (2026-10-21): 'No' took 'No Selection' twice."""
+    opts = [{"text": t} for t in ("No Selection", "Not Protected Veteran (OFCCP)", "Prefer Not To Answer (OFCCP)", "Protected Veteran (OFCCP)")]
+    hit = fill.best_option(opts, ["No"])
+    assert hit is None or hit["text"] != "No Selection"
+    assert fill.best_option(opts, ["Not Protected Veteran (OFCCP)"])["text"] == "Not Protected Veteran (OFCCP)"
+
+
+JUIC_INVALID = """<html><body style="margin:20px">
+<label for="v">Veteran Status</label>
+<input id="v" type="text" role="combobox" placeholder="No Selection" aria-owns="lst" aria-required="true" aria-invalid="true"
+       aria-describedby="err">
+<span id="err" class="error" role="alert">Veteran Status is required</span>
+<div id="lst" role="menu" style="display:none;position:absolute;background:#fff">
+  <a role="menuitem" href="#" style="display:block">No Selection</a>
+  <a role="menuitem" href="#" style="display:block">Not Protected Veteran (OFCCP)</a>
+</div>
+<input id="n" type="text" aria-label="Next">
+<script>
+  const v = document.getElementById('v'), lst = document.getElementById('lst');
+  v.addEventListener('click', () => { lst.style.display = 'block'; });
+  v.addEventListener('blur', () => { if (v.value && v.value !== 'No Selection') { v.setAttribute('aria-invalid', 'false');
+    const e = document.getElementById('err'); if (e) e.remove(); } });
+  lst.querySelectorAll('a').forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); v.value = a.textContent;
+    lst.style.display = 'none'; v.focus(); }));
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_pick_whose_required_error_clears_on_blur_counts_as_committed():
+    """L3Harris (2026-10-21): 'Not Protected Veteran (OFCCP)' was picked; the required error cleared only on blur."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(JUIC_INVALID)
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if (i.get("label") or "").startswith("Veteran"))
+        r = await fill.choose(ex, ref, ["Not Protected Veteran (OFCCP)", "No"])
+        assert r.ok, r
+        assert await ex.page.evaluate("() => document.getElementById('v').getAttribute('aria-invalid')") == "false"
+    finally:
+        await ex.close()

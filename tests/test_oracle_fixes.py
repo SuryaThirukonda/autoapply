@@ -291,3 +291,12 @@ def test_an_oracle_tile_with_fields_to_fix_blocks_the_gate():
     assert fields_to_fix(text) == [("Computer Science", 1), ("Texas A&M University", 1)]
     assert fields_to_fix("Education\nTexas A&M University\nADD EDUCATION") == []
     assert fields_to_fix("Texas A&M University\nFields to fix: 0") == []
+
+
+
+def test_smartrecruiters_and_successfactors_have_their_own_hints():
+    """Wellmark (SmartRecruiters) and Westinghouse / L3Harris (SuccessFactors), 2026-10-21."""
+    from goat.adapters import for_portal
+    assert "parses his résumé into Experience" in for_portal("smartrecruiters").hints
+    sf = for_portal("successfactors").hints
+    assert "button_label 'Apply'" in sf and "Please complete your personal information" in sf

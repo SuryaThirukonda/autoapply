@@ -696,7 +696,37 @@ class ICIMS(Adapter):
     hints = ("iCIMS: account creation with an emailed six-digit code (enter_email_code). The form runs in an iframe; take a snapshot after each step.")
 
 
-REGISTRY: dict[str, Adapter] = {a.portal: a for a in (Greenhouse(), Ashby(), Lever(), Workday(), Oracle(), ICIMS())}
+class SmartRecruiters(Adapter):
+    portal = "smartrecruiters"
+    lane = "no_account"
+    # Wellmark (2026-10-21): the résumé upload parsed project names ('Tempo | Node.js, WebSockets, ...') into Experience cards
+    # with missing or wrong dates, the form then said "Please provide at least one work experience entry" / "Please provide
+    # start date", and the run parked over the parsed cards instead of fixing them.
+    hints = ("SmartRecruiters: the résumé upload parses his résumé into Experience and Education cards, often wrongly (project "
+             "names such as 'Tempo' or 'RateSignal' as jobs, missing or wrong dates). Make Experience hold exactly his stored "
+             "entries: delete (trash icon) every card whose company matches none of experience.work.N; for each stored entry "
+             "that is missing or malformed, open or add a card and fill Title, Company, Location, From / To (set_date; tick 'I "
+             "currently work here' for a current role and leave To empty) and Description from experience.work.N.*, then press "
+             "the card's Save button before the next one. Education holds one Texas A&M entry from the education.* keys. Never "
+             "park over parsed cards: fixing them is the job. Take a snapshot after each Save; the refs change.")
+
+
+class SuccessFactors(Adapter):
+    portal = "successfactors"
+    lane = "account"
+    # Westinghouse and L3Harris (2026-10-21): the 'No Selection' dropdowns show a pick only after the box loses focus, a
+    # 'Please complete your personal information.' message lingers after the fields are set, and the last button is 'Apply'.
+    hints = ("SAP SuccessFactors (career*.successfactors.com, *.ns2cloud.com 'portalcareer'): one long form. Its dropdowns are "
+             "'No Selection' boxes: set each with choose and the answer_key (the box shows the pick once it loses focus; the "
+             "harness checks after that). A 'Please complete your personal information.' message clears by itself once the "
+             "fields are set: never park over it. Values the portal kept from his earlier SuccessFactors profile stand when they "
+             "match his stored answers; re-set the ones that differ (work history from experience.work.N.*, never project "
+             "names). Salutation is identity.salutation (Mr). The final button is labelled 'Apply': when the page is complete "
+             "call submit with button_label 'Apply'.")
+
+
+REGISTRY: dict[str, Adapter] = {a.portal: a for a in (Greenhouse(), Ashby(), Lever(), Workday(), Oracle(), ICIMS(),
+                                                      SmartRecruiters(), SuccessFactors())}
 
 
 def for_portal(ats: str) -> Adapter:

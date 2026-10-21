@@ -137,6 +137,35 @@ def drop_stale_required(errors: dict | None, snapshot) -> dict:
     return errs
 
 
+def _stored_answer_matching(item: dict, value: str, company: str, portal: str) -> str | None:
+    """The key of his stored answer to this field's question (looked up by its label) when the page already shows it."""
+    from . import answers as _answers
+    from . import readback as _rb
+    label = str(item.get("label") or "").strip()
+    if len(label) < 6:
+        return None
+    try:
+        a = _answers.lookup(label, company, portal)
+    except Exception:
+        return None
+    if a is None or not a.has_value or a.answer is None:
+        return None
+    wants = [w.strip() for w in str(a.answer).split(";") if w.strip()]
+    for w in wants[:1] if a.answer_type in ("choice_chain",) else wants:
+        try:
+            if _rb.values_equal(w, value, _rb._kind_for(item, w), label):
+                return a.key
+        except Exception:
+            if _answers.norm(w) == _answers.norm(value):
+                return a.key
+    return None
+
+
+ACCOUNT_PAGE = re.compile(r"\b(password help|forgot (your )?password|reset (your )?password|change (your )?password|"
+                          r"create (an |your )?account|candidate (sign[- ]?in|login)|career opportunities: sign in|"
+                          r"(^|\| )(sign[- ]?in|log[- ]?in|register)( \||$))", re.I)
+
+
 _FIELDS_TO_FIX = re.compile(r"(?m)^[ \t]*(.{1,90}?)[ \t]*\n+[ \t]*Fields to fix:?[ \t]*(\d+)")
 
 
@@ -166,6 +195,12 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     # 1b. a sign-in or account page is never the end of an application
     if any(i.get("type") == "password" for i in snapshot.items):
         return GateResult("blocked", ["this is a sign-in or account page (password field), not the application form: sign in, then fill the form"])
+    # ...nor is a password-help page, which has no password box (CenturyLink's SuccessFactors 'Password Help', 2026-10-21:
+    # the run pressed its Submit through submit and the gate passed; the judge caught it)
+    heads = " | ".join([snapshot.title or ""] + list(snapshot.headings or [])[:4])
+    if ACCOUNT_PAGE.search(heads):
+        return GateResult("blocked", [f"this is an account page ({heads[:80]!r}), not the application form: finish signing in "
+                                      "(credentials / the password reset), then fill the application"])
 
     # 2. challenge
     if snapshot.challenge.get("challenge"):
@@ -298,6 +333,11 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
             continue
         if not _sourced(it.get("ref", ""), it.get("label", "")):
             key = standing.get(_answers.norm(str(val)))
+            if not key and it.get("type") not in ("checkbox", "radio") and it.get("tag") != "toggle":
+                # A value the portal kept from his earlier application ("Are you willing to relocate? = Yes" on Electronic
+                # Arts' Avature form, 2026-10-21) is sourced when it equals his stored answer to that very question; a
+                # plain "Yes" matches too many stored answers to be looked up by its text alone.
+                key = _stored_answer_matching(it, str(val), job.get("company", ""), portal)
             if not key and any(readback.dial_code_matches(cv, str(val)) for cv, ck in standing.items() if ck == "identity.country"):
                 key = "identity.country"      # a phone country picker showing "+1" for his United States (Epic Games)
             if key and it.get("type") not in ("checkbox", "radio") and it.get("tag") != "toggle":

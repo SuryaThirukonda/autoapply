@@ -1612,3 +1612,58 @@ async def test_a_boot_camp_degree_or_military_question_is_no(store):
          "college/university or Military Service?")
     out, _ = await d.t_lookup_answer(q, ["Yes", "No"])
     assert out["answer"] == "No" and out["via"] == "degree_rule"
+
+
+
+@pytest.mark.asyncio
+async def test_a_clearance_required_after_day_one_is_not_an_eligibility_hold(store):
+    """RTX (2026-10-21): 'requires an active and existing DoD Secret security clearance after day one' held the job."""
+    job = _job()
+    d, ctx = _dispatcher(job)
+
+    async def page_text(n=0):
+        return "Software Engineering Intern (Summer 2027) Apply"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("eligibility: Posting requires an active and existing DoD Secret security clearance after day one; "
+                            "Surya has never held a clearance.")
+    assert "not needed to apply" in out["error"]
+    from goat.agent.tools import ToolDispatcher
+    assert not ToolDispatcher.CLEARANCE_LATER.search("requires an active TS/SCI clearance to apply")
+
+
+
+def test_apply_is_the_final_button_on_a_filled_successfactors_form(store):
+    """Westinghouse (2026-10-21): the gate passed and submit refused 'Apply' as a navigation button."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher(_job())
+    items = [{"ref": f"e{n}", "tag": "input", "type": "text", "label": f"Field {n}"} for n in range(10)]
+    ctx.last_snapshot = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    assert d._final_apply_button("Apply")
+    ctx.last_snapshot = Snapshot(url="u", title="t", headings=[], items=items[:2], groups=[], errors={}, challenge={})
+    assert not d._final_apply_button("Apply")                     # a posting page with an Apply link
+    assert not d._final_apply_button("Apply Now")
+
+
+
+@pytest.mark.asyncio
+async def test_a_hand_picked_race_is_refused_when_the_list_offers_decline(store, monkeypatch):
+    """Impulse Space (2026-10-21): 'Asian' set with the computer tool was kept although EEO lists offer a decline option."""
+    from goat.agent import tools as toolsmod
+    d, ctx = _dispatcher(_job())
+    answers.save_answer("self_id.race_ethnicity", "decline; Prefer not to say; Asian", answer_type="choice_chain", source="questionnaire")
+
+    async def read_ref(ref):
+        return {"found": True, "type": "text", "value": "Asian"}
+    ctx.ex.read_ref = read_ref
+
+    async def peek(ex, ref):
+        return ["Asian", "White", "Prefer not to say"], None
+    monkeypatch.setattr(toolsmod.fill, "peek_options", peek)
+    out = await d._keep_computer_pick({"ref": "e15", "answer_key": "self_id.race_ethnicity", "label": "Ethnicity"}, None)
+    assert out["status"] == "failed" and "Prefer not to say" in out["error"]
+
+    async def peek2(ex, ref):
+        return ["Asian", "White"], None
+    monkeypatch.setattr(toolsmod.fill, "peek_options", peek2)
+    out = await d._keep_computer_pick({"ref": "e15", "answer_key": "self_id.race_ethnicity", "label": "Ethnicity"}, None)
+    assert out["status"] == "kept"
