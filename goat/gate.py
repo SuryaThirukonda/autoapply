@@ -95,6 +95,19 @@ def guardrail_check(text: str) -> tuple[list[str], list[str]]:
     return blocks, warns
 
 
+_FIELDS_TO_FIX = re.compile(r"(?m)^[ \t]*(.{1,90}?)[ \t]*\n+[ \t]*Fields to fix:?[ \t]*(\d+)")
+
+
+def fields_to_fix(page_text: str) -> list[tuple[str, int]]:
+    """Oracle entry tiles that still miss a required field: (the tile's last title line, how many fields)."""
+    out = []
+    for m in _FIELDS_TO_FIX.finditer((page_text or "").replace("\u200b", "")):
+        n = int(m.group(2))
+        if n > 0:
+            out.append((m.group(1).strip(), n))
+    return out
+
+
 def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: str | None,
              free_text_answers: list[str], portal: str, page_no: int = 0) -> GateResult:
     reasons: list[str] = []
@@ -145,6 +158,16 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
                 if m == LANGUAGES_GAP else
                 f"the Review page does not show {m}: call go_to_step('My Experience'), then fill_sections, then Save and Continue forward to Review"
                 for m in missing[:4]])
+    # Oracle keeps each Experience / Education entry as a tile, and a tile missing a required field shows "Fields to fix: N";
+    # its SUBMIT then does nothing (Texas Instruments, 2026-10-20: two tiles from Oracle's résumé import, 'Computer Science'
+    # and 'Engineering Honors / Texas A&M University', and two inert submits spent the run).
+    tiles = fields_to_fix(page_text)
+    if tiles:
+        return GateResult("blocked", [
+            f"the tile '{t}' shows 'Fields to fix: {n}': open it with its Edit (pencil) button and fill the missing required "
+            "field from the stored answers (education.* / experience.work.N.*), then save the tile; a tile that matches none of "
+            "his stored entries (Oracle's résumé import adds such tiles) is removed with its Delete button instead"
+            for t, n in tiles[:4]])
     # Greenhouse's single page: when it has an Employment section, every stored work entry must be in it.
     if (portal or "").lower() == "greenhouse":
         from .adapters.greenhouse_sections import review_gaps_from_snapshot

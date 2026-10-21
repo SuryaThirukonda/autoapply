@@ -1800,6 +1800,14 @@ class ToolDispatcher:
                 # Verkada (2026-10-18): the transcript went into the Graduate Transcript slot and the undergraduate one stayed empty
                 return {"error": f"'{lab[:60]}' is a graduate-school slot; Surya is an undergraduate (BS, graduating May 2028). Upload the "
                                  "transcript into the Undergraduate Transcript slot and leave this one empty."}, None
+        item_now = (self.ctx.last_snapshot.find(ref) if self.ctx.last_snapshot else None) or {}
+        from ..adapters import is_job_match_upload
+        if is_job_match_upload(" ".join([str(item_now.get("label") or ""), str(item_now.get("placeholder") or "")]),
+                               getattr(self.ctx.ex, "url", "") or "", self.ctx.portal):
+            # Texas Instruments (2026-10-20): the search page's "upload your resume to get recommended jobs" box parsed the
+            # résumé into his profile and the application gained education tiles he never entered
+            return {"error": "this box feeds the site's job recommendations, not the application: never upload there. Open "
+                             "the posting and its Apply button; the application's own Resume / CV slot takes the résumé."}, None
         p = _resume_path(self.ctx, document)
         if not p or not p.exists():
             return {"error": f"{document} file not available in the résumé folder"}, None

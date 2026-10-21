@@ -158,6 +158,23 @@ def _standing_values() -> dict[str, str]:
     return out
 
 
+# A file box for the site's job matching, not the application: Texas Instruments' Oracle search page offered "Upload or
+# drag and drop your resume here to get recommended jobs based on your skills and experience." (2026-10-20). The prefill
+# attached the résumé there, Oracle parsed it into his candidate profile, and the application then carried two education
+# tiles he never entered ('Computer Science', 'Engineering Honors'), each with a required field to fix.
+JOB_MATCH_UPLOAD = re.compile(r"recommended (jobs|roles|positions|opportunities)|job recommendations|recommend(ed)? jobs|"
+                              r"job alerts?|matching jobs|jobs (that )?match|get matched|match(ed)? (you )?(to|with) jobs|"
+                              r"find (your )?(next )?(jobs?|roles?)|search jobs|based on your (skills|resume|résumé|experience)", re.I)
+
+
+def is_job_match_upload(label: str, url: str = "", portal: str = "") -> bool:
+    """A résumé box that feeds the site's job matching rather than this application."""
+    if JOB_MATCH_UPLOAD.search(label or ""):
+        return True
+    # Oracle's application lives under /apply/: a résumé box elsewhere (the search page) is the matching one
+    return (portal or "").lower() == "oracle" and "/apply" not in (url or "") and bool(url)
+
+
 def resume_path_for(job: dict):
     """The résumé file for this job's variant, from delegation.yaml (never a file on the never_attach list)."""
     import yaml
@@ -343,6 +360,9 @@ class Adapter:
                 continue
             label = " ".join([(item.get("label") or ""), (item.get("placeholder") or ""), (item.get("name") or "")])
             if re.search(r"cover|transcript", label, re.I) or not re.search(r"resume|résumé|\bcv\b|curriculum", label, re.I):
+                continue
+            if is_job_match_upload(label, getattr(ex, "url", "") or "", self.portal):
+                res.details.append({"label": item.get("label"), "ok": True, "skipped": "a job-matching upload, not the application"})
                 continue
             path = resume_path_for(job)
             if path is None or not path.exists():

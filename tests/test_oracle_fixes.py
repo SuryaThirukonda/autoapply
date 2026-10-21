@@ -266,3 +266,28 @@ def test_native_english_takes_the_highest_level_offered():
     assert best_option(opts("1 - Elementary", "2 - Limited working", "3 - Professional working", "4 - Full professional"), chain)["text"] == "4 - Full professional"
     assert best_option(opts("Basic", "Intermediate", "Advanced", "Fluent"), chain)["text"] == "Fluent"
     assert best_option(opts("Yes", "No"), ["Yes"])["text"] == "Yes"
+
+
+
+def test_a_job_matching_resume_box_is_never_the_application():
+    """Texas Instruments (2026-10-20): the search page's box parsed the résumé into his profile and the application
+    gained education tiles he never entered."""
+    from goat.adapters import is_job_match_upload
+    lab = "Upload or drag and drop your resume here to get recommended jobs based on your skills and experience."
+    assert is_job_match_upload(lab)
+    assert is_job_match_upload("Resume", "https://edbz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs?x=1", "oracle")
+    assert not is_job_match_upload("Resume", "https://edbz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/1/apply/section/1", "oracle")
+    assert not is_job_match_upload("Resume/CV", "https://x.wd1.myworkdayjobs.com/en-US/X/job/Y/apply/applyManually", "workday")
+    assert not is_job_match_upload("Upload your resume (PDF)")
+
+
+
+def test_an_oracle_tile_with_fields_to_fix_blocks_the_gate():
+    """Texas Instruments (2026-10-20): the gate passed while two education tiles showed 'Fields to fix: 1', and Oracle's
+    SUBMIT did nothing twice."""
+    from goat.gate import fields_to_fix
+    text = ("Education \n\nPlease provide details about your education.\n\nComputer Science\nFields to fix: 1\nEngineering Honors\n"
+            "Texas A&M University\nFields to fix: 1\nADD EDUCATION\nSupporting Documents and URLs")
+    assert fields_to_fix(text) == [("Computer Science", 1), ("Texas A&M University", 1)]
+    assert fields_to_fix("Education\nTexas A&M University\nADD EDUCATION") == []
+    assert fields_to_fix("Texas A&M University\nFields to fix: 0") == []
