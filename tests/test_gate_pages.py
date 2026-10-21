@@ -310,3 +310,16 @@ def test_a_password_help_page_is_never_the_end_of_an_application(store):
                      errors={}, challenge={})
     from goat.gate import ACCOUNT_PAGE
     assert not ACCOUNT_PAGE.search("Apply: Software Engineer Intern | Application Questions")
+
+
+
+def test_a_section_level_complete_your_information_message_is_stale_when_nothing_is_empty(store):
+    """L3Harris (2026-10-21): 'Please complete your personal information.' sat by the 'Login/Primary Email' heading."""
+    from goat.browser.snapshot import Snapshot
+    from goat.gate import drop_stale_required
+    errs = {"error_text": [{"near": "Login/Primary Email", "text": "Please complete your personal information."}]}
+    snap = Snapshot(url="u", title="t", headings=[], items=[{"ref": "e17", "tag": "input", "label": "* E-Mail", "value": "x@y.z"}],
+                    groups=[], errors=errs, challenge={})
+    assert drop_stale_required(errs, snap)["error_text"] == []
+    errs2 = {**errs, "empty_required": [{"label": "* Phone", "type": "text", "ref": "e20"}]}
+    assert drop_stale_required(errs2, snap)["error_text"] == errs["error_text"]

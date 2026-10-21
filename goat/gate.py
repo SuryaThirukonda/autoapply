@@ -108,6 +108,7 @@ _REQUIRED_MSG = re.compile(r"\b(required|is mandatory|please (complete|select|en
                            r"must not be (blank|empty)|this info is required|missing)\b", re.I)
 
 
+_SECTION_MSG = re.compile(r"\bplease complete (your |the )?(personal |contact |profile )?(information|details|profile|section)\b", re.I)
 _FORMAT_MSG = re.compile(r"\b(valid|invalid|format|must be|at least|at most|characters?|match(es)?|correct|too (long|short))\b", re.I)
 
 
@@ -126,9 +127,16 @@ def drop_stale_required(errors: dict | None, snapshot) -> dict:
         if lab:
             filled[lab] = val
 
+    # A section-level "Please complete your personal information." names no field (L3Harris, 2026-10-21: it sat by the
+    # 'Login/Primary Email' heading while the box itself is '* E-Mail'); with no empty required field left on the page it
+    # is stale too.
+    nothing_empty = not errs.get("empty_required")
+
     def stale(e: dict) -> bool:
         near = _answers.norm(e.get("near") or "")
         text = str(e.get("text") or "")
+        if nothing_empty and _SECTION_MSG.search(text):
+            return True
         return bool(near) and bool(_REQUIRED_MSG.search(text)) and not _FORMAT_MSG.search(text) and near in filled
 
     for kind in ("error_text", "alerts"):
