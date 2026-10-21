@@ -1831,7 +1831,7 @@ async def test_a_profile_use_choice_bundling_the_talent_community_takes_only_thi
     answers.save_answer("consent.keep_profile_future_roles", "Yes", answer_type="choice", source="questionnaire")
     answers.save_answer("policy.may_join_talent_community", "No", answer_type="choice", source="seed:delegation.yaml")
     out, _ = await d.t_fill_batch([{"ref": "e46", "answer_key": "consent.keep_profile_future_roles", "value": None, "source": None, "label": q}])
-    assert out["results"][0]["status"] == "failed", out
+    assert out["results"][0]["status"] == "failed" and "ONLY THE ROLE I AM APPLYING FOR" in out["results"][0]["error"], out
     out, _ = await d.t_fill_batch([{"ref": "e47", "answer_key": "consent.keep_profile_future_roles", "value": None, "source": None, "label": q}])
     assert out["results"][0]["status"] == "set", out
 

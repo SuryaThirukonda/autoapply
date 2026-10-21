@@ -1335,9 +1335,14 @@ class ToolDispatcher:
                         val = "true"
                         label_matched = True
                     else:
-                        results.append({"ref": f["ref"], "status": "failed",
-                                        "error": f"the stored answer is No but this option reads '{opt_label[:50]}'; tick the No option of this "
-                                                 "question instead (a radio cannot be unticked)"})
+                        msg = (f"the stored answer is No but this option reads '{opt_label[:50]}'; tick the No option of this "
+                               "question instead (a radio cannot be unticked)")
+                        if str(src).startswith("standing:policy.may_join_talent_community"):
+                            # Qualcomm (2026-10-21): no option says 'No' here, and three runs held looking for one
+                            msg = (f"'{opt_label[:50]}...' also enrolls him in the talent community, which he never joins: tick the "
+                                   "option that keeps his data to the role he is applying for ('ONLY THE ROLE I AM APPLYING FOR') "
+                                   "with the same answer_key consent.keep_profile_future_roles; that is his answer here")
+                        results.append({"ref": f["ref"], "status": "failed", "error": msg})
                         continue
                 elif v in AFFIRMATIVE and says_no:
                     results.append({"ref": f["ref"], "status": "failed",

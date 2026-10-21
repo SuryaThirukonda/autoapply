@@ -607,26 +607,49 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
     return outcome
 
 
+ACTIVE_TAB_STATES = (states.HOLD, states.READY_FOR_YOU, states.QUEUED, states.FILLING, states.GATED, states.SUBMITTING,
+                     states.AWAITING_ANSWER, states.AWAITING_CODE)
+
+
 async def _prune_held_tabs(ex: Executor) -> None:
+    """Keep the newest held tabs and close the rest; then close every page no active job points at (popups and the
+    pages of earlier runs): 62 open tabs made connect_over_cdp time out and the browser counted as down (2026-10-21).
+    Extension pages stay, and so does one page, so the window never closes."""
     con = db.connect()
     rows = con.execute("SELECT id, tab_target_id FROM jobs WHERE tab_target_id IS NOT NULL AND status IN (?, ?) ORDER BY updated_at DESC",
                        (states.HOLD, states.READY_FOR_YOU)).fetchall()
     keep = {r["tab_target_id"] for r in rows[: SETTINGS.budgets.max_held_tabs]}
     stale = [r for r in rows[SETTINGS.budgets.max_held_tabs:]]
-    if not stale or not ex._context:
+    if not ex._context:
         return
-    for p in list(ex._context.pages):
+    marks = ",".join("?" * len(ACTIVE_TAB_STATES))
+    active = {r["tab_target_id"] for r in con.execute(
+        f"SELECT tab_target_id FROM jobs WHERE tab_target_id IS NOT NULL AND status IN ({marks})", ACTIVE_TAB_STATES)}
+    stale_ids = {r["tab_target_id"] for r in stale}
+    pages = list(ex._context.pages)
+    doomed = []
+    for p in pages:
         try:
+            if (p.url or "").startswith("chrome-extension://"):
+                continue
             cdp = await ex._context.new_cdp_session(p)
             tid = (await cdp.send("Target.getTargetInfo")).get("targetInfo", {}).get("targetId")
             await cdp.detach()
-            if tid and tid not in keep and any(r["tab_target_id"] == tid for r in stale):
-                await p.close()
+            if tid and tid not in keep and (tid in stale_ids or tid not in active):
+                doomed.append(p)
         except Exception:
             continue
-    with db.tx() as con:
-        for r in stale:
-            con.execute("UPDATE jobs SET tab_target_id=NULL WHERE id=?", (r["id"],))
+    if doomed and len(doomed) >= len(pages):
+        doomed = doomed[:-1]          # never the last page: the window would close
+    for p in doomed:
+        try:
+            await p.close()
+        except Exception:
+            continue
+    if stale:
+        with db.tx() as con:
+            for r in stale:
+                con.execute("UPDATE jobs SET tab_target_id=NULL WHERE id=?", (r["id"],))
 
 
 PORTAL_RETRY_AFTER_S = 2 * 3600
