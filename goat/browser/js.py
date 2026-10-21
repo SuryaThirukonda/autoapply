@@ -88,6 +88,15 @@ _COMMON = r"""
     if (!t) { const h = boxHead(el); if (h) t = txt(h); }
     // inside a custom element's shadow root: the host's name ('I currently work here', 'Add experience entry')
     if (!t) { const hn = shadowHostNames(el); if (hn.length) t = hn[0]; }
+    // no label anywhere: the question is the block just before the field's box (Rippling's custom questions read as
+    // their name 'YIhsc0xVmXU', 2026-10-21)
+    if (!wordy(t)) {
+      let box = el.closest('[data-testid="field"]') || el.parentElement;
+      for (let i = 0; i < 3 && box && !wordy(t); i++, box = box.parentElement) {
+        const prev = box.previousElementSibling;
+        if (prev && !prev.querySelector('input, select, textarea, button')) { const pt = txt(prev); if (pt && pt.length < 400) t = pt; }
+      }
+    }
     if (!t) t = el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '';
     if (selectedList) {
       // Workday keeps the search box inside the chip list once something is selected: say so, and name the section.
@@ -364,6 +373,11 @@ JS_SNAPSHOT = r"""
         // questions showed only 'Yes' / 'No' items without their question, none was set, and the gate passed): a toggle
         // that carries its question, so it is answered like Ashby's Yes / No buttons.
         item.tag = 'toggle'; item.pressed = el.getAttribute('aria-checked') === 'true';
+        // an option drawn as a div with its own text ('Yes' / 'No') is named by that text, and the question it answers
+        // goes to the group: Rippling's options both read as the question, and 'Yes' was pressed for "Do you require
+        // work authorization to work in the United States?" (2026-10-21)
+        const ownText = txt(el);
+        if (ownText && ownText.length <= 80 && ownText !== item.label) { item.question0 = item.label; item.label = ownText; }
         let rg = el.closest('[role="radiogroup"], [role="group"]');
         // SmartRecruiters' <spl-radio> sits in its group host's light DOM and shows through a slot in the group's
         // shadow <fieldset role="radiogroup">, whose label holds the question in another slot (CapTech, 2026-10-21)
@@ -373,7 +387,9 @@ JS_SNAPSHOT = r"""
         if (lb) { const rr = rg.getRootNode ? rg.getRootNode() : null; const id0 = lb.split(/\s+/)[0];
           const n = (rr && rr.getElementById ? rr.getElementById(id0) : null) || el.ownerDocument.getElementById(id0); if (n) q = ctxt(n); }
         if (!q && rg) q = (rg.getAttribute('aria-label') || '').trim();
-        item.group = (q || groupLabel(el) || '').slice(0, 200);
+        item.group = (q || groupLabel(el) || item.question0 || '').slice(0, 200);
+        if (item.group && item.group === item.label && item.question0) item.group = item.question0.slice(0, 200);
+        delete item.question0;
         if (rg && (rg.getAttribute('aria-required') === 'true' || /^\s*\*|\*\s*$/.test(q))) item.required = true;
       } else if (tag === 'a') {
         item.label = txt(el).slice(0, 100);
@@ -642,7 +658,9 @@ JS_PAGE_ERRORS = r"""
   // "Please correct highlighted fields" is a banner about the form, not about the field above it (Epic Games, 2026-10-19)
   const FORM_SUMMARY = /(missing\s+entry\s+for\s+required\s+field|your\s+form\s+needs\s+corrections|please\s+(complete|fill\s+in)\s+(all\s+)?(the\s+)?required\s+fields|(fix|correct)\s+the\s+(errors|following)\s+(below|above|before)|(please\s+)?correct\s+(the\s+)?highlighted\s+fields?)/i;
   const STATUSY = /(loaded|loading|please\s+wait|saved|updated|added|removed|expanded|collapsed|in\s+progress|step\s+\d|page\s+\d|results?\s+(found|updated)|showing\s+\d|selected)/i;
-  const INSTRUCTIONAL = /(if\s+applicable|e\.g\.|for\s+example|\(optional\)|as\s+it\s+appears|do\s+not\s+include|maximum\s+of|up\s+to\s+\d|characters?\s+remaining|format:)/i;
+  // ... and a paragraph that explains what a question is for (Rippling, 2026-10-21: "Our internships are designed for
+  // students ... Please provide your anticipated graduation date in order to access your eligibility" blocked every submit)
+  const INSTRUCTIONAL = /(if\s+applicable|e\.g\.|for\s+example|\(optional\)|as\s+it\s+appears|do\s+not\s+include|maximum\s+of|up\s+to\s+\d|characters?\s+remaining|format:|in\s+order\s+to|(are|is)\s+designed\s+for|for\s+(demographic|outreach|statistical|reporting)\s+purposes)/i;
   const alerts = [], errorText = [], emptyRequired = [], summaries = [];
   const seenRoots = new Set(), seenText = new Set();
   function vis(el) { try { const r = el.getBoundingClientRect(); const s = el.ownerDocument.defaultView.getComputedStyle(el);

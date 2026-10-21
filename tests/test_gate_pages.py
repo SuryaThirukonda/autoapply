@@ -627,3 +627,57 @@ def test_a_successfactors_create_account_form_gets_its_steps_whatever_the_listin
     assert sf_account_note(snap) == ""        # a sign-in page has one password box
     snap.items, snap.url = items, "https://boards.greenhouse.io/x"
     assert sf_account_note(snap) == ""
+
+
+
+RIPPLING = """<html><body><form>
+<div class="marginY--36">
+ <div class="paddingX--16">What school or university are you currently attending or from which you recently graduated?</div>
+ <div class="css-fuqajr" data-testid="field"><div><div data-testid="customQuestions.x">
+  <input id="field-75" aria-required="true" name="YIhsc0xVmXU" value=""></div></div></div>
+</div></form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_field_with_no_label_takes_the_question_in_the_block_before_it():
+    """Rippling (2026-10-21): a required custom question read as its name 'YIhsc0xVmXU'."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(RIPPLING)
+        snap = await snapshot.take(ex)
+        item = next(i for i in snap.items if i.get("tag") == "input")
+        assert item["label"].startswith("What school or university are you currently attending"), item["label"]
+    finally:
+        await ex.close()
+
+
+
+RIPPLING_RADIOS = """<html><body><form>
+<div class="marginY--36"><div class="field"><label id="la79">Do you require work authorization to work in the United States for this internship?</label>
+ <div id="field-79" role="radiogroup">
+  <div role="radio" aria-checked="false" tabindex="0" data-value="Yes" style="display:inline-block;width:60px;height:20px"><input type="radio" aria-labelledby="la79" style="opacity:0;width:1px;height:1px">Yes</div>
+  <div role="radio" aria-checked="false" tabindex="-1" data-value="No" style="display:inline-block;width:60px;height:20px"><input type="radio" aria-labelledby="la79" style="opacity:0;width:1px;height:1px">No</div>
+ </div></div></div>
+<div class="note">Our internships are designed for students currently enrolled in a degree program. Please provide your anticipated
+graduation date in order to access your eligibility for this opportunity.</div>
+</form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_div_radio_options_are_named_by_their_own_text_and_a_purpose_note_is_no_error():
+    """Rippling (2026-10-21): both options read as the question and 'Yes' was pressed for 'Do you require work
+    authorization ...?'; its eligibility note blocked every submit as an error."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(RIPPLING_RADIOS)
+        snap = await snapshot.take(ex)
+        toggles = [i for i in snap.items if i.get("tag") == "toggle"]
+        assert [t["label"] for t in toggles] == ["Yes", "No"], toggles
+        assert all(t["group"].startswith("Do you require work authorization") for t in toggles), toggles
+        assert not any("designed for" in (e.get("text") or "") for e in snap.errors.get("error_text", [])), snap.errors
+    finally:
+        await ex.close()
