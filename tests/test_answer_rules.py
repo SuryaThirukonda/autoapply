@@ -1959,3 +1959,38 @@ async def test_an_if_yes_box_after_a_no_answer_stays_empty_or_takes_na(store, mo
     await d.t_fill_batch([{"ref": "e50", "answer_key": "bank.applied-before", "value": None, "source": None, "label": "Have you applied to Lumen before?"},
                           {"ref": "e51", "answer_key": "bank.applied-when", "value": None, "source": None, "label": "If so, when?"}])
     assert sent.get("e51") == "Spring 2026", sent
+
+
+@pytest.mark.asyncio
+async def test_an_if_yes_box_follows_the_question_drawn_right_above_it(store, monkeypatch):
+    """CenturyLink (2026-10-21): the box after 'former employee of Lumen?' took 'Accommodation' (two fields up, the
+    nearest answered question) as its question; the question right above it decides."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher({"id": 409, "company": "CenturyLink", "ats": "successfactors"})
+    items = [{"ref": "e33", "tag": "select", "label": "Do you require a reasonable accommodation?", "value": "", "bbox": [400, 100, 300, 30]},
+             {"ref": "e38", "tag": "input", "type": "text", "combo": True, "label": "* Are you a former employee of Lumen?", "value": "", "bbox": [400, 200, 300, 30], "required": True},
+             {"ref": "e39", "tag": "button", "label": "Are you a former employee of Lumen?", "bbox": [560, 200, 20, 20]},
+             {"ref": "e40", "tag": "textarea", "label": "* If yes, please describe the circumstances (Enter 'N/A' if not applicable.)", "value": "", "bbox": [400, 260, 300, 60], "required": True}]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    sent = {}
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        for p_ in plan:
+            sent[p_["ref"]] = p_["value"]
+        return [FieldResult(p_["ref"], True, str(p_["value"]), "") for p_ in plan]
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("bank.accommodation", "No", answer_type="choice", source="seed")
+    answers.save_answer("bank.prior-employee", "No", answer_type="choice", source="seed")
+    answers.save_answer("background.reason_for_leaving", "Internship ended", answer_type="text", source="seed")
+    await d.t_fill_batch([{"ref": "e33", "answer_key": "bank.accommodation", "value": None, "source": None, "label": "Accommodation"}])
+    out, _ = await d.t_fill_batch([{"ref": "e40", "answer_key": "background.reason_for_leaving", "value": None, "source": None, "label": "If yes"}])
+    res = {r["ref"]: r for r in (out.get("results") if isinstance(out, dict) else out)}
+    assert res["e40"]["status"] == "failed" and "former employee" in res["e40"]["error"] and "e40" not in sent, (res, sent)
+    await d.t_fill_batch([{"ref": "e38", "answer_key": "bank.prior-employee", "value": None, "source": None, "label": "Former employee"}])
+    await d.t_fill_batch([{"ref": "e40", "answer_key": "background.reason_for_leaving", "value": None, "source": None, "label": "If yes"}])
+    assert sent.get("e40") == "N/A", sent

@@ -18,6 +18,26 @@ _COMMON = r"""
   };
   // icon-font glyphs (private use area) are not text: an empty SuccessFactors dropdown shows only its arrow glyph U+E1EF
   const txt = (el) => ((el && (el.innerText || el.textContent)) || '').replace(/[\u200B-\u200D\u2060\uFEFF\uE000-\uF8FF]/g, '').replace(/\s+/g, ' ').trim();
+  // Text that includes what <slot>s show: a design-system label keeps its words in the host's light DOM and its shadow
+  // <label> holds only a slot and the '*' (SmartRecruiters' screening questions read as just '*', CapTech 2026-10-21).
+  const ctxt = (el) => {
+    if (!el || !el.querySelector || !el.querySelector('slot')) return txt(el);
+    const parts = [];
+    const walk = (n, d) => {
+      if (!n || d > 40) return;
+      if (n.nodeType === 3) { parts.push(n.nodeValue || ''); return; }
+      if (n.nodeType !== 1 || n.tagName === 'STYLE' || n.tagName === 'SCRIPT') return;
+      if (n.tagName === 'SLOT') {
+        const as = n.assignedNodes ? n.assignedNodes({ flatten: true }) : [];
+        for (const a of (as.length ? as : Array.from(n.childNodes))) walk(a, d + 1);
+        return;
+      }
+      for (const c of n.childNodes) walk(c, d + 1);
+    };
+    walk(el, 0);
+    return txt({ innerText: parts.join(' ') });
+  };
+  const wordy = (t) => !!(t && t.replace(/[\s*:]+/g, ''));
   const PLACEHOLDER = /^(select one|select\.\.\.|select…|select|choose one|choose|search|please select|-- select --|--|)$/i;
   // A field whose own label ends in "*" is required even without a required / aria-required attribute (Epic Games'
   // "Email*:", "School*:", "Gender Identity*:", 2026-10-19: the gate passed with all of them blank). The label is the
@@ -48,12 +68,17 @@ _COMMON = r"""
 
   function labelFor(el) {
     const doc = el.ownerDocument; let t = '';
-    if (el.id) { try { const l = doc.querySelector('label[for="' + CSS.escape(el.id) + '"]'); if (l) t = txt(l); } catch (e) {} }
-    if (!t) { const l = el.closest('label'); if (l) t = txt(l); }
+    const rn = el.getRootNode ? el.getRootNode() : doc;
+    const scope = (rn && rn !== doc && rn.querySelector) ? rn : doc;
+    if (el.id) { try { const l = scope.querySelector('label[for="' + CSS.escape(el.id) + '"]') || (scope !== doc ? doc.querySelector('label[for="' + CSS.escape(el.id) + '"]') : null); if (l) t = ctxt(l); } catch (e) {} }
+    if (!wordy(t)) { const l = el.closest('label'); if (l) t = ctxt(l); }
     if (!t) t = el.getAttribute('aria-label') || '';
     let selectedList = false;
     if (/^items selected$/i.test(t) || (el.getAttribute && el.getAttribute('data-automation-id') === 'selectedItemList')) { t = ''; selectedList = true; }
-    if (!t) { const ids = el.getAttribute('aria-labelledby'); if (ids) { t = ids.split(/\s+/).map(i => { const n = doc.getElementById(i); return n ? txt(n) : ''; }).filter(Boolean).join(' '); } }
+    if (!wordy(t)) { const ids = el.getAttribute('aria-labelledby'); if (ids) { const t2 = ids.split(/\s+/).map(i => { const n = (scope.getElementById ? scope.getElementById(i) : null) || doc.getElementById(i); return n ? ctxt(n) : ''; }).filter(Boolean).join(' '); if (t2) t = t2; } }
+    // a design-system control host names itself: SmartRecruiters' <spl-radio label="Yes"> draws its text in its own shadow root
+    if (!wordy(t) && el.getAttribute && (el.getAttribute('label') || '').trim()) t = el.getAttribute('label').trim();
+    if (!wordy(t) && el.shadowRoot) { const l = el.shadowRoot.querySelector('label'); if (l && wordy(ctxt(l))) t = ctxt(l); }
     if (!t) { const ff = el.closest('[data-automation-id^="formField"], .field, .form-group, .application-field, [class*="field" i], fieldset'); if (ff) { const l = ff.querySelector('label, legend, [class*="label" i]'); if (l && !l.contains(el)) t = txt(l); } }
     // Lever custom questions: the text sits in a sibling block BEFORE the field container (.application-label + .application-field)
     if (!t) { const ff = el.closest('.application-field, [class*="field" i]'); let p = ff && ff.previousElementSibling; for (let i = 0; i < 2 && p && !t; i++, p = p.previousElementSibling) { if (/label|question/i.test(p.className || '')) t = txt(p).replace(/\s*[✱*]\s*$/, ''); } }
@@ -112,6 +137,19 @@ _COMMON = r"""
   }
 """
 
+def _COMMON_WRAP(body: str, arg: str = "args") -> str:
+    """`(arg) => { <_COMMON helpers> <body> }`."""
+    return "(" + arg + ") => {\n" + _COMMON + "\n" + body + "\n}"
+
+
+# Which of these refs are still on the page (in any shadow root).
+JS_REFS_PRESENT = _COMMON_WRAP("""
+  const out = [];
+  for (const r of (args || [])) { try { if (findRef(r)) out.push(r); } catch (e) {} }
+  return out;
+""", "args")
+
+
 # --------------------------------------------------------------------------- snapshot
 JS_SNAPSHOT = r"""
 (maxItems) => {
@@ -133,7 +171,7 @@ JS_SNAPSHOT = r"""
     // The group's own box first: the nearest container holding only this group and a question label (Epic Games'
     // "Veteran Status*:" sits beside its options; a container classed "...Questions" held every demographic question,
     // so its first label named another question and "Hispanic or Latino", an option, read as a question, 2026-10-19).
-    const own = boxHead(el); if (own) { const t0 = txt(own); if (t0 && t0.length < 300) return t0; }
+    const own = boxHead(el); if (own) { const t0 = ctxt(own); if (wordy(t0) && t0.length < 300) return t0; }
     const fs = el.closest('fieldset, [role="group"], [role="radiogroup"], [data-automation-id^="formField"], .field, .form-group, .application-question, [class*="question" i]');
     if (fs) {
       const lg = fs.querySelector('legend, [class*="legend" i], [id$="-label"], [class*="question" i] > :first-child, label:not([for]), .label, [class*="label" i]');
@@ -141,7 +179,7 @@ JS_SNAPSHOT = r"""
       const lb = fs.getAttribute('aria-labelledby'); if (lb) { const n = document.getElementById(lb.split(' ')[0]); if (n) return txt(n).slice(0, 300); }
     }
     // a question label in a sibling block above the options (Epic Games' "Gender Identity*:", 2026-10-19)
-    const h = boxHead(el); if (h) { const t = txt(h); if (t && t.length < 300) return t; }
+    const h = boxHead(el); if (h) { const t = ctxt(h); if (wordy(t) && t.length < 300) return t; }
     return '';
   }
 
@@ -288,10 +326,14 @@ JS_SNAPSHOT = r"""
         // questions showed only 'Yes' / 'No' items without their question, none was set, and the gate passed): a toggle
         // that carries its question, so it is answered like Ashby's Yes / No buttons.
         item.tag = 'toggle'; item.pressed = el.getAttribute('aria-checked') === 'true';
-        const rg = el.closest('[role="radiogroup"], [role="group"]');
+        let rg = el.closest('[role="radiogroup"], [role="group"]');
+        // SmartRecruiters' <spl-radio> sits in its group host's light DOM and shows through a slot in the group's
+        // shadow <fieldset role="radiogroup">, whose label holds the question in another slot (CapTech, 2026-10-21)
+        if (!rg && el.assignedSlot) rg = el.assignedSlot.closest('[role="radiogroup"], [role="group"]');
         const lb = rg ? (rg.getAttribute('aria-labelledby') || '') : '';
         let q = '';
-        if (lb) { const n = el.ownerDocument.getElementById(lb.split(/\s+/)[0]); if (n) q = txt(n); }
+        if (lb) { const rr = rg.getRootNode ? rg.getRootNode() : null; const id0 = lb.split(/\s+/)[0];
+          const n = (rr && rr.getElementById ? rr.getElementById(id0) : null) || el.ownerDocument.getElementById(id0); if (n) q = ctxt(n); }
         if (!q && rg) q = (rg.getAttribute('aria-label') || '').trim();
         item.group = (q || groupLabel(el) || '').slice(0, 200);
         if (rg && (rg.getAttribute('aria-required') === 'true' || /^\s*\*|\*\s*$/.test(q))) item.required = true;
@@ -726,7 +768,13 @@ JS_PAGE_ERRORS = r"""
         }
       }
       if (!empty) continue;
-      const lab = nearestLabel(el) || el.name || el.id || '(unlabelled)';
+      // the question a control names by aria-labelledby: Qualcomm's Eightfold dropdowns sit six boxes below their label
+      // and were reported as 'input-19', 'input-22', ... (2026-10-21)
+      const rn = el.getRootNode ? el.getRootNode() : document;
+      const byIds = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+        .map(i => { const n = (rn && rn.getElementById ? rn.getElementById(i) : null) || document.getElementById(i); return n ? txt(n) : ''; })
+        .filter(Boolean).join(' ');
+      const lab = byIds || nearestLabel(el) || el.getAttribute('aria-label') || el.name || el.id || '(unlabelled)';
       push(emptyRequired, { label: lab, type: el.type || el.tagName.toLowerCase(), name: el.name || el.id || '', ref: el.getAttribute('data-goat-ref') || '' }, 'r:' + lab + ':' + (el.name || el.id || ''));
     }
     // a required ARIA radio group with nothing checked (SAP SuccessFactors' radioGroup: the question label carries the '*')
@@ -734,11 +782,17 @@ JS_PAGE_ERRORS = r"""
     for (const g of rgs) {
       if (!vis(g) || g.querySelector('input[type="radio"]')) continue;
       const lb = g.getAttribute('aria-labelledby') || '';
-      const qn = lb ? (g.ownerDocument.getElementById(lb.split(/\s+/)[0]) || null) : null;
-      const q = qn ? txt(qn) : (g.getAttribute('aria-label') || '');
+      const gr = g.getRootNode ? g.getRootNode() : null;
+      const qn = lb ? ((gr && gr.getElementById ? gr.getElementById(lb.split(/\s+/)[0]) : null) || g.ownerDocument.getElementById(lb.split(/\s+/)[0]) || null) : null;
+      // the question may sit in a slot (SmartRecruiters' screening radios, CapTech 2026-10-21)
+      const slotted = (n) => { const ps = []; const w = (x, d) => { if (!x || d > 30) return; if (x.nodeType === 3) { ps.push(x.nodeValue || ''); return; }
+        if (x.nodeType !== 1) return; if (x.tagName === 'SLOT') { for (const a of x.assignedNodes({ flatten: true })) w(a, d + 1); return; }
+        for (const c of x.childNodes) w(c, d + 1); }; w(n, 0); return ps.join(' ').replace(/\s+/g, ' ').trim(); };
+      const q = qn ? (qn.querySelector('slot') ? slotted(qn) : txt(qn)) : (g.getAttribute('aria-label') || '');
       const req = g.getAttribute('aria-required') === 'true' || /^\s*\*|\*\s*$/.test(q) || !!(qn && qn.querySelector('.requiredField'));
       if (!req) continue;
-      const opts = Array.from(g.querySelectorAll('[role="radio"]'));
+      let opts = Array.from(g.querySelectorAll('[role="radio"]'));
+      if (!opts.length) for (const sl of g.querySelectorAll('slot')) opts.push(...sl.assignedElements({ flatten: true }).filter(o => o.getAttribute('role') === 'radio'));
       if (!opts.length || opts.some(o => o.getAttribute('aria-checked') === 'true')) continue;
       push(emptyRequired, { label: q.replace(/^\s*\*\s*/, '').slice(0, 160) || '(radio group)', type: 'radiogroup', name: g.id || '', ref: opts[0].getAttribute('data-goat-ref') || '' }, 'r:' + q + ':radiogroup');
     }

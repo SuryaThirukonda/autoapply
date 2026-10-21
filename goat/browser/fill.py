@@ -919,6 +919,80 @@ async def _settled_options(ex: Executor, baseline_keys: set, key, wants: list[st
     return filtered
 
 
+# SmartRecruiters' pickers (<spl-autocomplete>): the input sits two shadow roots down and the options are
+# <spl-select-option>s in the host's own shadow root, so the generic list read found nothing and choose said "the picker
+# for this field did not open" (CapTech's graduation term and Gender, 2026-10-21).
+JS_SPL_HOST = js._COMMON_WRAP("""
+  const el = findRef(ref);
+  if (!el) return null;
+  let n = el;
+  for (let i = 0; i < 60 && n; i++) {
+    if (n.tagName === 'SPL-AUTOCOMPLETE' || n.tagName === 'SPL-SELECT') return { id: n.id || '', tag: n.tagName.toLowerCase() };
+    const r = n.getRootNode ? n.getRootNode() : null;
+    n = n.parentElement || (r && r.host) || null;
+  }
+  return null;
+""", "ref")
+JS_SPL_OPTIONS = js._COMMON_WRAP("""
+  const [id, tag] = args;
+  let h = null;
+  for (const r of allRoots(document)) { const x = r.querySelector(tag + '[id="' + id + '"]'); if (x) { h = x; break; } }
+  if (!h || !h.shadowRoot) return [];
+  return Array.from(h.shadowRoot.querySelectorAll('spl-select-option')).map((o, idx) => {
+    const b = o.getBoundingClientRect();
+    return { idx, text: (o.innerText || o.textContent || '').replace(/[ \\t\\r\\n]+/g, ' ').trim(), w: b.width, h: b.height };
+  }).filter(o => o.w > 0 && o.h > 0 && o.text);
+""", "args")
+
+
+async def _choose_spl(ex: Executor, ref: str, wants: list[str]) -> FieldResult | None:
+    """Pick in a SmartRecruiters <spl-autocomplete>: open it with a real click, read its own options, click the first
+    wanted one that is offered (our preference order), read the box back. None when the control is not one."""
+    try:
+        host = await ex.eval(JS_SPL_HOST, ref)
+    except Exception:
+        host = None
+    if not isinstance(host, dict) or not host.get("id"):
+        return None
+    hid, tag = str(host["id"]), str(host.get("tag") or "spl-autocomplete")
+    box = ex.page.locator(f'[data-goat-ref="{ref}"]').first
+    opts: list[dict] = []
+    for attempt in range(2):
+        try:
+            await box.click(timeout=5000)
+        except Exception:
+            try:
+                await box.focus(timeout=3000)
+            except Exception:
+                pass
+        for _ in range(12):
+            await asyncio.sleep(0.25)
+            got = await ex.eval(JS_SPL_OPTIONS, [hid, tag])
+            opts = got if isinstance(got, list) else []
+            if opts:
+                break
+        if opts:
+            break
+    if not opts:
+        await ex.page.keyboard.press("Escape")
+        return FieldResult(ref, False, "", "the SmartRecruiters list showed no options")
+    pick = best_option([{"text": o["text"], "_idx": o["idx"]} for o in opts], [w for w in wants if w])
+    if pick is None:
+        await ex.page.keyboard.press("Escape")
+        return FieldResult(ref, False, "", f"no option matched {wants[:3]}; the list offers: {[o['text'] for o in opts][:12]}")
+    idx = next((o["idx"] for o in opts if o["text"] == pick.get("text")), pick.get("_idx"))
+    await ex.page.locator(f'{tag}[id="{hid}"] spl-select-option').nth(int(idx)).click(timeout=5000)
+    shown = ""
+    for _ in range(12):
+        await asyncio.sleep(0.2)
+        info = await ex.read_ref(ref)
+        shown = str(info.get("value") or info.get("shown") or "").strip()
+        if shown:
+            break
+    ok = bool(shown) and (_norm(shown) == _norm(pick["text"]) or best_option([{"text": shown}], [pick["text"]]) is not None)
+    return FieldResult(ref, ok, shown, "" if ok else f"picked '{pick['text']}' but the box shows '{shown}'")
+
+
 async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bool = True) -> FieldResult:
     """Pick an option in a custom dropdown / combobox / autocomplete.
 
@@ -929,6 +1003,9 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
     if not info.get("found"):
         return FieldResult(ref, False, "", "ref not found")
     before = (info.get("value") or info.get("shown") or "")
+    spl = await _choose_spl(ex, ref, wants)
+    if spl is not None:
+        return spl
     if info.get("tag") == "select":
         # A native <select> has no DOM list to click (Lever's custom questions, 2026-10-18): pick by its options.
         native = await ex.eval(js.JS_FIELD_CHOICES, ref)

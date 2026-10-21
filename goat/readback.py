@@ -126,6 +126,10 @@ def values_equal(decision: str, page: str, kind: str, label: str = "") -> bool:
     pick = fill.best_option([{"text": p}], [d])
     if pick is not None:
         return True
+    # a picked term that holds the decided month ('Spring 2028' for 'May 2028', CapTech 2026-10-21)
+    from .agent.tools import date_option_covers
+    if kind == "choice" and date_option_covers(d, p):
+        return True
     # a typed value the box truncated at its cap, or a long text the outline cut off
     if len(np_) >= 40 and (nd.startswith(np_) or np_.startswith(nd)):
         return True

@@ -463,3 +463,28 @@ async def test_a_folded_successfactors_section_blocks_and_is_opened():
         assert any("eligible" in (r.get("label") or "") for r in snap.errors.get("empty_required", [])), snap.errors
     finally:
         await ex.close()
+
+
+def test_successfactors_request_error_page_is_a_portal_error():
+    """Phillips 66 (2026-10-21): four parks bounced as 'a form page' on SuccessFactors' generic error page."""
+    from goat.gate import portal_error
+    assert portal_error("SuccessFactors\nAn error occurred while processing your request. Please go back to your original page "
+                        "and check the URL. Then try your request again.")
+    assert portal_error("Please complete your personal information.") is None
+
+
+
+def test_a_resume_named_in_eightfolds_text_box_counts_as_attached(store):
+    """Qualcomm (Eightfold, 2026-10-21): the file input was empty and the text box beside it named the résumé."""
+    from goat.gate import run_gate
+    from goat.browser.snapshot import Snapshot
+    items = [{"ref": "e11", "tag": "input", "type": "text", "label": "Upload your resume", "value": "Surya_Thirukonda_Resume_SWE.pdf"},
+             {"ref": "e14", "tag": "input", "type": "file", "label": "Upload your resume", "value": ""},
+             {"ref": "e76", "tag": "button", "type": "submit", "label": "Submit application", "submitish": True}]
+    snap = Snapshot(url="https://careers.qualcomm.com/careers/apply?pid=1&domain=qualcomm.com", title="Submit application",
+                    headings=["Application Form"], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    g = run_gate(job={"id": 1, "company": "Qualcomm", "title": "Intern", "url": "u"}, snapshot=snap, page_text="Application Form",
+                 expected_resume="Surya_Thirukonda_Resume_SWE.pdf", free_text_answers=[], portal="other")
+    assert not any("resume" in r for r in g.reasons), g.reasons

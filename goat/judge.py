@@ -295,6 +295,24 @@ def phantom_claims(notes: str | None, page: str) -> list[str]:
     return out
 
 
+async def removed_decisions(ex, decisions: list[dict], page_no, page_text: str) -> list[dict]:
+    """Decisions made on this page for controls that are no longer on it (a work-history row the run removed) and
+    whose value the page does not show: they are not part of the draft. CenturyLink (2026-10-21): 'Career Level =
+    Professional/Salaried' from a removed SuccessFactors row failed two checks after the row was gone."""
+    from .browser import js
+    if page_no is None:
+        return []
+    mine = [d for d in decisions if d.get("page") == page_no and d.get("ref")]
+    if not mine:
+        return []
+    try:
+        present = set(await ex.eval(js.JS_REFS_PRESENT, sorted({str(d["ref"]) for d in mine})) or [])
+    except Exception:
+        return []
+    return [d for d in mine if str(d["ref"]) not in present and str(d.get("value") or "") != "(set)"
+            and not _on_page(d.get("value"), page_text)]
+
+
 def _on_page(value, page: str) -> bool:
     from .answers import norm
     v = norm(str(value or ""))[:60]
@@ -331,6 +349,9 @@ async def judge_page(job: dict, ctx, ex, *, shot: str = "shadow", fact_check: bo
             outline = snapmod.render(await snapmod.take(ex))
         except Exception:
             outline = ""
+        all_decisions = records.decisions(job_id)
+        gone = await removed_decisions(ex, all_decisions, getattr(ctx, "page_no", None), outline + "\n" + text)
+        dropped = {(str(d.get("field_label") or "")[:120], str(d.get("value") or "")[:1500]) for d in gone}
         kwargs = {}
         if fact_check:
             kwargs = {"profile": profile.text(),
@@ -338,11 +359,12 @@ async def judge_page(job: dict, ctx, ex, *, shot: str = "shadow", fact_check: bo
                       # the page: American Express' old 'Expected graduation term = July - September 2028' field was gone
                       # from the form and still failed every check (2026-10-19)
                       "unconfirmed": [u for u in records.unconfirmed_answers(job_id, job.get("company") or "", job.get("ats") or "")
-                                      if not u.get("archived") or _on_page(u.get("value"), outline + "\n" + text)],
+                                      if (not u.get("archived") or _on_page(u.get("value"), outline + "\n" + text))
+                                      and (u.get("label"), u.get("value")) not in dropped],
                       "posting": str(getattr(ctx, "posting_text", "") or ""),
                       "resume": resume_text(getattr(ctx, "resume_file", None))}
         judge = Judge(client=getattr(getattr(ctx, "classifier", None), "client", None))
-        decisions = records.decisions(job_id)
+        decisions = [d for d in all_decisions if d not in gone]
         verdict = await judge.judge(job_id, decisions, png, text, getattr(ctx, "gate_result", None), outline=outline, **kwargs)
         # A failing verdict that says the page shows a value the page does not contain is asked once more: Northrop
         # Grumman's Review page showed "Aurora, CO" and the judge failed it for showing "Anywhere in the United

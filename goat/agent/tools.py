@@ -583,6 +583,15 @@ def date_option_covers(value: str, label: str) -> bool:
         if hits:
             yr = parts.get("year")
             return not yr or not re.search(r"\d{4}", lab) or yr in lab
+        # a term covers its months: 'Spring 2028' is a May 2028 graduation (CapTech's SmartRecruiters list, 2026-10-21)
+        sm = re.fullmatch(r"\s*(spring|summer|fall|autumn|winter)(\s+(term|semester|quarter))?\s*(\d{4})?\s*", lab) \
+            or re.fullmatch(r"\s*(\d{4})\s+(spring|summer|fall|autumn|winter)\s*", lab)
+        if sm:
+            season = next(g for g in sm.groups() if g and g in ("spring", "summer", "fall", "autumn", "winter"))
+            months = {"spring": (1, 2, 3, 4, 5), "summer": (6, 7, 8), "fall": (9, 10, 11, 12), "autumn": (9, 10, 11, 12),
+                      "winter": (12, 1, 2)}[season]
+            yr = parts.get("year")
+            return int(parts["month"]) in months and (not yr or not re.search(r"\d{4}", lab) or yr in lab)
         # a range of month names: "Apr - Jun"
         m = re.search(r"\b([a-z]{3,9})\s*[-–—to]+\s*([a-z]{3,9})\b", lab)
         if m:
@@ -743,9 +752,63 @@ def answered_polarity(label: str, value) -> str | None:
     return None
 
 
-def followup_parent_answer(ref: str, page_decisions: list[dict], window: int = 15) -> tuple[str | None, str]:
-    """For an 'If yes' box: how the nearest yes/no question before it on the page was answered ('yes' / 'no' / None),
-    and that question's label. Refs number a page in document order, so the parent is the closest lower ref."""
+YES_NO_QUESTION = re.compile(r"^[\s*]*(are|do|does|did|have|has|had|is|was|were|will|would|can|could|should|may)\s+(you|your|any)\b|\?\s*\*?\s*$", re.I)
+
+
+def _yes_no_options(texts: list[str]) -> bool:
+    ns = {answers.norm(t) for t in texts if t}
+    return "yes" in ns or "no" in ns or any(n.startswith(("yes ", "no ")) for n in ns)
+
+
+def parent_question_above(ref: str, items: list[dict], groups: list[dict]) -> tuple[str, set] | None:
+    """The yes/no question drawn closest above control `ref` on the page (by position in one snapshot): its text and
+    the refs that answer it. None when the control right above is not a yes/no question."""
+    me = next((i for i in items if i.get("ref") == ref), None)
+    if not me or not me.get("bbox"):
+        return None
+    y0 = me["bbox"][1]
+    cands = []
+    for it in items:
+        if it.get("ref") == ref or not it.get("bbox") or it.get("tag") in ("a", "button") or it.get("type") in ("button", "submit", "file", "hidden"):
+            continue
+        if it["bbox"][1] < y0 - 4:
+            cands.append((it["bbox"][1], "item", it))
+    for g in groups:
+        for o in g.get("options", []):
+            if o.get("bbox") and o["bbox"][1] < y0 - 4:
+                cands.append((o["bbox"][1], "group", g))
+    if not cands:
+        return None
+    _, kind, near = max(cands, key=lambda c: c[0])
+    if kind == "group":
+        q = str(near.get("label") or "")
+        opts = [str(o.get("label") or "") for o in near.get("options", [])]
+        return (q, {o.get("ref") for o in near.get("options", [])}) if _yes_no_options(opts) or YES_NO_QUESTION.search(q) else None
+    if near.get("tag") == "toggle":
+        q = str(near.get("group") or "")
+        sibs = [i for i in items if i.get("tag") == "toggle" and q and (i.get("group") or "") == q] or [near]
+        return (q, {i.get("ref") for i in sibs}) if _yes_no_options([str(i.get("label") or "") for i in sibs]) or YES_NO_QUESTION.search(q) else None
+    q = str(near.get("label") or "")
+    return (q, {near.get("ref")}) if YES_NO_QUESTION.search(q) else None
+
+
+def followup_parent_answer(ref: str, page_decisions: list[dict], window: int = 15, snap=None) -> tuple[str | None, str]:
+    """For an 'If yes' box: how the yes/no question it follows was answered ('yes' / 'no' / 'unanswered' / None), and
+    that question's label. With a snapshot the question is the one drawn right above the box (CenturyLink 2026-10-21:
+    the nearest answered question was 'Accommodation', two fields above the former-employee question the box follows);
+    without one, the closest lower ref with a yes/no decision (refs number a page in document order)."""
+    if snap is not None:
+        found = parent_question_above(ref, list(getattr(snap, "items", []) or []), list(getattr(snap, "groups", []) or []))
+        if found is not None:
+            q, refs = found
+            ans, seen = None, False
+            for d in page_decisions:
+                if d.get("ref") in refs:
+                    seen = True
+                    a = answered_polarity(d.get("field_label") or "", d.get("value"))
+                    if a is not None:
+                        ans = a
+            return (ans if seen else "unanswered"), q
     m = _REF_NO.match(str(ref or ""))
     if not m:
         return None, ""
@@ -1247,7 +1310,12 @@ class ToolDispatcher:
             if IF_YES_FOLLOWUP.match(fq) and not (not f.get("answer_key") and NOT_APPLICABLE_TEXT.match(str(f.get("value") or ""))):
                 page_decs = [d for d in records.decisions(self.ctx.job_id) if d.get("page") == self.ctx.page_no]
                 page_decs += [{"ref": q["ref"], "field_label": q["_label"], "value": q["value"]} for q in plan]
-                parent, plabel = followup_parent_answer(f.get("ref", ""), page_decs)
+                parent, plabel = followup_parent_answer(f.get("ref", ""), page_decs, snap=snap)
+                if parent == "unanswered":
+                    results.append({"ref": f["ref"], "status": "failed", "error": (
+                        f"this box is asked only when '{plabel[:90]}' is answered Yes: answer that question first (from its "
+                        "answer_key), then fill this box only if the answer is Yes")})
+                    continue
                 if parent == "no":
                     db.event(self.ctx.job_id, "answer:followup_after_no", {"ref": f.get("ref"), "label": fq[:120], "parent": plabel[:120]})
                     asks_na = not is_choice and NA_INSTRUCTION.search(f"{(item or {}).get('label') or ''} {(item or {}).get('placeholder') or ''}")

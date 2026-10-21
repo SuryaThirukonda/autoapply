@@ -263,3 +263,21 @@ def test_the_judge_knows_a_bundled_talent_community_choice_follows_his_rule():
     """Qualcomm (2026-10-21): the judge failed 'ONLY THE ROLE I AM APPLYING FOR' against keep_profile_future_roles."""
     from goat.judge import JUDGE_INSTRUCTIONS
     assert "never to join a talent community" in JUDGE_INSTRUCTIONS and "ONLY THE ROLE I AM APPLYING FOR" in JUDGE_INSTRUCTIONS
+
+
+@pytest.mark.asyncio
+async def test_decisions_for_controls_the_run_removed_are_left_out():
+    """CenturyLink (2026-10-21): a SuccessFactors work row's 'Career Level' failed two checks after the row was removed."""
+    from goat.judge import removed_decisions
+
+    class Ex:
+        async def eval(self, script, refs):
+            return [r for r in refs if r in ("e17", "e40")]
+    decs = [{"page": 1, "ref": "e17", "field_label": "First Name", "value": "Surya"},
+            {"page": 1, "ref": "e68", "field_label": "Career Level", "value": "Professional/Salaried"},
+            {"page": 1, "ref": "e62", "field_label": "Company Name", "value": "Revio"},
+            {"page": 1, "ref": "e2", "field_label": "account login", "value": "(set)"},
+            {"page": 0, "ref": "e5", "field_label": "Earlier page", "value": "x"}]
+    gone = await removed_decisions(Ex(), decs, 1, "Revio appears in the page text")
+    assert [d["field_label"] for d in gone] == ["Career Level"], gone
+    assert await removed_decisions(Ex(), decs, None, "") == []

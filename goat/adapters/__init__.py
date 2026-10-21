@@ -144,6 +144,25 @@ SELF_ID = re.compile(r"(gender|race|ethnicit|hispanic|veteran|disabilit|pronoun|
 NEGATED = re.compile(r"^(not |no |none|i do not|i am not|unwilling|unable|never|decline|prefer not)", re.I)
 
 
+SELF_ID_DECLINE = re.compile(r"\b(decline|don'?t wish|do not wish|not wish to|prefer not|rather not|choose not|not to (say|answer|disclose)|"
+                             r"undisclosed|not specified|not declared|do not want to answer|self[- ]identify)\b", re.I)
+
+
+def leading_group(parts: list[str]) -> list[str]:
+    """The leading entries of an ordered self-identification chain that answer the same way as its first entry (all
+    declines, or all his own answer)."""
+    parts = [x.strip() for x in parts if x and x.strip()]
+    if not parts:
+        return []
+    first = bool(SELF_ID_DECLINE.search(parts[0]))
+    out = []
+    for x in parts:
+        if bool(SELF_ID_DECLINE.search(x)) != first:
+            break
+        out.append(x)
+    return out
+
+
 def _standing_values() -> dict[str, str]:
     """normalized answer value -> key, for approved global answers with distinctive values (>= 4 chars,
     not a bare yes/no), so a prefilled field equal to a stored answer can be sourced without retyping."""
@@ -151,7 +170,13 @@ def _standing_values() -> dict[str, str]:
     out: dict[str, str] = {}
     for r in db.connect().execute("SELECT key, answer FROM answers WHERE superseded_by IS NULL AND approved=1 AND answer IS NOT NULL "
                                   "AND scope='global' AND key NOT LIKE 'story.%' AND key NOT LIKE 'policy.%' AND key NOT LIKE 'hermes.generated.%'"):
-        for part in str(r["answer"]).split(";"):
+        parts = str(r["answer"]).split(";")
+        if str(r["key"]).startswith("self_id."):
+            # A self-identification chain is ordered: its leading wordings are his answer and the rest are fallbacks for
+            # forms that lack them. "Asian" (the race fallback) shown by SmartRecruiters from an earlier application was
+            # taken as sourced although the list offered "Prefer not to answer" (CapTech, 2026-10-21).
+            parts = leading_group(parts)
+        for part in parts:
             nv = answers.norm(part)
             if len(nv) >= 4 and nv not in ("yes", "no", "none", "true", "false") and nv not in out:
                 out[nv] = r["key"]

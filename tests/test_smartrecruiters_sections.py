@@ -296,3 +296,85 @@ async def test_a_shadow_button_with_a_slotted_label_takes_the_agents_click():
         assert out.get("covered_by") and await ex.page.evaluate("() => document.getElementById('out').textContent") == "c"
     finally:
         await ex.close()
+
+
+SCREENING = """<html><body>
+<script>
+customElements.define('spl-autocomplete', class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    const r = this.attachShadow({ mode: 'open' });
+    r.innerHTML = '<style>spl-select-option { display: block; height: 22px; }</style><label for="i"><slot name="label-content"></slot>'
+      + '<span aria-hidden="true">*</span></label><input id="i" type="text"><div class="list"></div>';
+    const inp = r.querySelector('input'), list = r.querySelector('.list');
+    const opts = (this.getAttribute('options') || '').split('|');
+    inp.addEventListener('click', () => {
+      list.innerHTML = '';
+      for (const s of opts) {
+        const o = document.createElement('spl-select-option'); o.textContent = s;
+        o.addEventListener('click', () => { this.value = s; inp.value = s; list.innerHTML = ''; });
+        list.appendChild(o);
+      }
+    });
+  }
+});
+customElements.define('spl-radio-group', class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    this.attachShadow({ mode: 'open' }).innerHTML = '<label id="gl"><slot name="label-content"></slot><span aria-hidden="true">*</span></label>'
+      + '<fieldset role="radiogroup" aria-labelledby="gl" aria-required="true"><slot></slot></fieldset>';
+  }
+});
+customElements.define('spl-radio', class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    this.setAttribute('role', 'radio'); this.setAttribute('aria-checked', 'false');
+    this.attachShadow({ mode: 'open' }).innerHTML = '<label style="display:inline-block;min-width:40px;min-height:16px">' + this.getAttribute('label') + '</label>';
+    this.addEventListener('click', () => {
+      for (const s of this.parentElement.querySelectorAll('spl-radio')) s.setAttribute('aria-checked', 'false');
+      this.setAttribute('aria-checked', 'true');
+    });
+  }
+});
+</script>
+<div id="host"></div>
+<script>
+document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML =
+  '<spl-autocomplete id="q_grad" options="Fall 2027|Spring 2028|Fall 2028"><span slot="label-content">What is your anticipated graduation date?</span></spl-autocomplete>'
+  + '<spl-autocomplete id="q_eth" options="Asian|White|Two or More Races|Prefer not to answer"><span slot="label-content">Race/Ethnicity</span></spl-autocomplete>'
+  + '<spl-radio-group><span slot="label-content">Are you currently authorized to work in the United States?</span>'
+  + '<spl-radio label="Yes"></spl-radio><spl-radio label="No"></spl-radio></spl-radio-group>';
+</script>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_screening_questions_carry_their_slotted_text_and_their_pickers_pick():
+    """CapTech (SmartRecruiters screening, 2026-10-21): radios read 'spl-form-element_76' with no question, the
+    graduation picker read '*', choose said the picker did not open, and the race box kept 'Asian'."""
+    from goat.adapters import leading_group
+    from goat.agent.tools import date_option_covers
+    from goat import readback
+    from goat.browser import fill
+    ex = await _open(SCREENING)
+    try:
+        snap = await snapshot.take(ex)
+        toggles = [i for i in snap.items if i.get("tag") == "toggle"]
+        assert [t["label"] for t in toggles] == ["Yes", "No"], toggles
+        assert toggles[0]["group"].startswith("Are you currently authorized to work in the United States?"), toggles[0]
+        assert toggles[0].get("required")
+        assert any("authorized to work" in (r.get("label") or "") for r in snap.errors.get("empty_required", [])), snap.errors
+        boxes = {i["label"]: i["ref"] for i in snap.items if i.get("tag") == "input"}
+        grad = next(r for k, r in boxes.items() if k.startswith("What is your anticipated graduation date?"))
+        eth = next(r for k, r in boxes.items() if k.startswith("Race/Ethnicity"))
+        r = await fill.choose(ex, grad, ["Spring 2028 (May 2028)", "Spring 2028"])
+        assert r.ok and r.readback == "Spring 2028", r
+        chain = ["decline", "Decline to self-identify", "I don't wish to answer", "Prefer not to say", "Prefer not to answer", "Asian"]
+        r = await fill.choose(ex, eth, chain)
+        assert r.ok and r.readback == "Prefer not to answer", r
+    finally:
+        await ex.close()
+    assert date_option_covers("May 2028", "Spring 2028") and not date_option_covers("May 2028", "Fall 2028")
+    assert readback.values_equal("May 2028", "Spring 2028", "choice", "What is your anticipated graduation date?")
+    assert leading_group(["decline", "Prefer not to answer", "Asian"]) == ["decline", "Prefer not to answer"]
+    assert leading_group(["I am not a protected veteran", "No", "I do not wish to self-identify"]) == ["I am not a protected veteran", "No"]

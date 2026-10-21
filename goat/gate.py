@@ -57,6 +57,9 @@ PORTAL_ERROR = re.compile(
     r"\b(500|502|503|504)\b.{0,40}(internal server error|bad gateway|service unavailable|gateway time-?out)|"
     r"(we are|we're|we['\u2019]re) (currently )?(experiencing technical difficulties|performing (scheduled )?maintenance)|"
     r"(site|system|service) is (temporarily )?(unavailable|down for maintenance)|"
+    # SAP SuccessFactors' generic failure page (Phillips 66, 2026-10-21: "An error occurred while processing your request.
+    # Please go back to your original page and check the URL."): four parks were bounced as "a form page"
+    r"\ban? (unexpected )?error (has )?occurred while processing your request\b|"
     # Workday's maintenance page (Northrop Grumman, 2026-10-18): "Workday is currently unavailable."
     r"\b(workday|the site|this site|the system|the portal|our careers site) is (currently |temporarily )?unavailable\b)", re.I | re.S)
 
@@ -126,8 +129,14 @@ COOKIE_CONTROL = re.compile(r"\bcookies?\b.{0,40}\b(settings|preferences|policy|
 
 # A job-search page's own sorting and paging pickers are page chrome too (UKG, 2026-10-21: "Sort by = Latest" blocked a
 # park on the careers search page).
+# ... and a site's own search box over the form (Eightfold's 'Career Hub search' showed '0 results', Qualcomm 2026-10-21)
 SEARCH_CONTROL = re.compile(r"^(sort( results)?( by)?|order( by)?|results per page|items per page|jobs per page|per page|"
-                            r"page size)\s*:?\s*$", re.I)
+                            r"page size|career hub search|search (jobs|careers|the site|this site))\s*:?\s*$", re.I)
+
+
+UPLOAD_LABEL = re.compile(r"\b(upload|attach)\w*\b.{0,40}\b(resume|résumé|cv|cover letter|transcript|document|file)\b|"
+                          r"^\s*(resume|résumé|cv|cover letter|transcript)\s*\*?\s*$", re.I)
+FILE_NAME = re.compile(r"^[^\\/:*?\"<>|]{1,200}\.(pdf|docx?|rtf|txt|odt|pages)$", re.I)
 
 
 def is_display_language_picker(label: str, value: str) -> bool:
@@ -317,6 +326,13 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
             # Oracle empties its import input and lists the uploaded file as text beside 'Remove Resume' (onsemi and
             # Vertiv were held on an attached résumé, 2026-10-19)
             shown = expected_resume.lower()
+        if not shown and expected_resume:
+            # Eightfold keeps the attached résumé's name in a text box beside its empty file input (Qualcomm, 2026-10-21:
+            # 'Upload your resume' = Surya_Thirukonda_Resume_SWE.pdf, and the gate said the slot was empty)
+            boxed = [str(i.get("value") or "") for i in snapshot.items if i.get("tag") == "input" and i.get("type") != "file"
+                     and re.search(r"resume|résumé|\bcv\b", str(i.get("label") or ""), re.I)]
+            if any(expected_resume.lower() in b.lower() for b in boxed):
+                shown = expected_resume.lower()
         if not shown:
             reasons.append("resume not attached: the Resume/CV slot is empty (call upload_resume on its ref)")
         elif expected_resume and expected_resume.lower() not in shown:
@@ -367,6 +383,11 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
             continue
         if is_display_language_picker(it.get("label") or "", str(val)) or COOKIE_CONTROL.search(it.get("label") or "") \
                 or SEARCH_CONTROL.match((it.get("label") or "").strip()):
+            continue
+        # an upload box that names the attached file is the upload, not an answer (Eightfold's 'Upload your resume' text
+        # box beside its file input, Qualcomm 2026-10-21); the résumé check (step 5) verifies which file it is
+        if it.get("tag") == "input" and it.get("type") != "file" and UPLOAD_LABEL.search(it.get("label") or "") \
+                and FILE_NAME.match(str(val).strip()):
             continue
         if not _sourced(it.get("ref", ""), it.get("label", "")):
             key = standing.get(_answers.norm(str(val)))
