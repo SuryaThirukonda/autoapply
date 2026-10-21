@@ -777,7 +777,14 @@ class SuccessFactors(Adapter):
              "'Please read our Candidate Privacy Notice'), not a dropdown: click it, then click the statement's own Accept / "
              "I agree / I accept button; accepting it is delegated to you (Corning went ready_for_you trying choose on it, "
              "2026-10-21). If Create Account answers 'Invalid password' under the rules, park credentials_unknown quoting "
-             "the rule it shows (Phillips 66 asks for 12 characters).")
+             "the rule it shows (Phillips 66 asks for 12 characters). "
+             "Uploading the résumé can make SuccessFactors parse it into Employment History / Formal Education rows with "
+             "wrong values (Corning, 2026-10-21: skill lists and 'UNSPECIFIED' as Company Name, the Physio hackathon as a job, "
+             "a Southwest row with no Position Title, a duplicate Founding Software Engineer). Those rows are yours to fix, "
+             "never a reason to park: match each row to his stored entry by its dates and set Position Title and Company "
+             "Name (and Work Location, Current Role, dates) from experience.work.N.*; click Remove on a row that is none of "
+             "his roles (a project, a duplicate, 'UNSPECIFIED' with no stored match); set School to education.school, Degree "
+             "and Major from education.*; then continue the form.")
 
     async def prefill(self, ex, snap: Snapshot, job: dict, page_no: int) -> PrefillResult:
         # Folded sections hide their fields from the prefill and the model (CenturyLink, 2026-10-21): open them first.
