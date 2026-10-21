@@ -445,8 +445,10 @@ JS_SNAPSHOT = r"""
   }
   // Oracle's entry tiles: what each one says and its Edit / Delete refs (the gate checks them against his stored entries)
   const tiles = [];
+  // hidden tiles too: while an entry form is open Oracle hides the others, and the gate passed AutoZone with three
+  // wrong employers out of sight (2026-10-21)
   for (const t of document.querySelectorAll('article.apply-flow-profile-item-tile')) {
-    if (!vis(t) || tiles.length >= 20) continue;
+    if (tiles.length >= 20) continue;
     const blk = t.closest('.apply-flow-block__form-list') || (t.parentElement && t.parentElement.closest('[aria-label]'));
     const sec = ((blk && blk.getAttribute('aria-label')) || '').replace(/\s*Required\s*$/i, '').trim();
     const ed = t.querySelector('button[class*="edit" i]'); const de = t.querySelector('button[class*="delete" i]');
@@ -458,7 +460,8 @@ JS_SNAPSHOT = r"""
   for (const h of document.querySelectorAll('h1, h2, h3, [role="heading"]')) { if (vis(h)) { const t = txt(h); if (t && t.length < 160) headings.push(t); } if (headings.length >= 12) break; }
   const bodyText = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ');
   return JSON.stringify({ url: location.href, title: document.title, headings, items: items.slice(0, maxItems),
-    groups: groupList, tiles, total: items.length, scrollY: Math.round(scrollY), pageHeight: Math.round(document.documentElement.scrollHeight), vw: innerWidth, vh: innerHeight,
+    groups: groupList, tiles, entry_form_open: Array.from(document.querySelectorAll('.profile-item-content--form')).some(f => vis(f)),
+    total: items.length, scrollY: Math.round(scrollY), pageHeight: Math.round(document.documentElement.scrollHeight), vw: innerWidth, vh: innerHeight,
     text_head: bodyText.slice(0, 600) });
 }
 """

@@ -26,6 +26,26 @@ class SubmitResult:
                 "clicked_label": self.clicked_label}
 
 
+def same_form_move(a: str, b: str) -> bool:
+    """A move between sections of one application form, not a submission: Oracle went from /apply/section/1 to
+    /apply/section/3 to show 'You have 2 issues that need to be fixed before you can submit your application', and
+    AutoZone was recorded as submitted (2026-10-21)."""
+    import re
+    cut = [re.split(r"[?#]", u or "", maxsplit=1)[0] for u in (a, b)]
+    m = [re.match(r"^(.*?/apply)/section/\d+/?$", u) for u in cut]
+    return bool(m[0] and m[1] and m[0].group(1) == m[1].group(1))
+
+
+async def _issue_banner(ex: Executor) -> str:
+    """Oracle's own count of what blocks its submit, when the page shows it."""
+    from ..gate import ORACLE_ISSUES
+    try:
+        m = ORACLE_ISSUES.search(await ex.page_text(30000) or "")
+    except Exception:
+        return ""
+    return m.group(0) if m else ""
+
+
 async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: float = 15.0) -> SubmitResult:
     scan = await scan_errors(ex)
     # The gate's stale-message rule applies here too: SuccessFactors keeps 'Please complete your personal information.'
@@ -77,7 +97,11 @@ async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: f
         if last.get("confirm_match"):
             return SubmitResult("submitted", signal="confirmation_text: " + last["confirm_match"], url=last.get("url", ""),
                                 clicked_label=found.get("text", ""))
-        if last.get("url") and before.get("url") and last["url"] != before["url"]:
+        issue = await _issue_banner(ex)
+        if issue:
+            return SubmitResult("failed", why=[f"the portal says {issue!r}: the application is not submitted"],
+                                url=last.get("url", "") or ex.url, clicked_label=found.get("text", ""))
+        if last.get("url") and before.get("url") and last["url"] != before["url"] and not same_form_move(before["url"], last["url"]):
             return SubmitResult("submitted", signal=f"url_changed: {before['url']} -> {last['url']}", url=last.get("url", ""),
                                 clicked_label=found.get("text", ""))
         if before.get("submit_buttons", 0) > 0 and last.get("submit_buttons", 0) == 0 and last.get("forms", 1) == 0:
@@ -103,7 +127,7 @@ async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: f
             last = await submit_signal(ex)
         except Exception:
             last = {}
-        if last.get("url") and before.get("url") and last["url"] != before["url"]:
+        if last.get("url") and before.get("url") and last["url"] != before["url"] and not same_form_move(before["url"], last["url"]):
             return SubmitResult("submitted", signal=f"url_changed: {before['url']} -> {last['url']}", url=last.get("url", ""),
                                 clicked_label=found.get("text", ""))
     return SubmitResult("failed", why=why_blocked(after) or ["page did not change and showed no error; the control may be inert"],

@@ -357,6 +357,10 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     # and 'Engineering Honors / Texas A&M University', and two inert submits spent the run).
     # Oracle's own count of what blocks its SUBMIT (Berkshire Hathaway Energy, 2026-10-21: "You have 7 issues that need to be
     # fixed before you can submit your application"; the gate passed and the click did nothing)
+    if getattr(snapshot, "entry_form_open", False):
+        return GateResult("blocked", ["an Experience / Education entry form is open and not saved: fill it from his stored entry "
+                                      "(experience.work.N.* / education.*) and click its SAVE, or CANCEL it; the application never "
+                                      "goes in with an entry half-entered (AutoZone, 2026-10-21)"])
     tile_problems = oracle_tile_problems(getattr(snapshot, "tiles", None) or [], snapshot.items, job.get("company", ""), portal)
     if tile_problems:
         return GateResult("blocked", tile_problems[:5])

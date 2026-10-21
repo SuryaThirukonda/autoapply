@@ -31,6 +31,7 @@ class Snapshot:
     refs: dict[str, dict] = field(default_factory=dict)
     unsaved: list[dict] = field(default_factory=list)   # answers an autosaving form shows but has not stored (Ashby)
     tiles: list[dict] = field(default_factory=list)     # Oracle's entry tiles: section, title, sub, invalid, edit, del
+    entry_form_open: bool = False                       # an Oracle Experience / Education entry form is open (unsaved)
 
     def find(self, ref: str) -> dict | None:
         return self.refs.get(ref)
@@ -119,6 +120,8 @@ def render(s: Snapshot, max_chars: int = MAX_CHARS) -> str:
     for u in s.unsaved[:6]:
         lines.append(f"NOT STORED BY THE FORM: '{u.get('title', '')[:80]}' shows {u.get('shown', '')!r} but the portal saved "
                      f"{u.get('saved', '') or 'nothing'!r} (tick another option, then this one again)")
+    if s.entry_form_open:
+        lines.append("ENTRY FORM OPEN: an Experience / Education entry form is open; fill it and click its SAVE (or CANCEL it)")
     for t in s.tiles[:12]:
         lines.append(f"ENTRY TILE ({t.get('section') or 'section'}): '{t.get('title', '')}' / '{t.get('sub', '')}'"
                      f"{' FIELDS TO FIX' if t.get('invalid') else ''} [Edit {t.get('edit') or '?'} | Delete {t.get('del') or '?'}]")
@@ -161,7 +164,7 @@ async def take(ex: Executor, max_items: int = MAX_ITEMS, with_text: bool = False
     snap = Snapshot(url=raw.get("url", ""), title=raw.get("title", ""), headings=raw.get("headings", []),
                     items=raw.get("items", []), groups=raw.get("groups", []), errors=errors, challenge=challenge,
                     scroll_y=raw.get("scrollY", 0), page_height=raw.get("pageHeight", 0), total_items=raw.get("total", 0),
-                    text=raw.get("text_head", ""), tiles=raw.get("tiles") or [])
+                    text=raw.get("text_head", ""), tiles=raw.get("tiles") or [], entry_form_open=bool(raw.get("entry_form_open")))
     for i in snap.items:
         snap.refs[i["ref"]] = i
     for g in snap.groups:

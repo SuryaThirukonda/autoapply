@@ -777,3 +777,39 @@ def test_a_resume_attached_on_an_earlier_attempt_counts_by_the_jobs_own_file_nam
     g2 = run_gate(job=job, snapshot=_snap(items), page_text=text.replace("Surya_Thirukonda_Resume_SWE.pdf\n", ""),
                   expected_resume=None, free_text_answers=[], portal="oracle", page_no=1)
     assert any("resume not attached" in r for r in g2.reasons), g2.reasons
+
+
+
+def test_a_section_move_inside_one_form_is_no_submission():
+    """AutoZone (Oracle, 2026-10-21): SUBMIT moved /apply/section/1 to /apply/section/3 to show 'You have 2 issues'."""
+    from goat.browser.submit import same_form_move
+    base = "https://egud.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/155461/apply/section/"
+    assert same_form_move(base + "1", base + "3")
+    assert same_form_move(base + "1?x=1", base + "3#top")
+    assert not same_form_move(base + "1", "https://egud.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/my-profile")
+    assert not same_form_move("https://boards.greenhouse.io/acme/jobs/1", "https://boards.greenhouse.io/acme/jobs/1/confirmation")
+
+
+ORACLE_OPEN_FORM = ORACLE_TILES.replace('<div class="apply-flow-block__form-list" aria-label="Work History Required">',
+    '<div class="profile-item-content--form" style="width:400px;height:200px"><label for="emp">Employer Name</label>'
+    '<input id="emp" value="Southwest Airlines"></div>'
+    '<div class="apply-flow-block__form-list" aria-label="Work History Required" style="display:none">', 1)
+
+
+async def test_hidden_tiles_still_count_and_an_open_entry_form_blocks_the_gate(store):
+    """AutoZone (2026-10-21): with the Add Experience form open the other tiles were hidden and the gate passed."""
+    job = _job()
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(ORACLE_OPEN_FORM)
+        snap = await snapshot.take(ex)
+        assert snap.entry_form_open
+        assert [t["title"] for t in snap.tiles][:2] == ["Contract Software Engineer", "Founding Software Engineer (Part-time)"], snap.tiles
+        assert "ENTRY FORM OPEN" in snapshot.render(snap)
+        g = run_gate(job=job, snapshot=snap, page_text="Work History\nSUBMIT", expected_resume=None, free_text_answers=[],
+                     portal="oracle", page_no=1)
+        assert g.result == "blocked" and "entry form is open" in g.reasons[0], g.reasons
+    finally:
+        await ex.close()
