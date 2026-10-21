@@ -809,6 +809,16 @@ class ToolDispatcher:
     # ------------------------------------------------------------------ tools
     async def t_snapshot(self, with_text: bool = False):
         import asyncio
+        # A cookie wall over the page catches every real click: Texas Instruments' Oracle pickers never opened under it
+        # (2026-10-20). Closed before the page is read, at most twice per site.
+        url_now = getattr(self.ctx.ex, "url", "") or ""
+        host = url_now.split("/")[2] if "//" in url_now else ""
+        if self.ctx.control_failures.get(f"cookie:{host}", 0) < 2:
+            wall = await fill.clear_cookie_wall(self.ctx.ex)
+            if wall and wall.get("clicked"):
+                self.ctx.control_failures[f"cookie:{host}"] = self.ctx.control_failures.get(f"cookie:{host}", 0) + 1
+                db.event(self.ctx.job_id, "page:cookie_wall", {"clicked": wall["clicked"], "action": wall.get("action"),
+                                                               "blocking": wall.get("blocking"), "host": host})
         snap = await snapmod.take(self.ctx.ex, with_text=with_text)
         # Workday renders its forms late: an apply page with almost nothing on it is usually still loading.
         for _ in range(3):

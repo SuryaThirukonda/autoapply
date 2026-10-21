@@ -1326,6 +1326,19 @@ async def _step_to(ex: Executor, ref: str, part: str, sec_ref: str, target: int)
         await asyncio.sleep(0.05)
 
 
+async def clear_cookie_wall(ex: Executor) -> dict | None:
+    """Close a cookie / privacy layer that lies over the page: its decline or necessary-only button when it has one;
+    its accept button only when the layer blocks the page and offers no decline (the codebase's standing rule for
+    Workday banners, "Decline or Accept is fine", applied to every portal). Returns what was done, or None."""
+    try:
+        out = await ex.eval(js.JS_COOKIE_WALL)
+    except Exception:
+        return None
+    if isinstance(out, dict) and out.get("clicked"):
+        await asyncio.sleep(1.0)
+    return out if isinstance(out, dict) else None
+
+
 async def type_code_into(ex: Executor, refs: list[str], code: str) -> bool:
     """Segmented one-time-code boxes advance on each keystroke; a single box takes the whole code.
     The code is typed with keyboard events and never logged."""

@@ -321,6 +321,46 @@ JS_ELEMENT_AT = r"""
 
 # Whether a click at (x, y) reaches the element [data-goat-ref=ref]: 'ok', 'covered:<tag>' (something else is on top,
 # such as a password manager's inline menu), or 'missing' (not in this document, e.g. inside a frame).
+# A cookie / privacy layer over the page (Texas Instruments' Tealium wall, 2026-10-20: "Click Agree and Proceed to accept
+# cookies and enter the site" lay over the whole Oracle form, so every picker click landed on it). Returns null when there
+# is none; otherwise clicks its decline / necessary-only button, or, only when the layer blocks the page and offers no
+# decline, its accept button.
+JS_COOKIE_WALL = r"""
+() => {
+  const vw = innerWidth, vh = innerHeight;
+  const vis = e => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e);
+                     return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0'; };
+  const COOKIE = /\b(cookies?|tracking technologies|privacy preferences)\b/i;
+  const DECLINE = /^(reject all|reject|decline all|decline|refuse all|refuse|deny all|deny|necessary only|only necessary|strictly necessary only|essential only|only essential|use necessary cookies only|accept necessary|accept only necessary|accept required only|required only|continue without accepting|do not accept|no,? thanks)\b/i;
+  const ACCEPT = /^(agree and proceed|accept all cookies|accept all|accept cookies|accept and close|accept & close|accept|allow all cookies|allow all|allow cookies|i agree|agree|got it|ok|okay|i understand|understood)\b/i;
+  let best = null;
+  for (const el of document.querySelectorAll('div, section, aside, dialog, [role=dialog], [role=alertdialog], footer')) {
+    const cs = getComputedStyle(el);
+    const layer = cs.position === 'fixed' || cs.position === 'sticky' || el.tagName === 'DIALOG' || /dialog/.test(el.getAttribute('role') || '');
+    if (!layer || !vis(el)) continue;
+    const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!t || t.length > 3000 || !COOKIE.test(t)) continue;
+    const r = el.getBoundingClientRect();
+    const area = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+    if (!best || area > best.area) best = { el, area };
+  }
+  if (!best) return null;
+  const el = best.el;
+  const mid = document.elementFromPoint(vw / 2, vh / 2);
+  const blocking = !!(mid && el.contains(mid)) || best.area >= 0.35 * vw * vh;
+  const buttons = Array.from(el.querySelectorAll('button, a, [role=button], input[type=button], input[type=submit]')).filter(vis)
+    .map(b => ({ b, t: (b.innerText || b.value || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim() }))
+    .filter(x => x.t && x.t.length <= 60);
+  const dec = buttons.find(x => DECLINE.test(x.t));
+  const acc = buttons.find(x => ACCEPT.test(x.t));
+  const pick = dec || (blocking ? acc : null);
+  const names = buttons.map(x => x.t).slice(0, 8);
+  if (!pick) return { found: true, blocking, clicked: null, buttons: names };
+  pick.b.click();
+  return { found: true, blocking, clicked: pick.t, action: dec ? 'decline' : 'accept', buttons: names };
+}
+"""
+
 # Focus a field directly when it does not hold the focus already (it, or an element inside it).
 JS_FOCUS_REF = r"""
 (ref) => {
