@@ -60,7 +60,8 @@ def test_ranks_are_written_so_every_view_shows_the_claim_order(store):
         assert worker.rank_queue(con, now) == 2
     con = db.connect()
     pr = {r["id"]: r["priority"] for r in con.execute("SELECT id, priority FROM jobs")}
-    assert pr[2] == worker.EXPLICIT_PRIORITY - 1 and pr[1] == worker.EXPLICIT_PRIORITY - 2 and pr[3] == 7
+    assert pr[2] == worker.AUTO_TOP and pr[1] == worker.AUTO_TOP - 1 and pr[3] == 7
+    assert worker.AUTO_TOP + 10 < worker.EXPLICIT_PRIORITY      # a requeue's +5 / an answered +10 stays in the auto band
     assert worker.EXPLICIT_PRIORITY == cloud.ORDER_BASE
 
 

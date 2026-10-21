@@ -28,11 +28,12 @@ log = logging.getLogger(__name__)
 # choices stay first: a release (+5000), a pin (10 000), his drag order on the website and `run-once --job` (1000 and up),
 # and a job he unblocked by answering its question. Every other queued job is re-ranked by posting date at each claim.
 EXPLICIT_PRIORITY = 1000      # = cloud.ORDER_BASE
+AUTO_TOP = 899                # auto ranks stay below 900 so a requeue's +5 / +10 never crosses into the explicit band
 FRESH_DAYS = 2
 
 
 def rank_queue(con, now: int | None = None) -> int:
-    """Give the queued jobs below EXPLICIT_PRIORITY priorities 999, 998, ... newest posting first (date_posted, else the
+    """Give the queued jobs below EXPLICIT_PRIORITY priorities 899, 898, ... newest posting first (date_posted, else the
     day goat first saw the listing); posts from the last FRESH_DAYS days lead. Every view sorted by priority (the
     website, `goat list`) then shows the claim order. Returns how many priorities changed."""
     now = int(now or db.now())
@@ -46,7 +47,7 @@ def rank_queue(con, now: int | None = None) -> int:
                                         int(r["created"] or 0), int(r["id"])), reverse=True)
     changed = 0
     for rank, r in enumerate(order):
-        p = max(1, EXPLICIT_PRIORITY - 1 - rank)
+        p = max(1, AUTO_TOP - rank)
         if p != int(r["priority"] or 0):
             con.execute("UPDATE jobs SET priority=? WHERE id=?", (p, r["id"]))
             changed += 1
