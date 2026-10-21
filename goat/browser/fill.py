@@ -1010,6 +1010,7 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
                     shown = str(item.get("shown") or item.get("value") or "")
                 except Exception:
                     pass
+            shown = await text_not_internal_id(ex, ref, shown)
             # Workday multi-select trees ("How Did You Hear About Us?") count their picks and list them after the count.
             if re.search(r"\b[1-9]\d* items? selected\b", shown, re.I):
                 if _norm(pick["text"]) in _norm(shown):
@@ -1324,6 +1325,28 @@ async def _step_to(ex: Executor, ref: str, part: str, sec_ref: str, target: int)
         await ex.page.keyboard.press("ArrowUp" if n < target else "ArrowDown")
         moved = True
         await asyncio.sleep(0.05)
+
+
+# Workday's dropdown button keeps an internal id in its value attribute ('993ab54bfe9f10010e330889cceb0001'). Read while
+# the button re-rendered with no text, that id was taken for the pick, and Highmark Health's correct 'No, Opt - Out' was
+# reported as a failure; the run then tried another answer key and handed the job to Surya (2026-10-20).
+INTERNAL_ID = re.compile(r"^[0-9a-f]{24,40}$", re.I)
+
+
+async def text_not_internal_id(ex: Executor, ref: str, shown: str) -> str:
+    """The control's text, read again (up to three times) when what was read is an internal id; '' if it stays one."""
+    if not INTERNAL_ID.match((shown or "").strip()):
+        return shown
+    for _ in range(3):
+        if (shown or "").strip() and not INTERNAL_ID.match(shown.strip()):
+            return shown
+        await asyncio.sleep(0.6)
+        try:
+            again = await ex.read_ref(ref)
+        except Exception:
+            return ""
+        shown = str(again.get("value") or again.get("shown") or "")
+    return "" if INTERNAL_ID.match((shown or "").strip()) else shown
 
 
 async def clear_cookie_wall(ex: Executor) -> dict | None:

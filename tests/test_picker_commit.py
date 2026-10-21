@@ -147,3 +147,27 @@ async def test_a_nested_first_preference_is_searched_before_a_lower_one(tmp_path
         assert chip == "LinkedIn"
     finally:
         await ex.close()
+
+
+
+@pytest.mark.asyncio
+async def test_a_dropdown_button_read_mid_render_is_read_again_not_taken_for_its_internal_id():
+    """Highmark Health (2026-10-20): '993ab54bfe9f10010e330889cceb0001' was read for the picked 'No, Opt - Out'."""
+    from goat.browser import fill as fillmod
+    from goat.browser import snapshot as snapmod
+    from goat.browser.executor import Executor, HostPolicy
+    html = ('<html><body><label for="b">Consent to AI screening</label>'
+            '<button id="b" aria-haspopup="listbox" value="993ab54bfe9f10010e330889cceb0001"></button>'
+            '<script>setTimeout(() => { document.getElementById("b").textContent = "No, Opt - Out"; }, 700);</script></body></html>')
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(html)
+        snap = await snapmod.take(ex)
+        ref = next(i["ref"] for i in snap.items if "AI screening" in (i.get("label") or ""))
+        got = await fillmod.text_not_internal_id(ex, ref, "993ab54bfe9f10010e330889cceb0001")
+        assert got == "No, Opt - Out"
+        assert await fillmod.text_not_internal_id(ex, ref, "Yes") == "Yes"
+    finally:
+        await ex.close()
