@@ -28,6 +28,11 @@ class SubmitResult:
 
 async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: float = 15.0) -> SubmitResult:
     scan = await scan_errors(ex)
+    # The gate's stale-message rule applies here too: SuccessFactors keeps 'Please complete your personal information.'
+    # on screen after every field is set; CenturyLink passed the gate, the judge and the check, and submit refused it on
+    # that message alone (2026-10-21).
+    from ..gate import drop_stale_required
+    scan = drop_stale_required(scan, None)
     why = why_blocked(scan)
     if why:
         return SubmitResult("blocked", why=why, url=scan.get("url", ex.url))

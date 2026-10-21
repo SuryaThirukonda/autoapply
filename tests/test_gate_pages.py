@@ -411,3 +411,20 @@ async def test_aria_radios_are_toggles_with_their_question_and_an_unanswered_req
         assert not snap.errors.get("empty_required"), snap.errors
     finally:
         await ex.close()
+
+
+@pytest.mark.asyncio
+async def test_submit_is_not_refused_on_a_stale_section_message():
+    """CenturyLink (2026-10-21): gate, judge and check passed; submit refused on 'Please complete your personal information.'"""
+    from goat.browser.submit import submit
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content("<html><body><div class='error' role='alert'>Please complete your personal information.</div>"
+                                  "<input value='Surya'><input value='Thirukonda'><input value='x@y.z'>"
+                                  "<button type='button' style='width:100px;height:30px'>Submit</button></body></html>")
+        res = await submit(ex, None, wait_s=1.0)
+        assert not any("Please complete your personal information" in w for w in res.why if res.status == "blocked"), res
+    finally:
+        await ex.close()
