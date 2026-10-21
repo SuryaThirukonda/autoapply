@@ -260,3 +260,39 @@ async def test_the_read_back_takes_a_pick_kept_on_the_host():
         assert one.get("shown") == "Sugar Land, TX, US", one
     finally:
         await ex.close()
+
+
+SHADOW_NEXT = """<html><body>
+<div id="out">none</div>
+<oc-footer><spl-button id="n"><span>Next</span></spl-button></oc-footer>
+<oc-footer><spl-button id="c" style="position:relative"><span>Back</span></spl-button></oc-footer>
+<div id="veil" style="position:absolute;left:0;top:0;width:100%;height:0"></div>
+<script>customElements.define('spl-button', class extends HTMLElement { connectedCallback() {
+  const r = this.attachShadow({ mode: 'open' });
+  r.innerHTML = '<button type="button" style="min-width:80px;min-height:30px"><slot></slot></button>';
+  r.querySelector('button').addEventListener('click', () => { document.getElementById('out').textContent = this.id; }); } });</script>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_shadow_button_with_a_slotted_label_takes_the_agents_click():
+    """ServiceNow (SmartRecruiters, 2026-10-21): the point hit Next's own slotted span, the hit test called the button
+    covered, and the fallback looked the ref up outside the shadow root: every Next click was reported done and did
+    nothing."""
+    ex = await _open(SHADOW_NEXT)
+    try:
+        snap = await snapshot.take(ex)
+        nxt = next(i for i in snap.items if i.get("label") == "Next")
+        info = await ex.read_ref(nxt["ref"])
+        assert await ex._hit(nxt["ref"], int(info["x"]), int(info["y"])) == "ok"
+        out = await ex.click_ref(nxt["ref"])
+        assert not out.get("covered_by")
+        assert await ex.page.evaluate("() => document.getElementById('out').textContent") == "n"
+        # covered by something else: the direct click still reaches the button inside its shadow root
+        back = next(i for i in snap.items if i.get("label") == "Back")
+        await ex.page.evaluate("""() => { const b = document.getElementById('c').getBoundingClientRect();
+          const v = document.getElementById('veil'); v.style.top = (b.top - 5) + 'px'; v.style.height = (b.height + 10) + 'px'; }""")
+        out = await ex.click_ref(back["ref"])
+        assert out.get("covered_by") and await ex.page.evaluate("() => document.getElementById('out').textContent") == "c"
+    finally:
+        await ex.close()

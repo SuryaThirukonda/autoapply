@@ -84,6 +84,34 @@ REAL_TYPING_HOSTS = re.compile(r"(^|\.)(eightfold\.ai|jobs\.netflix\.net|careers
 EIGHTFOLD_URL = re.compile(r"/careers(/apply)?/?\?(.*&)?pid=\d+.*\bdomain=", re.I)
 
 
+JS_FOLDED_SECTIONS = """() => Array.from(document.querySelectorAll('button[id$=":topBar"][aria-expanded="false"]'))
+  .filter(b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+  .map(b => [b.id, (b.innerText || b.textContent || '').trim().slice(0, 60)])"""
+
+
+async def unfold_sections(ex: Executor) -> list[str]:
+    """Open SAP SuccessFactors' folded form sections, one real click on each section's header button. A folded section
+    holds nothing the run has filled, so opening it loses nothing (CenturyLink, 2026-10-21)."""
+    try:
+        found = await ex.eval(JS_FOLDED_SECTIONS)
+    except Exception:
+        return []
+    opened = []
+    for bid, name in (found or [])[:12]:
+        try:
+            await ex.page.locator(f'[id="{bid}"]').first.click(timeout=4000)
+            opened.append(str(name or bid))
+            await asyncio.sleep(0.4)
+        except Exception:
+            continue
+    if opened:
+        try:
+            await ex.settle(quiet_ms=400)
+        except Exception:
+            pass
+    return opened
+
+
 def needs_real_typing(ex: Executor) -> bool:
     from urllib.parse import urlparse
     url = getattr(ex, "url", "") or ""

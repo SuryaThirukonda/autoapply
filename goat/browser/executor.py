@@ -487,7 +487,10 @@ class Executor:
                 raise ClickRefused(f"refused: click target is inside a human-verification challenge ({g.get('why')})")
             if g.get("submit") and not allow_submit:
                 raise ClickRefused(f"refused: click target is a submit control ({g.get('text') or g.get('why')}); only submit() may submit")
-            await self.eval("(ref) => { const t = document.querySelector('[data-goat-ref=\"' + ref + '\"]'); if (t) t.click(); return !!t; }", ref)
+            # findRef looks inside shadow roots too: a plain document query found nothing for SmartRecruiters' Next and the
+            # click was reported done without happening (ServiceNow, 2026-10-21).
+            if not await self.eval(js.JS_CLICK_REF, ref):
+                raise ClickRefused(f"ref {ref} is covered by {hit[8:60] or 'another element'} and could not be clicked directly")
             self._log("click", {"ref": ref, "direct": True, "covered_by": hit[8:60]})
             await asyncio.sleep(0.25)
             return {**info, "covered_by": hit[8:60]}

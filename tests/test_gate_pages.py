@@ -428,3 +428,38 @@ async def test_submit_is_not_refused_on_a_stale_section_message():
         assert not any("Please complete your personal information" in w for w in res.why if res.status == "blocked"), res
     finally:
         await ex.close()
+
+
+SF_FOLDED = """<html><body>
+<a id="30:_expandAllSections" href="#">Expand all sections</a> <a id="30:_collapseAllSections" href="#">Collapse all sections</a>
+<button id="87:topBar" aria-expanded="true" type="button">Profile Information</button>
+<div><label for="city">* City</label><input id="city" value="Sugar Land"></div>
+<button id="248:topBar" aria-expanded="false" type="button"
+  onclick="this.setAttribute('aria-expanded', 'true'); document.getElementById('js').style.display = 'block';">Job-Specific Information</button>
+<div id="js" style="display:none"><label for="elig">* Are you eligible to work in the country to which you are applying?</label>
+  <input id="elig" type="text" required></div>
+<button type="button">Apply</button>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_folded_successfactors_section_blocks_and_is_opened():
+    """CenturyLink (SuccessFactors, 2026-10-21): the re-opened application had every section folded, the outline listed no
+    field, and the gate passed it; the judge found the eligibility and enrollment questions unanswered."""
+    from goat.browser import fill
+    from goat.browser.errors import why_blocked
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(SF_FOLDED)
+        snap = await snapshot.take(ex)
+        assert snap.errors.get("collapsed_sections") == ["Job-Specific Information"], snap.errors
+        assert any(w.startswith("collapsed_sections: Job-Specific Information") for w in why_blocked(snap.errors))
+        assert not any("eligible" in (i.get("label") or "") for i in snap.items)
+        assert await fill.unfold_sections(ex) == ["Job-Specific Information"]
+        snap = await snapshot.take(ex)
+        assert not snap.errors.get("collapsed_sections"), snap.errors
+        assert any("eligible" in (r.get("label") or "") for r in snap.errors.get("empty_required", [])), snap.errors
+    finally:
+        await ex.close()

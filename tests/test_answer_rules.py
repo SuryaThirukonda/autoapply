@@ -1915,3 +1915,47 @@ async def test_the_only_this_role_option_is_his_marketing_opt_out(store, monkeyp
     assert out["results"][0]["status"] == "failed", out
     out, _ = await d.t_fill_batch([{"ref": "e6", "answer_key": "consent.marketing_email", "value": None, "source": None, "label": q}])
     assert out["results"][0]["status"] == "set", out
+
+
+@pytest.mark.asyncio
+async def test_an_if_yes_box_after_a_no_answer_stays_empty_or_takes_na(store, monkeypatch):
+    """CenturyLink (SuccessFactors, 2026-10-21): 'Are you a former employee of Lumen ...?' was answered No, then
+    'If yes, circumstances' got his stored reason for leaving ('Internship ended') and the judge failed the draft."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher({"id": 408, "company": "CenturyLink", "ats": "successfactors"})
+    q = "* Are you a former employee of Lumen or any affiliated companies?"
+    items = [{"ref": "e38", "tag": "select", "label": q, "value": "", "required": True},
+             {"ref": "e40", "tag": "input", "type": "text", "label": "If yes, circumstances", "value": ""},
+             {"ref": "e41", "tag": "textarea", "label": "If yes, please describe the circumstances (Enter 'N/A' if not applicable.)", "value": ""},
+             {"ref": "e50", "tag": "select", "label": "Have you applied to Lumen before?", "value": ""},
+             {"ref": "e51", "tag": "input", "type": "text", "label": "If so, when?", "value": ""}]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    sent = {}
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        out = []
+        for p_ in plan:
+            sent[p_["ref"]] = p_["value"]
+            out.append(FieldResult(p_["ref"], True, str(p_["value"]), ""))
+        return out
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("bank.prior-employee", "No", answer_type="choice", source="seed")
+    answers.save_answer("background.reason_for_leaving", "Internship ended", answer_type="text", source="seed")
+    answers.save_answer("bank.applied-before", "Yes", answer_type="choice", source="seed")
+    answers.save_answer("bank.applied-when", "Spring 2026", answer_type="text", source="seed")
+    await d.t_fill_batch([{"ref": "e38", "answer_key": "bank.prior-employee", "value": None, "source": None, "label": q}])
+    out, _ = await d.t_fill_batch([
+        {"ref": "e40", "answer_key": "background.reason_for_leaving", "value": None, "source": None, "label": "If yes, circumstances"},
+        {"ref": "e41", "answer_key": "background.reason_for_leaving", "value": None, "source": None, "label": "If yes, please describe"}])
+    res = {r["ref"]: r for r in (out.get("results") if isinstance(out, dict) else out)}
+    assert res["e40"]["status"] == "left_empty" and "e40" not in sent, (res, sent)
+    assert sent.get("e41") == "N/A", sent
+    # the same kind of box after a Yes answer takes his stored answer
+    await d.t_fill_batch([{"ref": "e50", "answer_key": "bank.applied-before", "value": None, "source": None, "label": "Have you applied to Lumen before?"},
+                          {"ref": "e51", "answer_key": "bank.applied-when", "value": None, "source": None, "label": "If so, when?"}])
+    assert sent.get("e51") == "Spring 2026", sent

@@ -721,6 +721,46 @@ def talent_community_allowed(company: str = "", portal: str = "") -> bool:
 NA_INSTRUCTION = re.compile(r"\b(enter|type|write|input|put|use|respond with|answer)\s+['\"\u201c\u201d\u2018\u2019]?n\s*/\s*a\b", re.I)
 
 
+# A box asked only when the question before it was answered Yes ("If yes, circumstances", "If so, please explain").
+# CenturyLink (2026-10-21): 'Are you a former employee of Lumen ...?' was answered No, then 'If yes, circumstances' got
+# his stored reason for leaving ('Internship ended') and the judge failed the draft.
+IF_YES_FOLLOWUP = re.compile(r"^[\s*]*(if\s+(yes|so)\b|if\s+you\s+(answered|selected|said|checked|chose|responded)\s+['\"“‘]?yes\b)", re.I)
+NOT_APPLICABLE_TEXT = re.compile(r"^\s*(n\s*/?\s*a|not applicable|none|does not apply)\s*\.?\s*$", re.I)
+_REF_NO = re.compile(r"^e(\d+)$")
+
+
+def answered_polarity(label: str, value) -> str | None:
+    """'yes' / 'no' when a logged decision answers its question that way ('question / No' pressed, or a bare No)."""
+    v = answers.norm(str(value or ""))
+    lab = str(label or "")
+    opt = answers.norm(lab.rsplit(" / ", 1)[1]) if " / " in lab else ""
+    if opt in ("yes", "no") and v in ("pressed", "checked", "true", "on", "yes"):
+        return opt
+    if v in ("no", "false"):
+        return "no"
+    if v in ("yes", "true") and not opt:
+        return "yes"
+    return None
+
+
+def followup_parent_answer(ref: str, page_decisions: list[dict], window: int = 15) -> tuple[str | None, str]:
+    """For an 'If yes' box: how the nearest yes/no question before it on the page was answered ('yes' / 'no' / None),
+    and that question's label. Refs number a page in document order, so the parent is the closest lower ref."""
+    m = _REF_NO.match(str(ref or ""))
+    if not m:
+        return None, ""
+    n = int(m.group(1))
+    best = None
+    for d in page_decisions:
+        dm = _REF_NO.match(str(d.get("ref") or ""))
+        if not dm or not (n - window <= int(dm.group(1)) < n):
+            continue
+        ans = answered_polarity(d.get("field_label") or "", d.get("value"))
+        if ans is not None and (best is None or int(dm.group(1)) >= best[0]):
+            best = (int(dm.group(1)), ans, str(d.get("field_label") or ""))
+    return (best[1], best[2]) if best else (None, "")
+
+
 def key_option_polarity(key: str | None, option: str) -> str | None:
     """'yes' / 'no' when `option` words the answer to stored question `key` (KEY_OPTION_POLARITY), else None."""
     pats = KEY_OPTION_POLARITY.get(str(key or ""))
@@ -1008,6 +1048,14 @@ class ToolDispatcher:
                     snap = await snapmod.take(self.ctx.ex, with_text=with_text)
             except Exception as e:
                 db.event(self.ctx.job_id, "adapter:consents:error", {"error": str(e)[:200]})
+        # SAP SuccessFactors folds its form into sections: a re-opened application came back with every section folded, the
+        # outline listed no field, and the gate passed it (CenturyLink, 2026-10-21). Opened here before the model reads it.
+        if (snap.errors or {}).get("collapsed_sections") and self.ctx.control_failures.get("sf:unfold", 0) < 3:
+            self.ctx.control_failures["sf:unfold"] = self.ctx.control_failures.get("sf:unfold", 0) + 1
+            opened = await fill.unfold_sections(self.ctx.ex)
+            db.event(self.ctx.job_id, "page:unfolded", {"sections": opened, "folded": (snap.errors or {}).get("collapsed_sections")})
+            if opened:
+                snap = await snapmod.take(self.ctx.ex, with_text=with_text)
         # SmartRecruiters' Experience / Education cards are written by the harness: the agent could not see their buttons
         # and the résumé parse adds wrong cards (CapTech, Wellmark, 2026-10-21). Checked on every snapshot of the form (a
         # read when nothing is missing); at most three passes that change something per run.
@@ -1193,12 +1241,30 @@ class ToolDispatcher:
                     "section. A résumé or generated literal never replaces his entries; if a check calls the stored "
                     "entry wrong, leave it as it is.")})
                 continue
-            if not f.get("answer_key") and str(f.get("value") or "").strip().upper() in ("N/A", "NA") and not is_choice \
-                    and NA_INSTRUCTION.search(f"{(item or {}).get('label') or ''} {(item or {}).get('placeholder') or ''}"):
+            followup_na = False
+            fq = str(((item or {}).get("group") if ((item or {}).get("type") in ("radio", "checkbox") or (item or {}).get("tag") == "toggle")
+                      else "") or (item or {}).get("label") or f.get("label") or "")
+            if IF_YES_FOLLOWUP.match(fq) and not (not f.get("answer_key") and NOT_APPLICABLE_TEXT.match(str(f.get("value") or ""))):
+                page_decs = [d for d in records.decisions(self.ctx.job_id) if d.get("page") == self.ctx.page_no]
+                page_decs += [{"ref": q["ref"], "field_label": q["_label"], "value": q["value"]} for q in plan]
+                parent, plabel = followup_parent_answer(f.get("ref", ""), page_decs)
+                if parent == "no":
+                    db.event(self.ctx.job_id, "answer:followup_after_no", {"ref": f.get("ref"), "label": fq[:120], "parent": plabel[:120]})
+                    asks_na = not is_choice and NA_INSTRUCTION.search(f"{(item or {}).get('label') or ''} {(item or {}).get('placeholder') or ''}")
+                    if not asks_na and (not ((item or {}).get("required") or fq.lstrip().startswith("*")) or is_choice):
+                        results.append({"ref": f["ref"], "status": "left_empty", "note": (
+                            f"this box is asked only when the question before it is answered Yes, and '{plabel[:90]}' was "
+                            "answered No: it stays empty. Only if the page then demands it, type N/A (or pick its 'Not "
+                            "applicable' option).")})
+                        continue
+                    followup_na = True
+            if followup_na or (not f.get("answer_key") and str(f.get("value") or "").strip().upper() in ("N/A", "NA") and not is_choice
+                               and NA_INSTRUCTION.search(f"{(item or {}).get('label') or ''} {(item or {}).get('placeholder') or ''}")):
                 # The box itself asks for N/A when its question does not apply: CenturyLink's "If yes, please describe the
                 # circumstances ... (Enter 'N/A' if not applicable.)" was refused as a yes/no value and the run parked
                 # (2026-10-21).
-                val, src, err = "N/A", "generated (the field asks for N/A when it does not apply)", None
+                val, src, err = "N/A", ("generated (an 'If yes' box whose question was answered No)" if followup_na
+                                        else "generated (the field asks for N/A when it does not apply)"), None
             else:
                 val, src, err = self._resolve_value(f.get("answer_key"), f.get("value"), f.get("source"), f.get("label", ""))
             if err:

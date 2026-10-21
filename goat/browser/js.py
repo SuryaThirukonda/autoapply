@@ -458,6 +458,10 @@ JS_HIT_TARGET = r"""
   while (at && at.shadowRoot && hops < 5) { const inner = at.shadowRoot.elementFromPoint(x, y); if (!inner || inner === at) break; at = inner; hops++; }
   if (!at) return 'none';
   if (at === t || t.contains(at) || at.contains(t)) return 'ok';
+  // A shadow-DOM button shows its label through a <slot>: the text is light-DOM content of the host, so the point hits
+  // that span and t.contains() is false (SmartRecruiters' spl-button 'Next', ServiceNow 2026-10-21: every Next click
+  // read as covered and went nowhere). Walking the composed tree (slot, parent, shadow host) finds the button.
+  for (let p = at, i = 0; p && i < 40; i++) { if (p === t) return 'ok'; p = p.assignedSlot || p.parentNode || p.host || null; }
   const lab = at.closest ? at.closest('label') : null;
   if (lab && (lab.control === t || lab.contains(t))) return 'ok';
   const root = t.getRootNode ? t.getRootNode() : null;
@@ -470,6 +474,17 @@ JS_HIT_TARGET = r"""
     if (['button', 'a', 'input', 'select', 'textarea', 'label'].includes(tag) || role === 'button' || role === 'link') return 'ok:control';
   }
   return 'covered:' + (at.tagName || '').toLowerCase() + (at.id ? '#' + at.id : '');
+}
+"""
+
+# A direct click on the element [data-goat-ref=ref], found in any shadow root too. True when it was there to click.
+JS_CLICK_REF = r"""
+(ref) => {
+""" + _COMMON + r"""
+  const t = findRef(ref);
+  if (!t) return false;
+  t.click();
+  return true;
 }
 """
 
@@ -744,7 +759,15 @@ JS_PAGE_ERRORS = r"""
     }
   }
   walk(document);
-  return JSON.stringify({ url: location.href, alerts: alerts.slice(0, 40), error_text: errorText.slice(0, 40), empty_required: emptyRequired.slice(0, 40), summaries: summaries.slice(0, 10) });
+  // SAP SuccessFactors folds its form into sections (a header button with aria-expanded): a folded section hides its
+  // questions from every check, and a re-opened application came back with all of them folded (CenturyLink, 2026-10-21).
+  const folded = [];
+  try {
+    if (document.querySelector('a[id$="_expandAllSections"]'))
+      for (const b of document.querySelectorAll('button[id$=":topBar"][aria-expanded="false"]'))
+        if (vis(b)) folded.push(txt(b).slice(0, 60) || '(section)');
+  } catch (e) {}
+  return JSON.stringify({ url: location.href, alerts: alerts.slice(0, 40), error_text: errorText.slice(0, 40), empty_required: emptyRequired.slice(0, 40), summaries: summaries.slice(0, 10), collapsed_sections: folded.slice(0, 12) });
 }
 """
 

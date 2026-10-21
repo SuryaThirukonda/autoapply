@@ -9,7 +9,7 @@ async def scan_errors(ex: Executor) -> dict:
     d = await ex.eval(js.JS_PAGE_ERRORS)
     if not isinstance(d, dict):
         d = {"alerts": [], "error_text": [], "empty_required": [], "url": ex.url}
-    d["clean"] = not (d.get("alerts") or d.get("error_text") or d.get("empty_required"))
+    d["clean"] = not (d.get("alerts") or d.get("error_text") or d.get("empty_required") or d.get("collapsed_sections"))
     return d
 
 
@@ -24,6 +24,10 @@ def why_blocked(scan: dict) -> list[str]:
     for r in scan.get("empty_required", []):
         ref = f" ref={r['ref']}" if r.get("ref") else ""
         why.append(f"empty_required: {r.get('label')} ({r.get('type')}){ref}")
+    folded = [str(s) for s in scan.get("collapsed_sections") or [] if str(s).strip()]
+    if folded:
+        why.append(f"collapsed_sections: {', '.join(folded[:8])} (folded: their questions are hidden and unchecked; "
+                   "call snapshot, which opens them, then fill what they hold)")
     return why
 
 

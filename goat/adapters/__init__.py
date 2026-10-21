@@ -727,6 +727,14 @@ class SuccessFactors(Adapter):
              "names). Salutation is identity.salutation (Mr). The final button is labelled 'Apply': when the page is complete "
              "call submit with button_label 'Apply'.")
 
+    async def prefill(self, ex, snap: Snapshot, job: dict, page_no: int) -> PrefillResult:
+        # Folded sections hide their fields from the prefill and the model (CenturyLink, 2026-10-21): open them first.
+        if (snap.errors or {}).get("collapsed_sections"):
+            from ..browser import snapshot as _snapmod
+            if await fill.unfold_sections(ex):
+                snap = await _snapmod.take(ex)
+        return await super().prefill(ex, snap, job, page_no)
+
 
 REGISTRY: dict[str, Adapter] = {a.portal: a for a in (Greenhouse(), Ashby(), Lever(), Workday(), Oracle(), ICIMS(),
                                                       SmartRecruiters(), SuccessFactors())}
