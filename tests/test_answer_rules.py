@@ -2022,3 +2022,13 @@ async def test_a_park_after_no_reset_email_points_at_create_account(store, monke
     out, _ = await d.t_park("portal_error: password reset email was not received")
     assert "Create an account" in out["error"] and "[e6]" in out["error"], out
     assert ctx.control_failures.get("park:create_needed") == 1
+
+
+
+def test_an_apply_menu_is_navigation_never_a_decision():
+    """NetApp / Acuity (2026-10-21): 'Apply now' was chosen with answer_key identity.email and blocked the form's gate."""
+    from goat.agent.tools import APPLY_NAV
+    for lab in ("Apply now", "Apply Now »", "Apply", "Apply with LinkedIn", "Start your application", "I'm interested"):
+        assert APPLY_NAV.match(lab), lab
+    for lab in ("Applied before?", "Application questions", "How did you apply?", "Apply to other roles?"):
+        assert not APPLY_NAV.match(lab), lab

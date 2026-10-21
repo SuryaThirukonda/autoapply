@@ -141,6 +141,7 @@ class RunContext:
     verify_link_tried: bool = False
     creds_mode: str = ""           # the last credentials mode filled (login / login_universal / create / set_password)
     reset_needed: bool = False     # a Sign In with the universal password failed on this tenant
+    sign_in_url: str = ""          # the page where that Sign In failed (the way back to its sign-up control)
     reset_link_tried: bool = False # open_password_reset_link was called this run
     reset_not_received: bool = False  # ...and no reset email came
     create_tried: bool = False     # credentials mode 'create' was used this run
@@ -467,6 +468,10 @@ CREATE_STEPS = ("no reset email came, so this tenant most likely has no account 
                 "then call open_verification_link if the portal asks you to verify the email. Park credentials_unknown only if the "
                 "portal says the account already exists.")
 
+
+# A posting page's own Apply menu ('Apply now' with 'Apply with LinkedIn' / 'Apply now' inside) is navigation, not a field.
+APPLY_NAV = re.compile(r"^\s*(apply( now| for this (job|position|role))?|apply (with|using) .{0,30}|start (your |an )?application|"
+                       r"i'?m interested)\s*[»›>]*\s*$", re.I)
 
 # The control that opens a portal's sign-up form.
 CREATE_ACCOUNT_LINK = re.compile(r"^\s*(create (an |your |new )?(account|profile)|sign ?up|register( now| here)?|new (user|candidate)|"
@@ -1756,6 +1761,14 @@ class ToolDispatcher:
             db.event(self.ctx.job_id, "answer:self_id_guard", {"key": answer_key, "dropped": [str(o)[:60] for o in options][:6], "label": label[:80]})
             options = []
         snap_item = (self.ctx.last_snapshot.find(ref) if self.ctx.last_snapshot else None) or {}
+        nav_label = str(snap_item.get("label") or label or "")
+        if APPLY_NAV.match(nav_label):
+            # NetApp / Acuity (2026-10-21): the posting's 'Apply now' menu was picked with answer_key identity.email and
+            # recorded as a decision; on the form the same ref named another control and the stale decision blocked the gate.
+            r = await fill.choose(self.ctx.ex, ref, [o for o in (options or []) if o] or ["Apply now", "Apply"])
+            db.event(self.ctx.job_id, "choose:navigation", {"ref": ref, "label": nav_label[:60], "picked": str(r.readback)[:60], "ok": r.ok})
+            return {"ref": ref, "status": "navigated" if r.ok else "failed", "readback": r.readback, "error": r.error,
+                    "note": "an Apply menu is navigation, not an answer: nothing was recorded. Take a snapshot."}, None
         if answer_key and (snap_item.get("type") or "").lower() in ("checkbox", "radio"):
             # A box of a radio / checkbox group is no picker (Epic Games' Gender Identity boxes, 2026-10-19: choose
             # reported "the picker for this field did not open"): tick it as fill_batch does, with the answer's
@@ -1987,6 +2000,7 @@ class ToolDispatcher:
             m = SIGN_IN_FAILED.search(text) if self.ctx.creds_mode != "create" else None
             if m:
                 self.ctx.reset_needed = True
+                self.ctx.sign_in_url = getattr(self.ctx.ex, "url", "") or self.ctx.sign_in_url
                 self.ctx.control_failures["creds:login_failed"] = self.ctx.control_failures.get("creds:login_failed", 0) + 1
                 db.event(self.ctx.job_id, "creds:sign_in_failed", {"host": self.ctx.portal_host, "quote": m.group(0)[:80]})
                 out["sign_in"] = "failed"
@@ -3173,12 +3187,20 @@ class ToolDispatcher:
             self.ctx.control_failures["park:create_needed"] = self.ctx.control_failures.get("park:create_needed", 0) + 1
             target = ""
             try:
-                snap_c = await snapmod.take(self.ctx.ex)
-                self.ctx.last_snapshot = snap_c
-                hit = next((i for i in snap_c.items if i.get("tag") in ("a", "button")
-                            and CREATE_ACCOUNT_LINK.search(str(i.get("label") or ""))), None)
-                if hit is not None:
-                    target = f" Click '{str(hit.get('label') or '')[:40]}' [{hit['ref']}] now."
+                for back in (False, True):
+                    snap_c = await snapmod.take(self.ctx.ex)
+                    self.ctx.last_snapshot = snap_c
+                    hit = next((i for i in snap_c.items if i.get("tag") in ("a", "button")
+                                and CREATE_ACCOUNT_LINK.search(str(i.get("label") or ""))), None)
+                    if hit is not None:
+                        target = f" Click '{str(hit.get('label') or '')[:40]}' [{hit['ref']}] now."
+                        break
+                    if back or not self.ctx.sign_in_url:
+                        break
+                    # the run wandered off the sign-in page (NetApp went to the careers home, 2026-10-21): go back to it
+                    await self.ctx.ex.goto(self.ctx.sign_in_url)
+                    await self.ctx.ex.settle()
+                    target = " The harness went back to the sign-in page."
             except Exception:  # noqa: BLE001 - the steps below still say what to do
                 pass
             db.event(self.ctx.job_id, "park:create_needed", {"reason": reason[:200], "target": target[:80]})
