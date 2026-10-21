@@ -3352,7 +3352,17 @@ class ToolDispatcher:
                 db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "reloaded": True})
                 return {"error": "not parked: the page was refreshed and the portal error is gone. Take a snapshot and continue "
                                  "(on Workday, if a step shows No Response on Review, go_to_step there and call fill_sections)."}, None
-        if perr:
+        # An error page the run reached itself on the way to a sign-up is no portal error: Corning reloaded SuccessFactors'
+        # session-bound address after the unanswered reset, got 'An error occurred while processing your request' and its
+        # park stood before the way back to 'Create an account' ran (2026-10-21).
+        signup_due = bool(self.ctx.reset_not_received and not self.ctx.create_tried and not self.ctx.account_exists
+                          and self.ctx.control_failures.get("park:create_needed", 0) < 3
+                          and (self.ctx.sign_in_url or self.ctx.creds_page_url))
+        if perr and signup_due:
+            db.event(self.ctx.job_id, "park:error_on_way_to_signup", {"reason": reason[:200], "page": perr})
+            if not self.ctx.sign_in_url:
+                self.ctx.sign_in_url = way_back_url(self.ctx.creds_page_url)
+        elif perr:
             db.event(self.ctx.job_id, "park:portal_error", {"reason": reason[:200], "page": perr})
             raise Parked(f"portal_error: {perr}", "hold")
         # No reset email came, so the tenant has no account for his email, and none was created yet: NetApp, Corning and
