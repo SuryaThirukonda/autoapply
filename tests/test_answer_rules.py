@@ -2158,3 +2158,16 @@ def test_a_park_that_names_corrections_left_is_still_work_to_do():
               "stuck: Five-entry history, education details, remaining sections, and later pages still require completion",
               "stuck: three tiles need correction"):
         assert STUCK_TODO.search(r), r
+
+
+
+def test_a_value_the_page_tells_the_applicant_to_enter_is_sourced_by_the_form():
+    """Corning (SuccessFactors, 2026-10-21): 'If you answered Yes above, enter "Not applicable"' kept 'Yes' through two judge
+    fixes; AutoZone's 'Reason for Leaving (Enter NA if current role)'."""
+    from goat.agent.tools import dictated_by_form
+    assert dictated_by_form("Not applicable", 'If you answered Yes above, please enter "Not applicable" in this box.')
+    assert dictated_by_form("NA", "Reason for Leaving (Enter NA if current role)")
+    assert dictated_by_form("Not applicable", "If yes, enter \u201cNot applicable\u201d.")
+    assert not dictated_by_form("Yes", 'please enter "Not applicable" in this box')
+    assert not dictated_by_form("Not", 'please enter "Not applicable" in this box')
+    assert not dictated_by_form("Texas A&M University", "Enter your school name")

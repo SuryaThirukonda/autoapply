@@ -538,6 +538,18 @@ def sign_in_link(snap) -> dict | None:
                  and re.fullmatch(r"\s*(sign ?in|log ?in|candidate (sign ?in|log ?in))\s*", str(i.get("label") or ""), re.I)), None)
 
 
+def dictated_by_form(value: str, text: str) -> bool:
+    """The page tells the applicant to enter exactly this short value ("enter 'Not applicable'", "Enter NA if ...")."""
+    v = (value or "").strip()
+    if not v or len(v) > 40:
+        return False
+    verbs = r"\b(enter|type|write|input|put|respond with|answer with)\s+(?:the\s+(?:word|words|text|phrase)\s+)?"
+    # quoted: the whole quoted text ('Not' is not 'Not applicable'); bare: up to punctuation or 'if / when ...'
+    quoted = re.compile(verbs + "[\"'\u201c\u2018]" + re.escape(v) + "[\"'\u201d\u2019]", re.I)
+    bare = re.compile(verbs + re.escape(v) + r"(?=\s*(?:[.,;:)]|$)|\s+(?:if|when|for|in|to|as|only)\b)", re.I)
+    return bool(quoted.search(text or "") or bare.search(text or ""))
+
+
 def other_resume_slot(snap, ref: str, portal: str) -> dict | None:
     """A résumé file box on the page other than this one and other than an Oracle profile import box."""
     from ..adapters import is_profile_import_upload
@@ -1460,7 +1472,22 @@ class ToolDispatcher:
                             "applicable' option).")})
                         continue
                     followup_na = True
-            if followup_na or (not f.get("answer_key") and str(f.get("value") or "").strip().upper() in ("N/A", "NA") and not is_choice
+            # A short value the page itself tells the applicant to enter ("enter 'Not applicable' if you answered Yes",
+            # "Enter NA if current role"): Corning's export-control follow-up kept 'Yes' through two judge fixes because a
+            # two-word literal had no source the tools accept (2026-10-21).
+            dictated = False
+            v0 = str(f.get("value") or "").strip()
+            if not f.get("answer_key") and v0 and not is_choice and len(v0) <= 40 and len(v0.split()) < 6 \
+                    and (f.get("source") or "").lower() in ("form", "generated", ""):
+                try:
+                    page_txt = await self.ctx.ex.page_text(30000)
+                except Exception:
+                    page_txt = ""
+                dictated = dictated_by_form(v0, "\n".join([page_txt, str((item or {}).get("label") or ""),
+                                                           str((item or {}).get("placeholder") or "")]))
+            if dictated:
+                val, src, err = v0, "form (the page tells the applicant to enter this)", None
+            elif followup_na or (not f.get("answer_key") and str(f.get("value") or "").strip().upper() in ("N/A", "NA") and not is_choice
                                and NA_INSTRUCTION.search(f"{(item or {}).get('label') or ''} {(item or {}).get('placeholder') or ''}")):
                 # The box itself asks for N/A when its question does not apply: CenturyLink's "If yes, please describe the
                 # circumstances ... (Enter 'N/A' if not applicable.)" was refused as a yes/no value and the run parked
