@@ -855,3 +855,55 @@ def test_his_education_entry_is_asked_for_only_where_the_block_is_required():
     assert oracle_tile_problems(work, items, required_blocks=["Work History"], **kw) == []
     got = oracle_tile_problems(work, items, required_blocks=["Work History", "Education"], **kw)
     assert len(got) == 1 and got[0].startswith("Education has no Texas A&M University entry"), got
+
+
+
+def test_an_unnamed_imported_tile_is_named_by_the_gate():
+    """Vertiv (Oracle, 2026-10-21): 'Unnamed Job Title' over his Southwest dates went to the judge."""
+    from goat.gate import oracle_tile_problems
+    tiles = [{"section": "Work History", "title": "Unnamed Job Title", "sub": "Southwest Airlines 10/2025 - 12/2025", "edit": "e7", "del": "e8"}]
+    got = oracle_tile_problems(tiles, [], entries=HIS_ENTRIES + [{"n": 5, "company": "Southwest Airlines", "title": "Data Analyst"}],
+                               school="Texas A&M University", high_school="", required_blocks=[])
+    assert len(got) == 1 and "has no real title" in got[0] and "Edit [e7]" in got[0], got
+
+
+
+ORACLE_TIMELINE = """<html><body>
+<div class="beautiful-timeline__column beautiful-timeline__column--left">
+ <div class="beautiful-timeline-item beautiful-timeline-item--experiences__5" tabindex="0" data-profile-item-tile="true" role="group"
+      style="height:30px;width:120px;display:block"><div class="beautiful-timeline-item__content"><div class="beautiful-timeline-item__info">
+  <span class="beautiful-timeline-item__title">Unnamed Job Title</span>
+  <span class="oj-helper-hidden-accessible">From October 2025 to December 2025</span></div></div></div>
+ <div class="beautiful-timeline-item beautiful-timeline-item--experiences__6" tabindex="0" data-profile-item-tile="true" role="group"
+      style="height:30px;width:120px;display:block"><div class="beautiful-timeline-item__content"><div class="beautiful-timeline-item__info">
+  <span class="beautiful-timeline-item__title">Undergraduate Research Assistant</span>
+  <span class="oj-helper-hidden-accessible">From September 2026 to No date provided</span></div></div></div>
+ <div class="beautiful-timeline-item beautiful-timeline-item--educations__1" tabindex="0" data-profile-item-tile="true" role="group"
+      style="height:30px;width:120px;display:block"><div class="beautiful-timeline-item__content"><div class="beautiful-timeline-item__info">
+  <span class="beautiful-timeline-item__title">Engineering Honors</span>
+  <span class="oj-helper-hidden-accessible">From No date provided to No date provided</span></div></div></div>
+</div></body></html>"""
+
+
+async def test_oracles_timeline_entries_are_controls_and_go_through_the_tile_checks():
+    """Vertiv (Oracle, 2026-10-21): the Work and Education History timeline's entries were not in the outline, so its
+    'Unnamed Job Title' could not be opened and the run held."""
+    from goat.gate import oracle_tile_problems
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(ORACLE_TIMELINE)
+        snap = await snapshot.take(ex)
+        labels = [str(i.get("label") or "") for i in snap.items]
+        assert "Entry: Unnamed Job Title (From October 2025 to December 2025)" in labels, labels
+        assert [(t["section"], t["title"]) for t in snap.tiles] == [("Work History", "Unnamed Job Title"),
+                                                                    ("Work History", "Undergraduate Research Assistant"),
+                                                                    ("Education", "Engineering Honors")], snap.tiles
+        got = oracle_tile_problems(snap.tiles, snap.items, entries=HIS_ENTRIES, school="Texas A&M University",
+                                   high_school="Clements High School", required_blocks=[])
+        assert len(got) == 2, got
+        assert "has no real title" in got[0] and f"click the entry [{snap.tiles[0]['edit']}] and then its Edit" in got[0]
+        assert "'Engineering Honors'" in got[1] and "then its Remove" in got[1]
+    finally:
+        await ex.close()

@@ -240,8 +240,24 @@ def oracle_tile_problems(tiles: list[dict], items: list[dict], company: str = ""
         high_school = str(a.answer) if a and a.has_value and a.answer else ""
     from .adapters.workday_sections import _same_company
     out = []
+
+    def _edit(t: dict) -> str:
+        # a timeline entry shows its Edit / Remove once clicked
+        return (f"click the entry [{t.get('edit') or '?'}] and then its Edit" if t.get("timeline")
+                else f"open it with its Edit [{t.get('edit') or '?'}]")
+
+    def _delete(t: dict) -> str:
+        return (f"click the entry [{t.get('edit') or '?'}] and then its Remove" if t.get("timeline")
+                else f"remove it with its Delete [{t.get('del') or '?'}]")
     for t in tiles:
         if not _WORK_SECTION.search(t.get("section") or "") or not entries:
+            continue
+        # Oracle's placeholder for an imported entry with no title (Vertiv, 2026-10-21: 'Unnamed Job Title' over his
+        # Southwest dates, failed by the judge)
+        if re.match(r"\s*unnamed\b", t.get("title") or "", re.I):
+            out.append(f"the {t.get('section') or 'Work History'} tile '{t.get('title')}' / '{t.get('sub') or t.get('dates')}' has no real title "
+                       f"(Oracle's résumé import): {_edit(t)} and set Job Title, Employer Name and dates from the stored entry with "
+                       f"those dates (experience.work.N.*), then SAVE; if it duplicates a tile already there, {_delete(t)}")
             continue
         employer = _TILE_DATES.sub("", t.get("sub") or "").strip(" ,-")
         if not employer or any(_same_company(employer, e["company"]) for e in entries):
@@ -251,9 +267,9 @@ def oracle_tile_problems(tiles: list[dict], items: list[dict], company: str = ""
                                                    or tn.startswith(answers.norm(re.split(r"\s*[(,]", e.get("title") or "", 1)[0]) or "-"))), None)
         which = f" (his {role['company']} role: experience.work.{role['n']}.*)" if role else ""
         out.append(f"the {t.get('section') or 'Work History'} tile '{t.get('title')}' gives its employer as '{employer}', which is none "
-                   f"of his employers{which}: open it with its Edit [{t.get('edit') or '?'}], set Employer Name to his stored company "
-                   "for that role and Job Title, dates and Achievements from the same experience.work.N.* entry, then SAVE; a tile "
-                   f"that is none of his roles is removed with its Delete [{t.get('del') or '?'}]")
+                   f"of his employers{which}: {_edit(t)}, set Employer Name to his stored company for that role and Job Title, "
+                   "dates and Achievements from the same experience.work.N.* entry, then SAVE; for a tile that is none of his roles, "
+                   f"{_delete(t)}")
     school_key = answers.norm(re.split(r"\s*[-(,]", school or "", 1)[0]) if school else ""
     hs_key = answers.norm(high_school or "")
     his = []
@@ -262,16 +278,19 @@ def oracle_tile_problems(tiles: list[dict], items: list[dict], company: str = ""
             continue
         both = f"{t.get('title') or ''} {t.get('sub') or ''}"
         text = answers.norm(both)
-        if (hs_key and hs_key in text) or (school_key and school_key in text and _HIS_DEGREE.search(both)):
+        # a timeline entry may show the school cut short ('Texas'): there his degree or major as its title is enough
+        if (hs_key and hs_key in text) or (school_key and school_key in text and _HIS_DEGREE.search(both)) \
+                or (t.get("timeline") and _HIS_DEGREE.search(t.get("title") or "")):
             his.append(t)
             continue
-        out.append(f"the Education tile '{t.get('title')}' / '{t.get('sub')}' is not his {school or 'school'} degree entry (Oracle's "
-                   f"résumé import adds such tiles, e.g. 'Engineering Honors'): remove it with its Delete [{t.get('del') or '?'}]")
+        out.append(f"the Education tile '{t.get('title')}' / '{t.get('sub') or t.get('dates')}' is not his {school or 'school'} degree entry "
+                   f"(Oracle's résumé import adds such tiles, e.g. 'Engineering Honors'): {_delete(t)}")
     add_edu = next((i for i in items or [] if re.fullmatch(r"\s*add education\s*", str(i.get("label") or ""), re.I)), None)
     # only where the Education block is required: Vertiv's optional block got the rule, its school search found nothing
     # and the run held over a field the form did not need (2026-10-21)
     edu_required = required_blocks is None or any(_EDU_SECTION.search(b or "") for b in required_blocks)
-    if add_edu is not None and school_key and edu_required and not any(school_key in answers.norm(f"{t.get('title')} {t.get('sub')}") for t in his):
+    if add_edu is not None and school_key and edu_required and not any(t.get("timeline") or school_key in answers.norm(f"{t.get('title')} {t.get('sub')}")
+                                                                       for t in his):
         out.append(f"Education has no {school} entry: click ADD EDUCATION [{add_edu['ref']}] and enter it from education.* (school, "
                    "degree Bachelor of Science, major Computer Science, graduation May 2028), then SAVE")
     return out

@@ -197,7 +197,7 @@ JS_SNAPSHOT = r"""
   const items = [];
   const groups = new Map();
   const seen = new Set();
-  const SEL = 'input, textarea, select, button, a[href], [role="button"], [role="combobox"], [role="listbox"], [role="checkbox"], [role="radio"], [role="switch"], [role="tab"], [role="menuitem"], [role="option"], [contenteditable="true"], [data-automation-id="selectWidget"], [data-automation-id="promptOption"], [aria-haspopup]';
+  const SEL = 'input, textarea, select, button, a[href], [role="button"], [role="combobox"], [role="listbox"], [role="checkbox"], [role="radio"], [role="switch"], [role="tab"], [role="menuitem"], [role="option"], [contenteditable="true"], [data-automation-id="selectWidget"], [data-automation-id="promptOption"], [aria-haspopup], .beautiful-timeline-item[data-profile-item-tile]';
 
   function groupLabel(el) {
     // A group that names its question by aria-labelledby says so first (Eightfold's radio groups, 2026-10-21).
@@ -347,6 +347,13 @@ JS_SNAPSHOT = r"""
         item.value = el.selectedOptions.length ? txt(el.selectedOptions[0]) : '';
         item.options = Array.from(el.options).map(o => txt(o)).filter(Boolean).slice(0, 25);
         item.noptions = el.options.length;
+      } else if (el.classList && el.classList.contains('beautiful-timeline-item')) {
+        // Oracle's Work and Education History timeline: each entry opens on a click and shows its Edit / Remove only then
+        // (Vertiv, 2026-10-21: 'Unnamed Job Title' could not be reached and the run held)
+        item.tag = 'button';
+        const tt = txt(el.querySelector('.beautiful-timeline-item__title'));
+        const dr = ((el.querySelector('.oj-helper-hidden-accessible') || {}).textContent || '').replace(/\s+/g, ' ').trim();
+        item.label = ('Entry: ' + tt + (dr ? ' (' + dr + ')' : '')).slice(0, 160);
       } else if (tag === 'button' || role === 'button' || el.hasAttribute('aria-haspopup') || el.getAttribute('data-automation-id') === 'selectWidget') {
         const shown = txt(el).slice(0, 120);
         const isDropdown = el.hasAttribute('aria-haspopup') || el.getAttribute('data-automation-id') === 'selectWidget' || role === 'combobox';
@@ -365,10 +372,11 @@ JS_SNAPSHOT = r"""
           if (!item.label) continue;
           // an entry tile's bare Edit / Delete is named by its tile ('Delete: Engineering Honors / Texas A&M University'):
           // the outline listed five Deletes with no name and no Edit at all (AutoZone, 2026-10-21)
-          const tileEl = el.closest('article.apply-flow-profile-item-tile');
+          const tileEl = el.closest('article.apply-flow-profile-item-tile, .beautiful-timeline-item');
           if (tileEl && /^(edit|delete|remove)$/i.test(item.label.trim())) {
-            const tt = txt(tileEl.querySelector('.apply-flow-profile-item-tile__summary-title'));
-            const ts = txt(tileEl.querySelector('.apply-flow-profile-item-tile__summary-subtitle'));
+            const tt = txt(tileEl.querySelector('.apply-flow-profile-item-tile__summary-title, .beautiful-timeline-item__title'));
+            const ts = txt(tileEl.querySelector('.apply-flow-profile-item-tile__summary-subtitle')) ||
+              ((tileEl.querySelector('.oj-helper-hidden-accessible') || {}).textContent || '').replace(/\s+/g, ' ').trim();
             const nm = [tt, ts].filter(Boolean).join(' / ');
             if (nm) item.label = item.label.trim() + ': ' + nm.slice(0, 140);
           }
@@ -455,6 +463,15 @@ JS_SNAPSHOT = r"""
     tiles.push({ section: sec.slice(0, 60), title: txt(t.querySelector('.apply-flow-profile-item-tile__summary-title')).slice(0, 120),
       sub: txt(t.querySelector('.apply-flow-profile-item-tile__summary-subtitle')).slice(0, 160), invalid: /--invalid/.test(String(t.className || '')),
       edit: ed ? (ed.getAttribute('data-goat-ref') || '') : '', del: de ? (de.getAttribute('data-goat-ref') || '') : '' });
+  }
+  for (const t of document.querySelectorAll('.beautiful-timeline-item[data-profile-item-tile]')) {
+    if (tiles.length >= 20) break;
+    const cls = String(t.className || '');
+    const sec = /--experien/i.test(cls) ? 'Work History' : (/--educ/i.test(cls) ? 'Education' : '');
+    const subEl = t.querySelector('.beautiful-timeline-item__subtitle, [class*="timeline-item__subtitle"]');
+    tiles.push({ section: sec, title: txt(t.querySelector('.beautiful-timeline-item__title')).slice(0, 120),
+      sub: subEl ? txt(subEl).slice(0, 160) : '', dates: ((t.querySelector('.oj-helper-hidden-accessible') || {}).textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+      invalid: t.getAttribute('data-profile-item-invalid') === 'true', edit: t.getAttribute('data-goat-ref') || '', del: '', timeline: true });
   }
   const headings = [];
   for (const h of document.querySelectorAll('h1, h2, h3, [role="heading"]')) { if (vis(h)) { const t = txt(h); if (t && t.length < 160) headings.push(t); } if (headings.length >= 12) break; }
