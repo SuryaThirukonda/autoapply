@@ -377,3 +377,37 @@ def test_a_search_pages_sort_picker_needs_no_sourced_decision():
     from goat.gate import SEARCH_CONTROL
     assert SEARCH_CONTROL.match("Sort by") and SEARCH_CONTROL.match("Sort") and SEARCH_CONTROL.match("Results per page:")
     assert not SEARCH_CONTROL.match("Sort code") and not SEARCH_CONTROL.match("How did you hear about us?")
+
+
+
+SF_RADIOS = """<html><body><div class="RCMFormField"><label id="q1" class="rcmFormQuestionLabel"><span class="requiredField">*</span>&nbsp;Will you now
+or in the future require Visa sponsorship for full-time employment?</label>
+<div id="g1" class="radioGroup" role="radiogroup" aria-labelledby="q1">
+ <span id="r1" onclick="this.firstElementChild.setAttribute('aria-checked','true'); document.querySelector('#r2 span').setAttribute('aria-checked','false')">
+  <span class="radioContainer" role="radio" aria-checked="false" aria-labelledby="l1" tabindex="0" style="display:inline-block;width:16px;height:16px"></span><label id="l1">Yes</label></span>
+ <span id="r2" onclick="this.firstElementChild.setAttribute('aria-checked','true'); document.querySelector('#r1 span').setAttribute('aria-checked','false')">
+  <span class="radioContainer" role="radio" aria-checked="false" aria-labelledby="l2" tabindex="-1" style="display:inline-block;width:16px;height:16px"></span><label id="l2">No</label></span>
+</div></div></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_aria_radios_are_toggles_with_their_question_and_an_unanswered_required_group_is_empty():
+    """CenturyLink (SuccessFactors, 2026-10-21): four required span radios showed no question, none was set, the gate passed."""
+    from goat.browser import fill
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(SF_RADIOS)
+        snap = await snapshot.take(ex)
+        toggles = [i for i in snap.items if i.get("tag") == "toggle"]
+        assert [t["label"] for t in toggles] == ["Yes", "No"], toggles
+        assert "require Visa sponsorship" in toggles[0]["group"] and toggles[0].get("required")
+        assert any("Visa sponsorship" in (r.get("label") or "") for r in snap.errors.get("empty_required", [])), snap.errors
+        no = toggles[1]["ref"]
+        out = await fill.fill_batch(ex, [{"ref": no, "value": "true"}])
+        assert await ex.page.evaluate("() => document.querySelector('#r2 span').getAttribute('aria-checked')") == "true", out
+        snap = await snapshot.take(ex)
+        assert not snap.errors.get("empty_required"), snap.errors
+    finally:
+        await ex.close()

@@ -396,3 +396,17 @@ async def test_tick_boxes_on_a_state_keeping_site_get_real_clicks(monkeypatch):
         assert await ex.page.evaluate("() => window.state") == {"privacy": True, "choice": "applied_only"}
     finally:
         await ex.close()
+
+
+
+def test_a_bachelor_level_answer_never_picks_another_fields_bachelors():
+    """Itron (2026-10-21): 'Bachelors' prefix-matched 'Bachelors of Business Administration (BBA)'."""
+    wants = ["Bachelor of Science", "Bachelor's Degree", "Bachelor's", "Bachelors", "Bachelor", "Undergraduate"]
+    opts = [{"text": t} for t in ("Associates", "Bachelors of Arts (BA)", "Bachelors of Business Administration (BBA)",
+                                  "Bachelors of Science (BS)", "Masters")]
+    assert fill.best_option(opts, wants)["text"] == "Bachelors of Science (BS)"
+    no_sci = [{"text": t} for t in ("High School Diploma", "Bachelors of Business Administration (BBA)", "Bachelors of Arts (BA)")]
+    assert fill.best_option(no_sci, wants) is None
+    generic = [{"text": t} for t in ("Associate's Degree", "Bachelor's Degree", "Master's Degree")]
+    assert fill.best_option(generic, wants)["text"] == "Bachelor's Degree"
+    assert fill.best_option([{"text": "BS"}, {"text": "BA"}], wants)["text"] == "BS"

@@ -679,6 +679,25 @@ def proficiency_option(options: list[dict], wants: list[str]) -> dict | None:
     return best
 
 
+# His degree is a Bachelor of Science. A bare level answer ('Bachelors', "Bachelor's") prefix-matched Itron's 'Bachelors of
+# Business Administration (BBA)', and the tool called that 'this portal's wording for Bachelor of Science' (2026-10-21).
+_DEGREE_LEVEL_WANT = re.compile(r"^\s*(bachelor('?s)?( degree)?|undergraduate|bachelor'?s? of science( \(b\.?s\.?\))?|b\.?s\.?c?)\s*$", re.I)
+_SCIENCE_BACHELOR = re.compile(r"\bbachelor'?s?\s+(degree\s+)?(of|in)\s+science\b|^\s*b\.?\s?sc?\.?\s*(\(|$)|\(\s*b\.?\s?sc?\.?\s*\)", re.I)
+_OTHER_BACHELOR = re.compile(r"\bbachelor'?s?\s+(degree\s+)?(of|in)\s+(?!science\b)[a-z]", re.I)
+
+
+def degree_option(options: list[dict], wants: list[str]) -> tuple[dict | None, list[dict]]:
+    """For a bachelor-level answer: the science bachelor's the list offers, else the options without the bachelor's
+    degrees of other fields (which only an exact answer may pick)."""
+    if not any(_DEGREE_LEVEL_WANT.match(w or "") for w in wants):
+        return None, options
+    exact = {_norm(w) for w in wants if w}
+    sci = [o for o in options if _SCIENCE_BACHELOR.search(o.get("text") or "")]
+    if sci:
+        return sci[0], options
+    return None, [o for o in options if _norm(o.get("text")) in exact or not _OTHER_BACHELOR.search(o.get("text") or "")]
+
+
 def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
     """Exact match first. A prefix/contains match is accepted only when it is UNambiguous: if several
     options share the prefix (Texas A&M University - College Station / - Commerce / - Kingsville) the
@@ -694,6 +713,9 @@ def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
     pay_hit = money_option(options, wants)
     if pay_hit is not None:
         return pay_hit
+    deg_hit, options = degree_option(options, wants)
+    if deg_hit is not None:
+        return deg_hit
     institution = any(_INSTITUTION.search(w or "") for w in wants)
     for want in wants:
         w = _norm(want)

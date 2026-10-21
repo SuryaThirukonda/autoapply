@@ -283,6 +283,18 @@ JS_SNAPSHOT = r"""
             item.group = groupLabel(el) || (() => { let p = el.parentElement; for (let i = 0; i < 4 && p; i++, p = p.parentElement) { const t = txt(p); if (t.length > item.label.length + 4 && t.length < 400) return t.replace(item.label, '').replace(/\s+/g, ' ').trim().slice(0, 200); } return ''; })();
           }
         }
+      } else if ((role === 'radio' || role === 'checkbox' || role === 'switch') && el.hasAttribute('aria-checked')) {
+        // ARIA radios drawn with spans (SAP SuccessFactors' radioContainer, CenturyLink 2026-10-21: four required
+        // questions showed only 'Yes' / 'No' items without their question, none was set, and the gate passed): a toggle
+        // that carries its question, so it is answered like Ashby's Yes / No buttons.
+        item.tag = 'toggle'; item.pressed = el.getAttribute('aria-checked') === 'true';
+        const rg = el.closest('[role="radiogroup"], [role="group"]');
+        const lb = rg ? (rg.getAttribute('aria-labelledby') || '') : '';
+        let q = '';
+        if (lb) { const n = el.ownerDocument.getElementById(lb.split(/\s+/)[0]); if (n) q = txt(n); }
+        if (!q && rg) q = (rg.getAttribute('aria-label') || '').trim();
+        item.group = (q || groupLabel(el) || '').slice(0, 200);
+        if (rg && (rg.getAttribute('aria-required') === 'true' || /^\s*\*|\*\s*$/.test(q))) item.required = true;
       } else if (tag === 'a') {
         item.label = txt(el).slice(0, 100);
         if (!item.label || !inView(el)) continue;
@@ -702,6 +714,19 @@ JS_PAGE_ERRORS = r"""
       const lab = nearestLabel(el) || el.name || el.id || '(unlabelled)';
       push(emptyRequired, { label: lab, type: el.type || el.tagName.toLowerCase(), name: el.name || el.id || '', ref: el.getAttribute('data-goat-ref') || '' }, 'r:' + lab + ':' + (el.name || el.id || ''));
     }
+    // a required ARIA radio group with nothing checked (SAP SuccessFactors' radioGroup: the question label carries the '*')
+    let rgs = []; try { rgs = root.querySelectorAll('[role="radiogroup"]'); } catch (e) { rgs = []; }
+    for (const g of rgs) {
+      if (!vis(g) || g.querySelector('input[type="radio"]')) continue;
+      const lb = g.getAttribute('aria-labelledby') || '';
+      const qn = lb ? (g.ownerDocument.getElementById(lb.split(/\s+/)[0]) || null) : null;
+      const q = qn ? txt(qn) : (g.getAttribute('aria-label') || '');
+      const req = g.getAttribute('aria-required') === 'true' || /^\s*\*|\*\s*$/.test(q) || !!(qn && qn.querySelector('.requiredField'));
+      if (!req) continue;
+      const opts = Array.from(g.querySelectorAll('[role="radio"]'));
+      if (!opts.length || opts.some(o => o.getAttribute('aria-checked') === 'true')) continue;
+      push(emptyRequired, { label: q.replace(/^\s*\*\s*/, '').slice(0, 160) || '(radio group)', type: 'radiogroup', name: g.id || '', ref: opts[0].getAttribute('data-goat-ref') || '' }, 'r:' + q + ':radiogroup');
+    }
     let dd = []; try { dd = root.querySelectorAll('[data-automation-id="selectWidget"], button[aria-haspopup="listbox"], [role="combobox"]:not(input):not(textarea), [role="button"][aria-haspopup]'); } catch (e) { dd = []; }
     for (const el of dd) {
       if (!vis(el)) continue;
@@ -847,7 +872,7 @@ JS_FILL_BATCH = r"""
         el.focus(); el.value = opt.value;
         el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.blur();
         res.readback = txt(el.selectedOptions[0] || {}); res.ok = el.selectedOptions.length > 0 && el.selectedOptions[0] === opt;
-      } else if (tag === 'button' && (el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked'))) {
+      } else if ((tag === 'button' || /^(radio|checkbox|switch)$/.test(el.getAttribute('role') || '')) && (el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked'))) {
         const want = (f.value === true || /^(true|yes|on|checked|1|pressed)$/i.test(String(f.value)));
         const isOn = () => (el.getAttribute('aria-pressed') ?? el.getAttribute('aria-checked')) === 'true';
         // A toggle that has to change is pressed by the caller with a REAL mouse click: a script click turned Ashby's
@@ -955,7 +980,7 @@ JS_READ_REFS = r"""
     if (tag === 'select') out[ref] = { value: el.selectedOptions.length ? txt(el.selectedOptions[0]) : '' };
     else if (type === 'password' || type === 'file') out[ref] = { value: el.value ? '(set)' : '' };
     else if (type === 'checkbox' || type === 'radio') out[ref] = { checked: !!el.checked };
-    else if (tag === 'button' && (el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked')))
+    else if ((tag === 'button' || /^(radio|checkbox|switch)$/.test(el.getAttribute('role') || '')) && (el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked')))
       out[ref] = { pressed: (el.getAttribute('aria-pressed') ?? el.getAttribute('aria-checked')) === 'true' };
     else if (tag === 'button' || el.getAttribute('aria-haspopup') || (el.getAttribute('role') === 'combobox' && tag !== 'input'))
       out[ref] = { value: txt(el).slice(0, 300) };
