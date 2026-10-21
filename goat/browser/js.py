@@ -898,8 +898,9 @@ JS_LIST_OPTIONS = r"""
 () => {
   const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1; };
   const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-  // Oracle Candidate Experience selects open a role=grid popup whose options are gridcells (Amex, 2026-10-19)
-  const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], li[role="presentation"] div[role="option"], .select__option, [class*="__option"], [class*="option" i][id*="option" i], ul[role="listbox"] li, [role="listbox"] [role="option"], [role="grid"] [role="gridcell"]')).filter(o => !o.closest('[data-automation-id="selectedItemList"]'));
+  // Oracle Candidate Experience selects open a role=grid popup whose options are gridcells (Amex, 2026-10-19);
+  // SAP SuccessFactors' paginated selects list role=menuitem links inside a role=menu (L3Harris, 2026-10-20)
+  const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], li[role="presentation"] div[role="option"], .select__option, [class*="__option"], [class*="option" i][id*="option" i], ul[role="listbox"] li, [role="listbox"] [role="option"], [role="grid"] [role="gridcell"], [role="menu"] [role="menuitem"]')).filter(o => !o.closest('[data-automation-id="selectedItemList"]'));
   const out = [];
   for (const o of opts) {
     if (!vis(o)) continue;
@@ -918,7 +919,7 @@ JS_LIST_OPTIONS = r"""
 JS_SCROLL_OPTION = r"""
 (text) => {
   const txt = (el) => ((el.getAttribute && el.getAttribute('data-automation-label')) || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-  const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], .select__option, [class*="__option"], ul[role="listbox"] li, [role="grid"] [role="gridcell"]'))
+  const opts = Array.from(document.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], .select__option, [class*="__option"], ul[role="listbox"] li, [role="grid"] [role="gridcell"], [role="menu"] [role="menuitem"]'))
     .filter(o => txt(o).slice(0, 160) === text && o.getBoundingClientRect().width > 1);
   if (!opts.length) return JSON.stringify({ ok: false });
   const inList = opts.filter(o => !o.closest('[data-automation-id="selectedItemList"]'));

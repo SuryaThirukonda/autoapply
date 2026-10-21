@@ -243,3 +243,10 @@ def test_fact_check_default_no_covers_being_the_companys_client():
     """Invesco (2026-10-20): No to 'are you a current or prospective Invesco client' was flagged."""
     from goat.judge import FACT_CHECK_INSTRUCTIONS
     assert "being its own client, customer, account holder or investor" in FACT_CHECK_INSTRUCTIONS
+
+
+
+def test_fact_check_knows_his_availability_window():
+    """Inversion Space (2026-10-20): 'May 18, 2027 through August 14, 2027 (12 weeks)' was called an unsupported commitment."""
+    from goat.judge import FACT_CHECK_INSTRUCTIONS
+    assert "May 18, 2027 to August 14, 2027" in FACT_CHECK_INSTRUCTIONS

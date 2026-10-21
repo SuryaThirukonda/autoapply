@@ -171,3 +171,64 @@ async def test_a_dropdown_button_read_mid_render_is_read_again_not_taken_for_its
         assert await fillmod.text_not_internal_id(ex, ref, "Yes") == "Yes"
     finally:
         await ex.close()
+
+
+
+@pytest.mark.asyncio
+async def test_a_native_month_input_takes_its_iso_value():
+    """Electronic Arts (2026-10-20): '09/01/2026' typed into <input type="month"> left the start date empty."""
+    from goat.browser import fill as fillmod
+    from goat.browser import snapshot as snapmod
+    from goat.browser.executor import Executor, HostPolicy
+    html = ('<html><body><label for="m">Start date</label><input type="month" id="m">'
+            '<label for="d">Graduation date</label><input type="date" id="d"></body></html>')
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(html)
+        snap = await snapmod.take(ex)
+        refs = {i["label"]: i["ref"] for i in snap.items}
+        r = await fillmod.set_date(ex, refs["Start date"], "09/01/2026")
+        assert r.ok and r.readback == "2026-09"
+        r = await fillmod.set_date(ex, refs["Graduation date"], "05/15/2028")
+        assert r.ok and r.readback == "2028-05-15"
+    finally:
+        await ex.close()
+
+
+
+JUIC = """<html><body style="margin:20px">
+<label for="v">Veteran Status</label>
+<input id="v" type="text" role="combobox" placeholder="No Selection" aria-owns="lst" aria-required="true" aria-invalid="true">
+<div id="lst" role="menu" style="display:none;position:absolute;background:#fff">
+  <a role="menuitem" href="#" style="display:block">No Selection</a>
+  <a role="menuitem" href="#" style="display:block">Not Protected Veteran (OFCCP)</a>
+  <a role="menuitem" href="#" style="display:block">Protected Veteran (OFCCP)</a>
+</div>
+<p>next field</p><input id="n" type="text" aria-label="Next">
+<script>
+  const v = document.getElementById('v'), lst = document.getElementById('lst'); let sel = '';
+  v.addEventListener('click', () => { lst.style.display = 'block'; v.setAttribute('aria-expanded', 'true'); });
+  v.addEventListener('focus', () => { v.value = ''; });          // SuccessFactors clears the box while it has the focus
+  v.addEventListener('blur', () => { v.value = sel; if (sel) v.setAttribute('aria-invalid', 'false'); });
+  lst.querySelectorAll('a').forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); sel = a.textContent;
+    lst.style.display = 'none'; v.setAttribute('aria-expanded', 'false'); v.focus(); }));
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_box_that_shows_its_pick_only_after_blur_is_read_after_blur():
+    """L3Harris / Westinghouse SuccessFactors (2026-10-20): the pick read 'No Selection' while the box had the focus."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(JUIC)
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if (i.get("label") or "").startswith("Veteran"))
+        r = await fill.choose(ex, ref, ["Not Protected Veteran (OFCCP)"])
+        assert r.ok, r
+        assert await ex.page.evaluate("() => document.getElementById('v').value") == "Not Protected Veteran (OFCCP)"
+    finally:
+        await ex.close()

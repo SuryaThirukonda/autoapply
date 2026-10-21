@@ -1502,3 +1502,90 @@ async def test_a_gpa_band_radio_takes_his_gpa(store, monkeypatch):
         assert out["results"][0]["status"] == "set" and typed == {"e96": "true"}, (key, out)
     out, _ = await d.t_fill_batch([{"ref": "e93", "answer_key": "education.gpa", "value": None, "source": None, "label": "GPA"}])
     assert out["results"][0]["status"] == "failed" and "[e96]" in out["results"][0]["error"]
+
+
+
+@pytest.mark.asyncio
+async def test_a_box_that_asks_for_none_gets_none(store, monkeypatch):
+    """Highmark Health (2026-10-20): 'Enter none if not applicable' got his stored 'No'."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher({"id": 439, "company": "Highmark Health", "ats": "workday"})
+    lab = ("Please provide any names of relatives currently working for Highmark Health or Allegheny Health Network and its "
+           "affiliates. Enter none if not applicable.")
+    snap = Snapshot(url="u", title="t", headings=[], items=[{"ref": "e41", "tag": "textarea", "label": lab, "value": ""}],
+                    groups=[], errors={}, challenge={})
+    for i in snap.items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    typed = {}
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        out = []
+        for p in plan:
+            typed[p["ref"]] = p["value"]
+            out.append(FieldResult(p["ref"], True, p["value"], ""))
+        return out
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("bank.relatives", "No", answer_type="text", source="seed:answer_bank.json")
+    await d.t_fill_batch([{"ref": "e41", "answer_key": "bank.relatives", "value": None, "source": None, "label": "Names of relatives"}])
+    assert typed == {"e41": "None"}
+
+
+
+@pytest.mark.asyncio
+async def test_choose_never_falls_back_to_the_opposite_of_his_answer(store, monkeypatch):
+    """Highmark Health (2026-10-20): his 'Yes' to AI screening failed its read-back and the fallback clicked 'No, Opt - Out'."""
+    from goat.agent import tools as toolsmod
+    from goat.browser.fill import FieldResult
+    d, ctx = _dispatcher({"id": 439, "company": "Highmark Health", "ats": "workday"})
+    calls = []
+
+    async def fake_choose(ex, ref, wants, *a, **k):
+        calls.append(list(wants))
+        return FieldResult(ref, False, "", "the control showed an internal id")
+    monkeypatch.setattr(toolsmod.fill, "choose", fake_choose)
+    answers.save_answer("bank.ai-screening-consent", "Yes", answer_type="text", source="seed:answer_bank.json")
+    await d.t_choose("e42", "bank.ai-screening-consent", ["Yes, Opt - In", "No, Opt - Out"], "Consent to AI screening", None)
+    assert calls and all(not any(w.lower().startswith("no") for w in c) for c in calls), calls
+    assert toolsmod.answer_polarity("No, Opt - Out") == "no" and toolsmod.answer_polarity("Yes, Opt - In") == "yes"
+    assert toolsmod.answer_polarity("Texas A&M University") is None
+
+
+
+@pytest.mark.asyncio
+async def test_a_pay_alignment_question_is_settled_by_the_posted_range(store):
+    """Amplify (2026-10-20): 'Does the posted salary or hourly pay range align with your expectations?' with $30-$35/hr."""
+    from goat.agent import tools as toolsmod
+    assert toolsmod.pay_meets_desired("Compensation Hourly Rate $30 – $35 per hour") is True
+    assert toolsmod.pay_meets_desired("$15 - $18 per hour") is False
+    assert toolsmod.pay_meets_desired("$85,000 - $110,000 a year") is True
+    assert toolsmod.pay_meets_desired("$35k - $40k") is False
+    assert toolsmod.pay_meets_desired("competitive pay") is None
+    q = "Does the posted salary or hourly pay range align with your expectations?"
+    job = _job("Amplify", "LA1")
+    d, ctx = _dispatcher(job, posting_text="Overview ... Compensation Hourly Rate $30 – $35 per hour ... Apply")
+    out, _ = await d.t_lookup_answer(q, ["Yes", "No"])
+    assert out["answer"] == "Yes" and out["via"] == "pay_rule"
+    job2 = _job("Lowpay", "LA2")
+    d2, ctx2 = _dispatcher(job2, posting_text="Pay: $15 - $18 per hour")
+    out2, _ = await d2.t_lookup_answer(q, ["Yes", "No"])
+    assert out2["answer"] == "No"
+
+
+
+@pytest.mark.asyncio
+async def test_a_job_id_attention_check_is_read_from_the_posting(store):
+    """Space Dynamics Laboratory (2026-10-20): 'Please select the correct job ID located at the top of the job advertisement.'"""
+    from goat.agent import tools as toolsmod
+    q = "Please select the correct job ID located at the top of the job advertisement."
+    opts = ["9849", "9888", "9444", "9000"]
+    page = "AI-Enabled Requirements Engineering Intern\nJob ID: 9849\nDate Posted: October 20, 2026\n... " + q + "\n9849\n9888\n9444\n9000"
+    assert toolsmod.posting_id_pick(q, opts, page) == "9849"
+    assert toolsmod.posting_id_pick(q, opts, q + " 9849 9888 9444 9000") is None        # the option list alone never counts
+    assert toolsmod.posting_id_pick("What is your favorite number?", opts, page) is None
+    job = _job("Space Dynamics Laboratory", "SDL1")
+    d, ctx = _dispatcher(job, posting_text="Job ID: 9849 Date Posted: October 20, 2026")
+    out, _ = await d.t_lookup_answer(q, opts)
+    assert out["answer"] == "9849" and out["via"] == "posting_rule" and out["key"].startswith("q.posting_id.job")

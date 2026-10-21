@@ -11,7 +11,7 @@ from pathlib import Path
 from . import js
 from .executor import Executor, ClickRefused
 
-PLACEHOLDER = re.compile(r"^(select one|select\.\.\.|select…|select|choose one|choose|search|please select|--|)$", re.I)
+PLACEHOLDER = re.compile(r"^(select one|select\.\.\.|select…|select|choose one|choose|search|please select|no selection|--|)$", re.I)
 
 
 @dataclass
@@ -991,6 +991,17 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
                 continue
             after = await ex.read_ref(ref)
             shown = (after.get("value") or after.get("shown") or "")
+            if after.get("tag") == "input" and (not shown.strip() or PLACEHOLDER.match(shown.strip())):
+                # SAP SuccessFactors' paginated selects (L3Harris, Westinghouse, 2026-10-20) show the pick, and clear their
+                # 'required' error, only once the box loses focus: read while focused, the box said 'No Selection' and a
+                # correct pick was reported failed. Leave the box, then read it again.
+                try:
+                    await ex.eval("() => { const a = document.activeElement; if (a && a !== document.body && a.blur) a.blur(); return true; }")
+                    await asyncio.sleep(0.6)
+                    after = await ex.read_ref(ref)
+                    shown = (after.get("value") or after.get("shown") or "")
+                except Exception:
+                    pass
             if not shown.strip() or after.get("tag") == "button":
                 # Ashby: the ref may be the toggle button beside the combobox input that actually holds the pick
                 # (ibotta, 2026-10-18), or the autocomplete clears its input and shows the pick elsewhere. Read the
@@ -1232,6 +1243,21 @@ async def set_date(ex: Executor, ref: str, value: str) -> FieldResult:
     parts = parse_date(value)
     if not parts:
         return FieldResult(ref, False, "", f"could not read a date out of {value!r}")
+    # A native <input type="month"> / type="date" takes only its ISO value ('2026-09' / '2026-09-01'): Electronic Arts'
+    # work-history start date stayed empty when '09/01/2026' was typed into it (2026-10-20).
+    try:
+        kind = await ex.eval("(r) => { const t = document.querySelector('[data-goat-ref=\"' + r + '\"]'); "
+                             "return t && t.tagName === 'INPUT' ? (t.type || '') : ''; }", ref)
+    except Exception:
+        kind = ""
+    if kind in ("month", "date") and parts.get("year") and parts.get("month"):
+        iso = f'{parts["year"]}-{int(parts["month"]):02d}' + (f'-{int(parts.get("day") or 1):02d}' if kind == "date" else "")
+        try:
+            await ex.page.locator(f'[data-goat-ref="{ref}"]').first.fill(iso, timeout=3000)
+        except Exception as e:  # noqa: BLE001 - reported below
+            return FieldResult(ref, False, "", f"the {kind} input refused {iso}: {type(e).__name__}")
+        now = (await ex.read_ref(ref)).get("value", "")
+        return FieldResult(ref, now == iso, now, "" if now == iso else f"the {kind} input reads {now!r}, not {iso!r}")
     info = await ex.eval(js.JS_DATE_SECTIONS, ref)
     if not isinstance(info, dict) or not info.get("found"):
         # plain text date input: type it whole

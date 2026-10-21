@@ -671,6 +671,21 @@ def acknowledgement_key(question: str, options: list[str] | None) -> str | None:
 AUTH_BASIS_CHANGE = re.compile(r"basis (for|of) (your )?(employment |work )?(authori[sz]ation|eligibility).{0,80}\b(change|expire)", re.I)
 
 
+_YES_WORDING = re.compile(r"^\s*(yes|y|true|i (do )?agree|agree|i accept|accept|opt[- ]?in|i consent|consent|i do consent)\b", re.I)
+_NO_WORDING = re.compile(r"^\s*(no|n|false|decline[ds]?|i do not|i don.?t|do not|don.?t|opt[- ]?out|disagree|i disagree|"
+                         r"i decline|reject)\b", re.I)
+
+
+def answer_polarity(text: str) -> str | None:
+    """'yes' / 'no' for an answer or option that plainly says yes or no ('Yes, Opt - In', 'No, Opt - Out'), else None."""
+    t = str(text or "")
+    if _NO_WORDING.match(t):
+        return "no"
+    if _YES_WORDING.match(t):
+        return "yes"
+    return None
+
+
 # The reasons a park may name (goat.states.HOLD_REASONS plus the outcomes the worker and the website know).
 from ..states import HOLD_REASONS as _HOLD_REASONS  # noqa: E402
 PARK_REASONS = tuple(dict.fromkeys(list(_HOLD_REASONS) + [
@@ -694,6 +709,44 @@ ANNUAL_PAY_BOX = re.compile(r"\bsalar(y|ies)\b", re.I)
 HOURLY_PAY_WORDS = re.compile(r"\b(hourly|hours?|hr|rate|wages?)\b", re.I)
 BARE_PAY_NUMBER = re.compile(r"^\s*\$?\s*\d{1,3}(\.\d+)?\s*$")
 HOURLY_PAY_TEXT = re.compile(r"^\s*\$?\s*\d{1,3}(\.\d+)?\s*(/\s*h(ou)?r\b|per hour\b|an hour\b)", re.I)
+
+
+# "Does the posted salary or hourly pay range align with your expectations?" (Amplify, 2026-10-20): the posting's own range
+# against his desired pay ($20 an hour, $41,600 a year) decides it. One run got Yes only through an unrelated remote-work
+# key, the next found no key at all and the submit bounced with "Your form needs corrections".
+PAY_ALIGN_QUESTION = re.compile(r"\b(salary|pay|compensation|wage|hourly|rate)\b[^?]{0,80}\b(align|match|meet|acceptable|in line|"
+                                r"consistent|work for you|suit)", re.I)
+_PAY_FIGURE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s?([kK])?")
+
+
+# "Please select the correct job ID located at the top of the job advertisement." (Space Dynamics Laboratory, 2026-10-20): an
+# attention check whose answer is printed on the posting ("Job ID: 9849"); the run asked Surya. The ID is read from a labelled
+# pair on the posting, so the form's own option list never counts.
+POSTING_ID_QUESTION = re.compile(r"\b(job|requisition|req|posting|position|vacancy)\s*(id|number|no\.?|#|code)\b", re.I)
+POSTING_ID_WHERE = re.compile(r"advertis|posting|listing|\bad\b|description|top of|above|this (job|role|position)", re.I)
+_POSTING_ID_PAIR = re.compile(r"\b(?:job|requisition|req|posting|position|vacancy)\s*(?:id|number|no\.?|#|code)\s*[:#]\s*([A-Za-z0-9][A-Za-z0-9-]{1,19})",
+                              re.I)
+
+
+def posting_id_pick(question: str, options: list[str], text: str) -> str | None:
+    """The option that equals the ID the posting prints next to its label, when exactly one does."""
+    if not options or not POSTING_ID_QUESTION.search(question or "") or not POSTING_ID_WHERE.search(question or ""):
+        return None
+    ids = {m.group(1).strip().lower() for m in _POSTING_ID_PAIR.finditer(text or "")}
+    hits = [o for o in options if str(o).strip().lower() in ids]
+    return hits[0] if len(hits) == 1 else None
+
+
+def pay_meets_desired(snippet: str | None, hourly: float = 20.0, annual: float = 41600.0) -> bool | None:
+    """Whether the top of a posted pay range reaches his desired pay; None when the snippet names no figure."""
+    vals = []
+    for m in _PAY_FIGURE.finditer(snippet or ""):
+        v = float(m.group(1).replace(",", ""))
+        vals.append(v * 1000 if m.group(2) else v)
+    if not vals:
+        return None
+    top = max(vals)
+    return top >= (annual if top >= 1000 else hourly)
 
 
 def annual_pay_box(label: str) -> bool:
@@ -1031,6 +1084,13 @@ class ToolDispatcher:
                     and str(val).strip().lower() in ("no", "none", "n/a", "na") \
                     and re.search(r"\bn/?a\b", f"{f.get('label') or ''} {item.get('label') or ''}", re.I):
                 val = "N/A"
+            # ...and one that says "Enter none if not applicable" takes None (Highmark Health, 2026-10-20: his stored "No" in
+            # the relatives-names box failed the check)
+            if item and item.get("tag") in ("input", "textarea") and item.get("type") not in ("radio", "checkbox") \
+                    and str(val).strip().lower() in ("no", "none", "n/a", "na") \
+                    and re.search(r"\b(enter|type|write|put|input|say)\s+[\"'“]?none\b|\bnone\s+if\b",
+                                  f"{f.get('label') or ''} {item.get('label') or ''}", re.I):
+                val = "None"
             salary_box = bool(item and item.get("tag") == "input" and item.get("type") not in ("radio", "checkbox")
                               and annual_pay_box(f"{f.get('label') or ''} {item.get('label') or ''}"))
             if salary_box and BARE_PAY_NUMBER.match(str(val)):
@@ -1448,7 +1508,14 @@ class ToolDispatcher:
             first = await fill.choose(self.ctx.ex, ref, his_wants)
             r = first if first.ok else None
         if r is None:
-            r = await fill.choose(self.ctx.ex, ref, wants)
+            # The fallback never tries an option that says the opposite of his answer: Highmark Health's stored "Yes" to AI
+            # screening failed its read-back, the model's own ["Yes", "No"] came next, and "No, Opt - Out" was clicked
+            # (2026-10-20).
+            pol = answer_polarity(his_wants[0]) if (answer_key and his_wants) else None
+            fallback = [w for w in wants if w in his_wants or not pol or answer_polarity(w) in (None, pol)] if pol else wants
+            if fallback != wants:
+                db.event(self.ctx.job_id, "choose:opposite_dropped", {"ref": ref, "dropped": [w for w in wants if w not in fallback][:6]})
+            r = await fill.choose(self.ctx.ex, ref, fallback)
         self.ctx.budget.step()
         if r.ok:
             shown = str(r.readback)
@@ -1988,6 +2055,36 @@ class ToolDispatcher:
             return {"key": "work_authorization.basis_change", "answer": neg, "confidence": 1.0, "via": "citizen_rule",
                     "note": "he is a U.S. citizen, so his basis for employment authorization never changes: No (a form that says "
                             "not to answer this for citizens is answered No only when the field is already set or required)"}, None
+        if options and POSTING_ID_QUESTION.search(question or ""):
+            text = self.ctx.posting_text or ""
+            try:
+                text += "\n" + (await self.ctx.ex.page_text(30000) or "")
+            except Exception:
+                pass
+            pick_id = posting_id_pick(question, options, text)
+            if pick_id is not None:
+                k_id = f"q.posting_id.job{self.ctx.job_id}"          # one posting's ID: never shared with another posting
+                answers.save_answer(k_id, pick_id, answer_type="choice", source="derived",
+                                    note="the job ID the posting itself prints")
+                db.event(self.ctx.job_id, "answer:posting_id", {"question": question[:160], "answer": pick_id})
+                return {"key": k_id, "answer": pick_id, "confidence": 1.0, "via": "posting_rule",
+                        "note": f"the posting prints this ID ({pick_id}): choose it with this key"}, None
+        if PAY_ALIGN_QUESTION.search(question or "") and (not options or any(answer_polarity(o) for o in options)):
+            from ..answers import posting_pay
+            meets = pay_meets_desired(posting_pay(self.ctx.posting_text or ""))
+            if meets is not None:
+                want = "yes" if meets else "no"
+                pick = next((o for o in (options or []) if answer_polarity(o) == want), "Yes" if meets else "No")
+                company = self.ctx.job.get("company", "")
+                k_pay = answers.key_from_question(question)
+                answers.save_answer(k_pay, pick, answer_type="choice" if options else "text", source="derived",
+                                    note=f"the posting's pay ({posting_pay(self.ctx.posting_text or '')[:60]}) "
+                                         f"{'reaches' if meets else 'is below'} his desired $20/hr ($41,600/yr)",
+                                    aliases=[question], scope="company", scope_value=answers.norm(company))
+                db.event(self.ctx.job_id, "answer:pay_align", {"question": question[:160], "answer": pick})
+                return {"key": k_pay, "answer": pick, "confidence": 1.0, "via": "pay_rule",
+                        "note": f"the posted pay {'reaches' if meets else 'is below'} his desired $20 an hour ($41,600 a year): "
+                                f"answer {pick!r} with this key"}, None
         if SALARY_QUESTION.search(question or "") and options:
             a_pay = answers.get("compensation.desired_annual", self.ctx.job.get("company", ""), self.ctx.portal)
             if a_pay is not None and a_pay.has_value:
