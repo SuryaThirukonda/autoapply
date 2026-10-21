@@ -295,3 +295,14 @@ def test_catalog_wordings_for_his_degree_and_major_are_named():
     """Micron (2026-10-21): 'Bachelor's Level Degree' and 'Computer sciences' failed as wrong option wording."""
     from goat.judge import JUDGE_INSTRUCTIONS
     assert "Bachelor's Level Degree" in JUDGE_INSTRUCTIONS and "Computer sciences" in JUDGE_INSTRUCTIONS
+
+
+
+def test_a_later_attempt_replaces_an_earlier_answer_worded_differently():
+    """Insomniac (2026-10-21): attempt 1 logged 'Comfortable working in large C++ codebase' from a judgment, attempt 2
+    'Comfortable working in a large C++ codebase' from Surya's own answer; the fact check still saw the judgment."""
+    from goat.records import same_question
+    assert same_question("Comfortable working in large C++ codebase", "Comfortable working in a large C++ codebase")
+    assert same_question("Built tool for non-technical users", "Built a tool for non-technical users")
+    assert not same_question("Name", "Name if related")
+    assert not same_question("Worked for Sony company", "If yes relationship name/details")

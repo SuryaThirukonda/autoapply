@@ -461,7 +461,9 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
     tab_id = None
     try:
         await ex.start()
-        if (job.get("ats") or "").lower() == "successfactors" and not job.get("tab_target_id"):
+        # every fresh start, not only listings typed SuccessFactors: NetApp's and Phillips 66's career sites ('other')
+        # hand over to SuccessFactors only after Apply (2026-10-21)
+        if not job.get("tab_target_id"):
             if await clear_sf_session(ex):
                 db.event(job_id, "sf:session_cleared", {})
         page = None

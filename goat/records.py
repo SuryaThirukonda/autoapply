@@ -101,6 +101,23 @@ def _question_part(label: str) -> str:
     return str(label or "").split(" / ", 1)[0].strip().lower()
 
 
+_QSTOP = {"the", "and", "for", "you", "your", "are", "have", "has", "had", "was", "were", "with", "this", "that", "any",
+          "yes", "not", "please", "select", "required"}
+
+
+def _qwords(label: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9+#]+", _question_part(label)) if len(w) > 2 and w not in _QSTOP}
+
+
+def same_question(a: str, b: str) -> bool:
+    """Two logged labels for one question: the agent words its labels itself, so attempts differ ('Comfortable working
+    in large C++ codebase' / 'Comfortable working in a large C++ codebase', Insomniac 2026-10-21)."""
+    if _question_part(a) == _question_part(b):
+        return True
+    wa, wb = _qwords(a), _qwords(b)
+    return bool(wa) and bool(wb) and len(wa & wb) / len(wa | wb) >= 0.75
+
+
 def answer_set(job_id: int) -> list[dict]:
     """The application's answers as one list: archived attempts first (a resumed draft keeps what an earlier
     attempt typed), then this attempt's decisions. A later attempt replaces every earlier entry for a question it
@@ -112,8 +129,7 @@ def answer_set(job_id: int) -> list[dict]:
     latest: dict[str, dict] = {}
     for att in sorted(by_attempt):
         batch = [r for r in by_attempt[att] if str(r.get("field_label") or "").strip()]
-        questions = {_question_part(r["field_label"]) for r in batch}
-        for label in [k for k in latest if _question_part(k) in questions]:
+        for label in [k for k in latest if any(same_question(k, r["field_label"]) for r in batch)]:
             del latest[label]
         for r in batch:
             label = str(r["field_label"]).strip()
