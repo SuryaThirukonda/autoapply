@@ -765,7 +765,11 @@ class SuccessFactors(Adapter):
              "fields are set: never park over it. Values the portal kept from his earlier SuccessFactors profile stand when they "
              "match his stored answers; re-set the ones that differ (work history from experience.work.N.*, never project "
              "names). Salutation is identity.salutation (Mr). The final button is labelled 'Apply': when the page is complete "
-             "call submit with button_label 'Apply'.")
+             "call submit with button_label 'Apply'. On its Create Account page the password rules under 'Choose Password' "
+             "('Password must be at least 8 characters long ...') are always shown and are not a rejection: his password "
+             "meets them. Fill every required account field (Retype Email Address, First Name, Last Name, Country/Region "
+             "Code, Phone Number, Country/Region of Residence) from the stored answers, set both password boxes with "
+             "credentials mode 'create', then click Create Account (Acuity and Corning parked over that text, 2026-10-21).")
 
     async def prefill(self, ex, snap: Snapshot, job: dict, page_no: int) -> PrefillResult:
         # Folded sections hide their fields from the prefill and the model (CenturyLink, 2026-10-21): open them first.
