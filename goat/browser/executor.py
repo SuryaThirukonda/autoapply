@@ -562,8 +562,18 @@ class Executor:
         info = await self.read_ref(ref)
         if not info.get("found"):
             raise ClickRefused(f"ref {ref} not found on the page")
-        await self.page.mouse.click(int(info["x"]), int(info["y"]))  # focus by clicking (no submit risk on inputs)
-        await asyncio.sleep(0.15)
+        # Texas Instruments' cookie wall lay over its six Oracle code boxes (2026-10-20): the focusing click landed on
+        # the wall, focus stayed on <body> and every digit of the code was lost. A covered field is focused directly
+        # (a click there could press one of the covering layer's buttons); a clicked field that did not take the focus
+        # is focused directly too.
+        hit = await self._hit(ref, int(info["x"]), int(info["y"]))
+        if not hit.startswith("covered"):
+            await self.page.mouse.click(int(info["x"]), int(info["y"]))  # focus by clicking (no submit risk on inputs)
+            await asyncio.sleep(0.15)
+        try:
+            await self.eval(js.JS_FOCUS_REF, ref)
+        except Exception:
+            pass
         return info
 
     async def set_file(self, ref: str, path: str) -> dict:

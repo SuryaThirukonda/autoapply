@@ -414,7 +414,7 @@ def test_an_oracle_code_from_the_employers_own_domain_is_found():
     """2026-10-19: American Express's Oracle access code came from careers@recruitment.americanexpress.com; goat only
     searched oraclecloud.com / oracle.com, waited out the code and held the job."""
     from goat.mail import gmail as g
-    assert g.company_sender_tokens("American Express") == ["americanexpress"]
+    assert g.company_sender_tokens("American Express")[0] == "americanexpress"
     assert g.company_sender_tokens("CSX Corporation") == ["csx"]
     q = g.build_code_query("oracle", "egug.fa.us2.oraclecloud.com", 0, g.company_sender_tokens("American Express"))
     assert "americanexpress" in q
@@ -468,3 +468,20 @@ def test_a_tenant_mailing_under_its_parents_name_is_read_when_its_link_is_ours()
                  '<a href="https://newscorp.wd1.myworkdayjobs.com/x/passwordreset/1/">Reset</a>', html=True)
     res2 = gmail.fetch_password_reset_link("workday", me, 1_700_000_000, timeout_s=0, poll_s=0, client=FakeMailClient([[other]]))
     assert res2.status != "reset_link"
+
+
+
+def test_an_oracle_code_from_the_employers_initials_domain_is_found():
+    """Texas Instruments (2026-10-20): its Oracle code came from ti_myhiring_no-reply@recruiting.ti.com and the run never
+    found it, asked Surya, and asked him again."""
+    from goat.mail import gmail as g
+    toks = g.company_sender_tokens("Texas Instruments")
+    assert toks == ["texasinstruments", "ti"]
+    assert "gdit" in g.company_sender_tokens("General Dynamics Information Technology")
+    assert g.company_sender_tokens("The Toro Company") == ["toro"]
+    assert g.company_sender_tokens("The Cigna Group") == ["cigna"]
+    q = g.build_code_query("oracle", "edbz.fa.us2.oraclecloud.com", 0, toks)
+    assert " ti" in q or "(ti" in q or "OR ti)" in q
+    frm = "TI <ti_myhiring_no-reply@recruiting.ti.com>"
+    assert g.sender_allowed(frm, "oracle", "edbz.fa.us2.oraclecloud.com", toks)
+    assert not g.sender_allowed("Promo <deals@tickets.example.com>", "oracle", "edbz.fa.us2.oraclecloud.com", toks)

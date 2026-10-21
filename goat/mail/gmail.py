@@ -200,15 +200,30 @@ def tenant_mismatch(from_header: str, portal_host: str) -> bool:
     return local != ph.split(".")[0]
 
 
+_NAME_SUFFIXES = ("incorporated", "corporation", "company", "group", "inc", "corp", "llc", "ltd", "co")
+_NAME_FILLER = {"the", "of", "and", "for", "a", "an"}
+
+
 def company_sender_tokens(company: str) -> list[str]:
     """The employer's name as it appears in its own mail domain: 'American Express' -> 'americanexpress'
-    (careers@recruitment.americanexpress.com sent Amex's Oracle access code, 2026-10-19)."""
-    sq = re.sub(r"[^a-z0-9]", "", (company or "").lower())
-    for suffix in ("incorporated", "corporation", "company", "group", "inc", "corp", "llc", "ltd", "co"):
+    (careers@recruitment.americanexpress.com sent Amex's Oracle access code, 2026-10-19), and the initials of a
+    name of two or more words: Texas Instruments mails its Oracle code from recruiting.ti.com, and the run never
+    found it (2026-10-20). A leading 'The' is no part of a domain ('The Toro Company' -> 'toro')."""
+    words = [w for w in re.split(r"[^a-z0-9]+", (company or "").lower()) if w]
+    while words and words[0] == "the":
+        words = words[1:]
+    if len(words) > 1 and words[-1] in _NAME_SUFFIXES:
+        words = words[:-1]
+    sq = "".join(words)
+    for suffix in _NAME_SUFFIXES:
         if sq.endswith(suffix) and len(sq) - len(suffix) >= 3:
             sq = sq[: -len(suffix)]
             break
-    return [sq] if len(sq) >= 3 else []
+    out = [sq] if len(sq) >= 3 else []
+    initials = "".join(w[0] for w in words if w not in _NAME_FILLER)
+    if len([w for w in words if w not in _NAME_FILLER]) >= 2 and len(initials) >= 2 and initials not in out:
+        out.append(initials)
+    return out
 
 
 def workday_tenant_tokens(portal: str | None, portal_host: str) -> list[str]:

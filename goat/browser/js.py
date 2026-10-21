@@ -321,6 +321,18 @@ JS_ELEMENT_AT = r"""
 
 # Whether a click at (x, y) reaches the element [data-goat-ref=ref]: 'ok', 'covered:<tag>' (something else is on top,
 # such as a password manager's inline menu), or 'missing' (not in this document, e.g. inside a frame).
+# Focus a field directly when it does not hold the focus already (it, or an element inside it).
+JS_FOCUS_REF = r"""
+(ref) => {
+  const t = document.querySelector('[data-goat-ref="' + ref + '"]');
+  if (!t) return false;
+  const a = document.activeElement;
+  if (a === t || (a && t.contains(a))) return true;
+  if (t.focus) t.focus();
+  return document.activeElement === t;
+}
+"""
+
 JS_HIT_TARGET = r"""
 ([ref, x, y]) => {
   const t = document.querySelector('[data-goat-ref="' + ref + '"]');

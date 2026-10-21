@@ -134,6 +134,8 @@ class RunContext:
     mail: Any = None               # goat.mail.gmail module-level functions
     creds: Any = None              # goat.creds.bitwarden
     code_requested_at: int = 0
+    code_asks: int = 0             # code questions put to Surya this run
+    retry_code: str = field(default="", repr=False)   # a code of his that did not land in the boxes: typed once more
     park_attempts: int = 0
     posting_text: str = ""         # the posting page's text at open (pay figures, requirements)
     verify_link_tried: bool = False
@@ -2164,20 +2166,15 @@ class ToolDispatcher:
         # A run that resumes on a code page did not request the code itself: Coinbase's arrived 7 minutes before the
         # rerun asked for it and a 3-minute look-back missed it (2026-10-19).
         # A code Surya already typed in the website's code box for this application comes first.
+        if self.ctx.retry_code:
+            # his code did not land in the boxes last time (a layer over them held the focus): the same code once more
+            code, self.ctx.retry_code = self.ctx.retry_code, ""
+            return await self._enter_surya_code(code_refs, code, "the code Surya gave, typed once more", retry=True)
         given = BROKER.recent_code(self.ctx.job_id)
         if given:
             key, code = given
-            ok = await fill.type_code_into(self.ctx.ex, code_refs, code)
             BROKER.mark_code_used(self.ctx.job_id, key)
-            with db.tx() as con:
-                con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))
-            self.ctx.budget.step()
-            for r in (code_refs or [None]):
-                records.record_decision(self.ctx.job_id, self.ctx.page_no, "emailed verification code", "(set)",
-                                        "user:verification_code", r or "")
-            db.event(self.ctx.job_id, "code:entered_from_surya", {"boxes": len(code_refs or []), "provided": True})
-            return {"status": "entered" if ok else "entered_unverified", "via": "the code Surya typed on the website",
-                    "next": "take a snapshot, then call submit once more"}, None
+            return await self._enter_surya_code(code_refs, code, "the code Surya typed on the website", provided=True)
         after_ts = self.ctx.code_requested_at or (db.now() - 900)
         fetch = self.ctx.mail.fetch_code
         try:
@@ -2191,19 +2188,25 @@ class ToolDispatcher:
             # code is refused by the page, and the model then asks the portal for a new one
             handle = await asyncio.to_thread(fetch, self.ctx.portal, self.ctx.portal_host, db.now() - 3600, **kw)
         if handle is None:
+            # Surya may have typed the code on the website while Gmail was searched (Texas Instruments, 2026-10-20: his
+            # 20:05 code sat unused while the run asked him again at 20:11).
+            given = BROKER.recent_code(self.ctx.job_id)
+            if given:
+                key, code = given
+                BROKER.mark_code_used(self.ctx.job_id, key)
+                return await self._enter_surya_code(code_refs, code, "the code Surya typed on the website", provided=True)
+        resent_at = 0
+        if handle is None and self.ctx.code_asks >= 1:
+            # Asking him again needs a new code to exist: press the page's own 'Send New Code' first (Texas Instruments,
+            # 2026-10-20: the run asked him a second time with no new code requested, and no second email ever came).
+            if await self._request_new_code():
+                resent_at = self.ctx.code_requested_at
+                handle = await asyncio.to_thread(fetch, self.ctx.portal, self.ctx.portal_host, resent_at, **kw)
+        if handle is None:
             # No email found: Surya types the code on the website or in Telegram (his request, 2026-10-19).
-            code = await self._ask_surya_for_code()
+            code = await self._ask_surya_for_code(resent_at)
             if code:
-                ok = await fill.type_code_into(self.ctx.ex, code_refs, code)
-                with db.tx() as con:
-                    con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))
-                self.ctx.budget.step()
-                for r in (code_refs or [None]):
-                    records.record_decision(self.ctx.job_id, self.ctx.page_no, "emailed verification code", "(set)",
-                                            "user:verification_code", r or "")
-                db.event(self.ctx.job_id, "code:entered_from_surya", {"boxes": len(code_refs or [])})
-                return {"status": "entered" if ok else "entered_unverified", "via": "Surya typed it on the website / Telegram",
-                        "next": "take a snapshot, then call submit once more"}, None
+                return await self._enter_surya_code(code_refs, code, "Surya typed it on the website / Telegram")
             with db.tx() as con:
                 con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))
             return {"status": "not_received", "hint": "Surya did not send it either. Request a new code once if the page offers it, "
@@ -2226,14 +2229,67 @@ class ToolDispatcher:
                                     "policy:may_enter_emailed_verification_code", r or "")
         return {"status": status if ok_box["ok"] else "entered_unverified", "message_id": getattr(handle, "message_id", None)}, None
 
-    async def _ask_surya_for_code(self) -> str | None:
+    RESEND_LABEL = re.compile(r"^(send (a )?new (verification |one[- ]time |access )?code|re-?send( (the |a |my )?(new )?"
+                              r"(verification |one[- ]time |access |security )?(code|email|passcode|pass code))?|send (the )?code again|"
+                              r"send (me )?another code|request (a )?new code|get (a )?new code|send me a new code)\b", re.I)
+
+    async def _request_new_code(self) -> bool:
+        """Press the page's own 'Send New Code' / 'Resend code' control, so a code Surya is asked for again exists."""
+        try:
+            snap = await snapmod.take(self.ctx.ex)
+        except Exception:
+            return False
+        for it in getattr(snap, "items", []) or []:
+            lab = re.sub(r"\s+", " ", str(it.get("label") or it.get("text") or "")).strip()
+            if (it.get("tag") in ("button", "a") or it.get("role") in ("button", "link")) and self.RESEND_LABEL.match(lab):
+                try:
+                    await self.ctx.ex.click_ref(it["ref"])
+                except Exception as e:  # noqa: BLE001 - the ask still goes out, it just says no new code was sent
+                    db.event(self.ctx.job_id, "code:resend_failed", {"label": lab[:60], "error": f"{type(e).__name__}: {e}"[:160]})
+                    return False
+                self.ctx.code_requested_at = db.now() - 5
+                db.event(self.ctx.job_id, "code:resend_clicked", {"label": lab[:60]})
+                await asyncio.sleep(2.0)
+                return True
+        db.event(self.ctx.job_id, "code:resend_missing", {"url": (self.ctx.ex.url or "")[:160]})
+        return False
+
+    async def _enter_surya_code(self, code_refs: list[str], code: str, via: str, *, provided: bool = False,
+                                retry: bool = False):
+        """Type a code Surya gave into the boxes; one that did not land is kept (in memory only) for one more try."""
+        ok = await fill.type_code_into(self.ctx.ex, code_refs, code)
+        if not ok and not retry:
+            self.ctx.retry_code = code
+        with db.tx() as con:
+            con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=?", (states.FILLING, db.now(), self.ctx.job_id))
+        self.ctx.budget.step()
+        for r in (code_refs or [None]):
+            records.record_decision(self.ctx.job_id, self.ctx.page_no, "emailed verification code", "(set)",
+                                    "user:verification_code", r or "")
+        db.event(self.ctx.job_id, "code:entered_from_surya", {"boxes": len(code_refs or []), "landed": ok,
+                                                              **({"provided": True} if provided else {}),
+                                                              **({"retry": True} if retry else {})})
+        out = {"status": "entered" if ok else "entered_unverified", "via": via,
+               "next": "take a snapshot, then call submit once more"}
+        if not ok and not retry:
+            out["next"] = ("the boxes did not show his code after typing. Take a snapshot; if the boxes are empty, call "
+                           "enter_email_code again: his same code is typed once more. Never ask him for another code while "
+                           "his code is untried.")
+        return out, None
+
+    async def _ask_surya_for_code(self, resent_at: int = 0) -> str | None:
         """Post a code question (website card + Telegram) and wait for the code he types. The code is used once: the
         question row keeps '(used)' afterwards and nothing is saved as an answer."""
         from ..human.questions import BROKER as broker
+        self.ctx.code_asks += 1
         key = f"code.{self.ctx.job_id}.{db.now()}"
         company = self.ctx.job.get("company") or "the portal"
         question = (f"Verification code needed: {company} ({self.ctx.portal_host}) emailed you a code, and the agent could not "
                     "find that email. Type the code here and the agent enters it into the form.")
+        if resent_at:
+            question = (f"New verification code needed: the agent pressed 'Send New Code' on {company}'s page at "
+                        f"{time.strftime('%H:%M', time.localtime(resent_at))}, so a NEW code email is on its way (the earlier "
+                        "code did not work). Type the newest code here and the agent enters it into the form.")
         await broker.ask(self.ctx.job_id, [{"key": key, "question": question, "field_type": "code", "options": []}])
         db.event(self.ctx.job_id, "code:asked_surya", {"key": key, "host": self.ctx.portal_host})
         try:

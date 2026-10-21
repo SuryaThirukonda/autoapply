@@ -131,3 +131,96 @@ def test_a_code_typed_on_the_website_answers_an_open_code_question(tmp_path):
                     (db.now(), db.now() + 600))
     assert BROKER.provide_code(1, "ZZ99")["ok"]
     assert BROKER.code_answer(1, "code.1.5") == "ZZ99"
+
+
+
+def _code_job(tmp_path):
+    db.reset_for_tests(tmp_path / "t.db")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('l1','Texas Instruments','Intern','https://x.example/job','oracle')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,priority) VALUES(1,'l1','filling','account',0)")
+    return RunContext(job={"id": 1, "company": "Texas Instruments", "ats": "oracle", "resume_file": None}, ex=Ex(),
+                      budget=Budget(1, "oracle"), classifier=None)
+
+
+@pytest.mark.asyncio
+async def test_a_code_he_typed_while_gmail_was_searched_is_used_without_asking_again(tmp_path, monkeypatch):
+    """Texas Instruments (2026-10-20): his 20:05 code sat unused while the run asked him again at 20:11."""
+    from goat.human.questions import BROKER
+    ctx = _code_job(tmp_path)
+    typed = []
+
+    async def type_it(ex, refs, code):
+        typed.append(code)
+        return True
+    monkeypatch.setattr(fill, "type_code_into", type_it)
+
+    class LateMail:
+        def fetch_code(self, portal, host, after_ts, company=""):
+            BROKER.provide_code(1, "913 700")       # he types it on the website during the search
+            return None
+    ctx.mail = LateMail()
+    out, _ = await ToolDispatcher(ctx).t_enter_email_code(["e24", "e25"])
+    assert out["status"] == "entered" and typed == ["913700"]
+    assert db.connect().execute("SELECT COUNT(*) FROM pending_questions WHERE job_id=1 AND key LIKE 'code.%' AND "
+                                "question LIKE 'Verification code needed%'").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_his_code_that_did_not_land_is_typed_once_more_before_anything_else(tmp_path, monkeypatch):
+    from goat.human.questions import BROKER
+    ctx = _code_job(tmp_path)
+    tries = []
+
+    async def type_it(ex, refs, code):
+        tries.append(code)
+        return len(tries) > 1                       # the first try lands nowhere (a layer over the boxes)
+    monkeypatch.setattr(fill, "type_code_into", type_it)
+
+    class Boom:
+        def fetch_code(self, *a, **k):
+            raise AssertionError("no Gmail search and no new question while his code is untried")
+    ctx.mail = Boom()
+    assert BROKER.provide_code(1, "913700")["ok"]
+    d = ToolDispatcher(ctx)
+    out, _ = await d.t_enter_email_code(["e24"])
+    assert out["status"] == "entered_unverified" and "enter_email_code again" in out["next"]
+    out, _ = await d.t_enter_email_code(["e24"])
+    assert out["status"] == "entered" and tries == ["913700", "913700"]
+    assert ctx.retry_code == ""
+
+
+@pytest.mark.asyncio
+async def test_a_second_ask_presses_send_new_code_first(tmp_path, monkeypatch):
+    """Texas Instruments (2026-10-20): asked a second time with no new code requested, no second email ever came."""
+    from goat.browser import snapshot as snapmod
+    from goat.browser.snapshot import Snapshot
+    ctx = _code_job(tmp_path)
+    ctx.code_asks = 1
+    clicked = []
+
+    class Ex2(Ex):
+        async def click_ref(self, ref, allow_submit=False):
+            clicked.append(ref)
+            return {"found": True}
+    ctx.ex = Ex2()
+    snap = Snapshot(url="u", title="t", headings=[], items=[
+        {"ref": "e30", "tag": "button", "label": "VERIFY"}, {"ref": "e31", "tag": "button", "label": "Send New Code"}],
+        groups=[], errors={}, challenge={})
+
+    async def take(ex, *a, **k):
+        return snap
+    monkeypatch.setattr(snapmod, "take", take)
+
+    async def type_it(ex, refs, code):
+        return True
+    monkeypatch.setattr(fill, "type_code_into", type_it)
+
+    class NewMail:
+        def fetch_code(self, portal, host, after_ts, company=""):
+            return Handle() if clicked else None
+    ctx.mail = NewMail()
+    out, _ = await ToolDispatcher(ctx).t_enter_email_code(["e24"])
+    assert clicked == ["e31"] and out["status"] == "entered"
+    kinds = [r[0] for r in db.connect().execute("SELECT kind FROM events WHERE job_id=1")]
+    assert "code:resend_clicked" in kinds and "code:asked_surya" not in kinds

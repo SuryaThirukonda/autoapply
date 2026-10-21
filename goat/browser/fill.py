@@ -1339,12 +1339,25 @@ async def type_code_into(ex: Executor, refs: list[str], code: str) -> bool:
     else:
         await ex.type_secret(code)
     await asyncio.sleep(0.4)
-    vals = []
-    for r in refs:
-        info = await ex.read_ref(r)
-        vals.append(info.get("value", ""))
-    joined = "".join(vals)
-    return joined.replace(" ", "") == code or (len(refs) == 1 and vals[0] == code)
+
+    async def landed() -> bool:
+        vals = []
+        for r in refs:
+            info = await ex.read_ref(r)
+            vals.append(info.get("value", ""))
+        return "".join(vals).replace(" ", "") == code or (len(refs) == 1 and vals[0] == code)
+    if await landed():
+        return True
+    # The keystrokes went elsewhere (a layer over the boxes held the focus): set the boxes through the page itself,
+    # one character each, which needs neither the focus nor a free click point (Texas Instruments, 2026-10-20).
+    boxes = list(zip(refs, code)) if len(refs) >= len(code) > 1 else [(refs[0], code)]
+    for r, part in boxes:
+        try:
+            await ex.page.locator(f'[data-goat-ref="{r}"]').first.fill(part, timeout=3000)
+        except Exception:
+            pass
+    await asyncio.sleep(0.4)
+    return await landed()
 
 
 async def peek_options(ex: Executor, ref: str) -> tuple[list[str], bytes | None]:
