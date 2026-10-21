@@ -73,9 +73,67 @@ async def ashby_resave(ex: Executor) -> list[dict]:
     return left
 
 
+# Eightfold career sites keep their own copy of each answer and ignore a value set by script: Netflix's form showed 'Surya' in
+# First name with "Error: First name cannot be left blank." and "4 errors found" (2026-10-21). Their text boxes are typed.
+REAL_TYPING_HOSTS = re.compile(r"(^|\.)(eightfold\.ai|jobs\.netflix\.net|careers\.microsoft\.com)$", re.I)
+
+
+def needs_real_typing(ex: Executor) -> bool:
+    from urllib.parse import urlparse
+    try:
+        host = urlparse(getattr(ex, "url", "") or "").hostname or ""
+    except Exception:
+        host = ""
+    return bool(REAL_TYPING_HOSTS.search(host))
+
+
+async def _type_boxes(ex: Executor, fields: list[dict]) -> list[FieldResult]:
+    """Clear and type each plain text box with real keystrokes, leave it with Tab, read it back."""
+    out = []
+    for f in fields:
+        ref, value = str(f["ref"]), str(f["value"])
+        try:
+            await ex.focus_ref(ref)
+            await ex.page.keyboard.press("Control+a")
+            await ex.page.keyboard.press("Backspace")
+            await ex.type_text(value, real_keys=True, delay_ms=8)
+            await ex.page.keyboard.press("Tab")
+            await asyncio.sleep(0.15)
+            now = str((await ex.read_ref(ref)).get("value") or "")
+            out.append(FieldResult(ref=ref, ok=now.strip() == value.strip(), readback=now[:300],
+                                   error="" if now.strip() == value.strip() else f"the box reads {now[:60]!r} after typing"))
+        except Exception as e:  # noqa: BLE001 - reported per field
+            out.append(FieldResult(ref=ref, ok=False, readback="", error=f"typing failed: {type(e).__name__}"))
+    return out
+
+
 async def fill_batch(ex: Executor, fields: list[dict]) -> list[FieldResult]:
     """fields: [{ref, value}] where value is str or bool. Password and file inputs are refused. On an autosaving
     form (Ashby) the fields are set one at a time, each save awaited, and lost saves are redone at the end."""
+    if not fields:
+        return []
+    if needs_real_typing(ex):
+        typed, rest = [], []
+        for f in fields:
+            v = f.get("value")
+            if isinstance(v, str) and v and "\n" not in v and len(v) <= 400:
+                try:
+                    info = await ex.read_ref(str(f["ref"]))
+                except Exception:
+                    info = {}
+                if info.get("tag") in ("input", "textarea") and str(info.get("type") or "text").lower() in (
+                        "text", "email", "tel", "url", "search", "number", "textarea", ""):
+                    typed.append(f)
+                    continue
+            rest.append(f)
+        if typed:
+            done = await _type_boxes(ex, typed)
+            return done + (await fill_batch_js(ex, rest) if rest else [])
+    return await fill_batch_js(ex, fields)
+
+
+async def fill_batch_js(ex: Executor, fields: list[dict]) -> list[FieldResult]:
+    """fill_batch through the page's own setters (one round trip)."""
     if not fields:
         return []
     serial = autosaves(ex)

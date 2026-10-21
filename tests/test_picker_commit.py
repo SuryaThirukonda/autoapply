@@ -278,3 +278,33 @@ async def test_a_pick_whose_required_error_clears_on_blur_counts_as_committed():
         assert await ex.page.evaluate("() => document.getElementById('v').getAttribute('aria-invalid')") == "false"
     finally:
         await ex.close()
+
+
+
+KEYS_ONLY = """<html><body>
+<label for="fn">First name</label><input id="fn" type="text"><span id="err"></span>
+<label for="ln">Last name</label><input id="ln" type="text">
+<script>
+  let model = '';
+  const fn = document.getElementById('fn');
+  fn.addEventListener('keydown', e => { if (e.key.length === 1) model += e.key; else if (e.key === 'Backspace') model = ''; });
+  fn.addEventListener('blur', () => { document.getElementById('err').textContent = model ? '' : 'Error: First name cannot be left blank.'; });
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_site_that_keeps_its_own_state_gets_real_keystrokes(monkeypatch):
+    """Netflix / Eightfold (2026-10-21): 'Surya' in First name with 'Error: First name cannot be left blank.'"""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(KEYS_ONLY)
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if i.get("label") == "First name")
+        monkeypatch.setattr(fill, "needs_real_typing", lambda ex: True)
+        out = await fill.fill_batch(ex, [{"ref": ref, "value": "Surya"}])
+        assert out[0].ok and out[0].readback == "Surya"
+        assert await ex.page.evaluate("() => document.getElementById('err').textContent") == ""
+    finally:
+        await ex.close()

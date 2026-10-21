@@ -1289,7 +1289,10 @@ class ToolDispatcher:
                 continue
             dec_label = f.get("label", "")
             opt = str((item or {}).get("label") or "").strip()
-            if item and (item.get("type") or "").lower() in ("radio", "checkbox") and opt and                     answers.norm(opt) not in answers.norm(dec_label):
+            # whole words: 'no' is inside 'non-compete' and 'now', so Koch's "Will you now ... require sponsorship? / No" was
+            # logged as a bare 'checked' and the judge read it as Yes (2026-10-21)
+            if item and (item.get("type") or "").lower() in ("radio", "checkbox") and opt and \
+                    not re.search(r"(?<![a-z0-9])" + re.escape(answers.norm(opt)) + r"(?![a-z0-9])", answers.norm(dec_label)):
                 # a radio / checkbox decision names its option ("Were you previously employed at ABA? / No"): logged as
                 # the bare question with 'checked', ABA's judge read it as Yes (2026-10-19)
                 dec_label = f"{dec_label[:120]} / {opt[:60]}"
@@ -1645,10 +1648,22 @@ class ToolDispatcher:
                               "when the page shows that answer).")
         return out
 
+    def _account_page(self) -> bool:
+        """A sign-in, password-help or create-account page: its 'Submit' button is an account action (SAP SuccessFactors'
+        Password Help, Phillips 66, 2026-10-21: click refused it as a submit control and submit refused the page, so no reset
+        email could be requested)."""
+        from ..gate import ACCOUNT_PAGE
+        snap = self.ctx.last_snapshot
+        if snap is None:
+            return False
+        if any(i.get("type") == "password" for i in snap.items):
+            return True
+        return bool(ACCOUNT_PAGE.search(" | ".join([snap.title or ""] + list(snap.headings or [])[:4])))
+
     async def t_click(self, ref: str, label: str):
         snap = self.ctx.last_snapshot
         item = snap.find(ref) if snap else None
-        if item and item.get("submitish"):
+        if item and item.get("submitish") and not self._account_page():
             return {"error": "that is a submit control; call submit instead"}, None
         if re.search(r"\badd\b", label or "", re.I) and re.search(r"certif|licen", label or "", re.I) and self._cert_unavailable():
             return {"error": "not clicked: this tenant's Certification list does not offer his AWS Certified Cloud Practitioner "
@@ -3086,12 +3101,16 @@ class ToolDispatcher:
                              "application."}, None
         if low.startswith("eligibility") and re.search(r"clearance", reason, re.I) and self.CLEARANCE_LATER.search(reason) \
                 and not re.search(r"\b(to|before you|in order to)\s+apply\b|\bprior to (hire|start|applying)\b", reason, re.I) \
-                and self.ctx.control_failures.get("park:clearance_later", 0) < 2:
+                and self.ctx.control_failures.get("park:clearance_later", 0) < 5:
+            # five bounces, not two: RTX's run filled every page, reached Review twice, and its third park over the same
+            # (earlier attempt's) clearance note stood instead of submitting (2026-10-21)
             self.ctx.control_failures["park:clearance_later"] = self.ctx.control_failures.get("park:clearance_later", 0) + 1
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "clearance after start"})
+            done = bool(self.ctx.last_snapshot is not None and has_submit_control(self.ctx.last_snapshot))
             return {"error": "not parked: a clearance required after day one (or after hire, or one he must be able to obtain) "
                              "is not needed to apply: he is a U.S. citizen who can obtain one, and the employer sponsors it once "
-                             "he starts. Continue the application."}, None
+                             "he starts. An earlier attempt's note about it does not change that. "
+                             + ("This page has the Submit button: call submit now." if done else "Continue the application.")}, None
         if low.startswith("eligibility") and self.SATISFIED.search(reason) and not self.DISQUALIFIERS.search(non_grad) \
                 and not self.grad_window_excludes(reason) and self.ctx.park_attempts < 2:
             self.ctx.park_attempts += 1

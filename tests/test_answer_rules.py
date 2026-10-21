@@ -1682,3 +1682,42 @@ async def test_where_he_will_work_from_is_the_postings_location(store):
     assert out["answer"] == "Florida" and out["via"] == "posting_rule"
     out, _ = await d.t_lookup_answer("What city do you anticipate working from during your internship? *", [])
     assert out["answer"] == "Orlando"
+
+
+
+def test_a_password_help_page_is_an_account_page_for_click(store):
+    """Phillips 66 (2026-10-21): the Password Help 'Submit' was refused by click and the page refused by submit."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher(_job())
+    items = [{"ref": "e1", "tag": "input", "type": "email", "label": "Email"}, {"ref": "e2", "tag": "button", "label": "Submit", "submitish": True}]
+    ctx.last_snapshot = Snapshot(url="u", title="Career Opportunities: Password Help", headings=["Password Help"], items=items,
+                                 groups=[], errors={}, challenge={})
+    assert d._account_page()
+    ctx.last_snapshot = Snapshot(url="u", title="Apply", headings=["Application Questions"], items=items, groups=[], errors={}, challenge={})
+    assert not d._account_page()
+
+
+
+@pytest.mark.asyncio
+async def test_a_no_option_is_named_in_the_log_even_when_the_question_contains_no_letters(store, monkeypatch):
+    """Koch (2026-10-21): 'no' inside 'now' / 'non-compete' kept ' / No' out of the decision label; the judge read Yes."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher(_job())
+    q = "Signed non-compete, non-solicitation, confidential information or similar agreement?"
+    items = [{"ref": "e13", "tag": "input", "type": "radio", "label": "Yes", "group": q},
+             {"ref": "e14", "tag": "input", "type": "radio", "label": "No", "group": q}]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        return [FieldResult(p["ref"], True, "checked", "") for p in plan]
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("relationships.restrictive_covenant", "No", answer_type="choice", source="questionnaire")
+    await d.t_fill_batch([{"ref": "e14", "answer_key": "relationships.restrictive_covenant", "value": None, "source": None, "label": q}])
+    from goat import records as rec
+    dec = [r for r in rec.decisions(ctx.job_id) if r["ref"] == "e14"]
+    assert dec and dec[-1]["field_label"].endswith(" / No"), dec

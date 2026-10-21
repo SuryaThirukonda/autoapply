@@ -33,3 +33,21 @@ async def test_a_page_drawn_puzzle_is_a_challenge():
 async def test_a_hidden_captcha_container_is_not():
     d = await _detect(HIDDEN)
     assert d["challenge"] is False
+
+
+
+@pytest.mark.asyncio
+async def test_a_password_help_submit_is_not_an_application_submit():
+    """Phillips 66 (2026-10-21): SuccessFactors' Password Help button is 'Submit'; it requests the reset email."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content("<html><head><title>Career Opportunities: Password Help</title></head><body><h1>Password Help</h1>"
+                                  "<input type='email' value='x@y.z'><button type='submit' id='s' style='width:120px;height:40px'>Submit</button>"
+                                  "</body></html>")
+        box = await ex.page.evaluate("() => { const r = document.getElementById('s').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }")
+        el = await ex.element_at(int(box[0]), int(box[1]))
+        assert el.submit is False
+    finally:
+        await ex.close()

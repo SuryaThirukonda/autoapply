@@ -287,7 +287,10 @@ JS_ELEMENT_AT = r"""
   const formFilled = filledInputs >= 3;
   // A visible password box means a sign-in / create-account page: its "Submit" button (Workday lays a hidden
   // "Submit" exactly over "Sign In") signs in; it never submits an application.
-  const accountPage = Array.from(document.querySelectorAll('input[type=password]')).some(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+  // A password-help / reset page has no password box (SAP SuccessFactors' 'Password Help', Phillips 66, 2026-10-21): its
+  // title or heading says what it is, and its 'Submit' requests the reset email.
+  const accountPage = Array.from(document.querySelectorAll('input[type=password]')).some(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+    || /forgot (your )?password|reset (your )?password|password help|change (your )?password|candidate login/i.test(document.title + ' ' + Array.from(document.querySelectorAll('h1,h2,h3')).map(h => (h.innerText || '')).join(' '));
   const CAPTCHA_SRC = /recaptcha|hcaptcha|turnstile|challenges\.cloudflare|arkoselabs|funcaptcha|captcha/i;
   let el = document.elementFromPoint(x, y);
   let hops = 0;
@@ -410,7 +413,7 @@ JS_TARGET_GUARD = r"""
   const filledInputs = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]), textarea')).filter(i => (i.value || '').trim()).length;
   const formFilled = filledInputs >= 3;
   const accountPage = Array.from(document.querySelectorAll('input[type=password]')).some(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
-    || /forgot password|reset password|create account|sign in/i.test(document.title + ' ' + Array.from(document.querySelectorAll('h1,h2,h3')).map(h => txt(h)).join(' '));
+    || /forgot (your )?password|reset (your )?password|password help|change (your )?password|create (an |your )?account|sign in|candidate login/i.test(document.title + ' ' + Array.from(document.querySelectorAll('h1,h2,h3')).map(h => txt(h)).join(' '));
   let submit = false, captcha = false, why = '';
   for (let p = t, i = 0; p && i < 8; i++, p = p.parentElement) {
     const tag = p.tagName.toLowerCase();
