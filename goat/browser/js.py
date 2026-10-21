@@ -454,7 +454,9 @@ JS_SNAPSHOT = r"""
   // Oracle's entry tiles: what each one says and its Edit / Delete refs (the gate checks them against his stored entries)
   const tiles = [];
   // hidden tiles too: while an entry form is open Oracle hides the others, and the gate passed AutoZone with three
-  // wrong employers out of sight (2026-10-21)
+  // wrong employers out of sight (2026-10-21). A hidden tile with no form open is on another step of the form (GM
+  // Financial's Experience step, seen from step 4): it is marked so the gate sends the run back to that step.
+  const formOpenNow = Array.from(document.querySelectorAll('.profile-item-content--form')).some(f => vis(f));
   for (const t of document.querySelectorAll('article.apply-flow-profile-item-tile')) {
     if (tiles.length >= 20) continue;
     const blk = t.closest('.apply-flow-block__form-list') || (t.parentElement && t.parentElement.closest('[aria-label]'));
@@ -462,7 +464,8 @@ JS_SNAPSHOT = r"""
     const ed = t.querySelector('button[class*="edit" i]'); const de = t.querySelector('button[class*="delete" i]');
     tiles.push({ section: sec.slice(0, 60), title: txt(t.querySelector('.apply-flow-profile-item-tile__summary-title')).slice(0, 120),
       sub: txt(t.querySelector('.apply-flow-profile-item-tile__summary-subtitle')).slice(0, 160), invalid: /--invalid/.test(String(t.className || '')),
-      edit: ed ? (ed.getAttribute('data-goat-ref') || '') : '', del: de ? (de.getAttribute('data-goat-ref') || '') : '' });
+      edit: ed ? (ed.getAttribute('data-goat-ref') || '') : '', del: de ? (de.getAttribute('data-goat-ref') || '') : '',
+      visible: vis(t) || formOpenNow });
   }
   for (const t of document.querySelectorAll('.beautiful-timeline-item[data-profile-item-tile]')) {
     if (tiles.length >= 20) break;
@@ -471,7 +474,8 @@ JS_SNAPSHOT = r"""
     const subEl = t.querySelector('.beautiful-timeline-item__subtitle, [class*="timeline-item__subtitle"]');
     tiles.push({ section: sec, title: txt(t.querySelector('.beautiful-timeline-item__title')).slice(0, 120),
       sub: subEl ? txt(subEl).slice(0, 160) : '', dates: ((t.querySelector('.oj-helper-hidden-accessible') || {}).textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
-      invalid: t.getAttribute('data-profile-item-invalid') === 'true', edit: t.getAttribute('data-goat-ref') || '', del: '', timeline: true });
+      invalid: t.getAttribute('data-profile-item-invalid') === 'true', edit: t.getAttribute('data-goat-ref') || '', del: '', timeline: true,
+      visible: vis(t) || formOpenNow });
   }
   const headings = [];
   for (const h of document.querySelectorAll('h1, h2, h3, [role="heading"]')) { if (vis(h)) { const t = txt(h); if (t && t.length < 160) headings.push(t); } if (headings.length >= 12) break; }

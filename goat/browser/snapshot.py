@@ -124,7 +124,8 @@ def render(s: Snapshot, max_chars: int = MAX_CHARS) -> str:
     if s.entry_form_open:
         lines.append("ENTRY FORM OPEN: an Experience / Education entry form is open; fill it and click its SAVE (or CANCEL it)")
     for t in s.tiles[:12]:
-        lines.append(f"ENTRY TILE ({t.get('section') or 'section'}): '{t.get('title', '')}' / '{t.get('sub', '')}'"
+        where = " (on another step of the form)" if t.get("visible") is False else ""
+        lines.append(f"ENTRY TILE ({t.get('section') or 'section'}){where}: '{t.get('title', '')}' / '{t.get('sub', '')}'"
                      f"{' FIELDS TO FIX' if t.get('invalid') else ''} [Edit {t.get('edit') or '?'} | Delete {t.get('del') or '?'}]")
     lines.append(f"VIEWPORT scrollY={s.scroll_y} pageHeight={s.page_height} ({s.total_items} interactive elements, {len(s.items)} listed)")
     for g in s.groups:

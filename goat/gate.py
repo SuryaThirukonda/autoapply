@@ -267,12 +267,18 @@ def oracle_tile_problems(tiles: list[dict], items: list[dict], company: str = ""
     from .adapters.workday_sections import _same_company
     out = []
 
+    away = "it is on another step of the form: go back to that step (Back, or its section link), take a snapshot, then "
+
     def _edit(t: dict) -> str:
+        if t.get("visible") is False:
+            return away + ("click the entry and then its Edit" if t.get("timeline") else "open it with its Edit")
         # a timeline entry shows its Edit / Remove once clicked
         return (f"click the entry [{t.get('edit') or '?'}] and then its Edit" if t.get("timeline")
                 else f"open it with its Edit [{t.get('edit') or '?'}]")
 
     def _delete(t: dict) -> str:
+        if t.get("visible") is False:
+            return away + ("click the entry and then its Remove" if t.get("timeline") else "remove it with its Delete")
         return (f"click the entry [{t.get('edit') or '?'}] and then its Remove" if t.get("timeline")
                 else f"remove it with its Delete [{t.get('del') or '?'}]")
     for t in tiles:

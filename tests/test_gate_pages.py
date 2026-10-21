@@ -957,3 +957,15 @@ async def test_an_attach_icon_that_opens_a_dialog_takes_the_file_in_the_dialogs_
         assert names == [0, "Surya_Thirukonda_Resume_SWE.pdf"], names
     finally:
         await ex.close()
+
+
+
+def test_a_tile_on_another_step_sends_the_run_back_to_that_step():
+    """GM Financial (Oracle, 2026-10-21): the Experience tiles were on step 3, the run was on step 4, and clicking their stale
+    Edit refs opened nothing."""
+    from goat.gate import oracle_tile_problems
+    tiles = [{"section": "Experience", "title": "Undergraduate Research Assistant", "sub": "FastAPI, React, Supabase, Docker 09/2026",
+              "edit": "e77", "del": "e78", "visible": False}]
+    got = oracle_tile_problems(tiles, [], entries=HIS_ENTRIES + [{"n": 4, "company": "Rathinam Group", "title": "Undergraduate Research Assistant"}],
+                               school="Texas A&M University", high_school="", required_blocks=[])
+    assert len(got) == 1 and "another step of the form" in got[0] and "[e77]" not in got[0], got
