@@ -671,6 +671,15 @@ def acknowledgement_key(question: str, options: list[str] | None) -> str | None:
 AUTH_BASIS_CHANGE = re.compile(r"basis (for|of) (your )?(employment |work )?(authori[sz]ation|eligibility).{0,80}\b(change|expire)", re.I)
 
 
+# The reasons a park may name (goat.states.HOLD_REASONS plus the outcomes the worker and the website know).
+from ..states import HOLD_REASONS as _HOLD_REASONS  # noqa: E402
+PARK_REASONS = tuple(dict.fromkeys(list(_HOLD_REASONS) + [
+    "portal_error", "ready_for_you", "already_applied", "answer_declined", "review_needed", "bot_check", "credentials",
+    "stuck", "skipped", "eligibility", "needs_you"]))
+PARK_REASONS_SHOWN = ("portal_error", "ready_for_you", "needs_you", "eligibility", "no_standing_answer", "credentials_unknown",
+                      "code_not_received", "posting_closed", "already_applied", "automation_prohibited")
+
+
 # A desired-salary range question with dollar ranges as options (CACI, 2026-10-20): his stored desired pay decides.
 SALARY_QUESTION = re.compile(r"\b(desired|expected|expectations?|target|requested)\b.{0,30}\b(salary|compensation|pay|wage|rate)\b|"
                              r"\b(salary|compensation|pay) (range|expectations?|requirements?)\b", re.I)
@@ -1097,6 +1106,16 @@ class ToolDispatcher:
                     # The stored text names this option ("Not Specified"), negated or not: only when the label
                     # starts with it, so "willing" never ticks "Not willing to relocate".
                     label_matched = any(lab.startswith(x) for x in [nv, *parts] if x)
+                elif (band := self._gpa_band_pick(item, str(val), f)) is not None:
+                    # a GPA band among the options ('3.50 - 4.00 or higher', Texas Instruments 2026-10-20): the band that
+                    # holds his GPA is his answer; '4.0' and the range chain never matched that label as text
+                    if band.get("ref") != item.get("ref"):
+                        results.append({"ref": f["ref"], "status": "failed", "error": (
+                            f"his GPA falls in '{str(band.get('label') or '')[:40]}' [{band.get('ref')}]: tick that option "
+                            "with the same answer_key")})
+                        continue
+                    val = "true"
+                    label_matched = True
                 elif item.get("type") == "checkbox" and parts and (parts[0] in SELECT_ALL or re.match(r"^(select|pick|choose|tick|check) (every|all)\b", parts[0]))                         and not NEGATED.match((item.get("label") or "").strip()):
                     # ("Select every location offered (multi-select)..." in his bank answer: American Express, 2026-10-19)
                     # "All offered locations; ..." on a multi-select group: every box is ticked (Surya, 2026-10-18)
@@ -1281,6 +1300,29 @@ class ToolDispatcher:
         # answers sent T-Mobile's model back over fields that were right (2026-10-19).
         return {"summary": f"{set_n} set, {kept_n} kept, {len(results) - set_n - kept_n} failed" if kept_n else
                 f"{set_n} set, {len(results) - set_n} failed", "results": results}, None
+
+    def _gpa_band_pick(self, item: dict, val: str, f: dict) -> dict | None:
+        """The radio / checkbox option of a GPA question whose band holds his stored GPA ('4.0', or the first figure of
+        the education.gpa_range chain), among the question's options on the page. None when this is no GPA question,
+        the answer names no GPA, or no band holds it."""
+        key = str(f.get("answer_key") or "")
+        group = str(item.get("group") or "")
+        if not (key.startswith("education.gpa") or re.search(r"\bgpa\b|grade point", f"{group} {f.get('label') or ''}", re.I)):
+            return None
+        gpa = next((m.group(1) for m in (fill._GPA_WANT.match(x.strip()) for x in str(val).split(";")) if m), None)
+        if gpa is None:
+            return None
+        snap = self.ctx.last_snapshot
+        sibs = [i for i in (snap.items if snap else []) if group and (i.get("group") or "") == group
+                and i.get("type") == item.get("type")]
+        opts = [{"text": i.get("label") or "", "label": i.get("label") or "", "ref": i.get("ref")} for i in (sibs or [item])]
+        if len(opts) >= 2:
+            return fill.gpa_option(opts, [gpa])
+        b = fill._gpa_bucket(item.get("label") or "")
+        g = float(gpa)
+        if b and b[0] <= g and (g <= b[1] if b[2] else g < b[1]):
+            return {"ref": item.get("ref"), "label": item.get("label")}
+        return None
 
     SENSITIVE_KEYS = re.compile(r"^(self_id\.|compliance\.(date_of_birth|criminal|disciplined|debarment)|bank\.(gender|race|ethnic|veteran|disab|transgender|sexual))", re.I)
 
@@ -2602,6 +2644,30 @@ class ToolDispatcher:
             raise Parked(f"portal_error: {perr}", "hold")
         state = "ready_for_you" if reason.lower().startswith("ready_for_you") else "hold"
         low = reason.lower()
+        # A park that names no hold reason ("incomplete", "run_incomplete", "not completed", "ready"): Highmark Health's
+        # run used park to ask what was left, spent its four checked parks in 20 seconds, and its fifth park went
+        # through with a dropdown still empty (2026-10-20; Rogue Fitness and Cigna did the same). Such a park never
+        # stands and never uses up the checked parks: the gate's blockers come back instead.
+        head = re.split(r"[:\s]", low.strip(), maxsplit=1)[0] if low.strip() else ""
+        named = bool(head) and any(head == k or (len(head) >= 6 and k.startswith(head)) or head.startswith(k) for k in PARK_REASONS)
+        if not named and self.ctx.control_failures.get("park:unnamed", 0) < 8:
+            self.ctx.control_failures["park:unnamed"] = self.ctx.control_failures.get("park:unnamed", 0) + 1
+            try:
+                snap = await snapmod.take(self.ctx.ex)
+                self.ctx.last_snapshot = snap
+                gate = run_gate(job=self.ctx.job, snapshot=snap, page_text=page_now or await self.ctx.ex.page_text(30000),
+                                expected_resume=self.ctx.resume_file, free_text_answers=[f["answer"] for f in self.ctx.free_text],
+                                portal=self.ctx.portal, page_no=self.ctx.page_no)
+                reasons = list(gate.reasons or [])
+                passed = bool(gate.passed)
+            except Exception as e:  # noqa: BLE001 - the bounce stands without the gate's list
+                reasons, passed = [f"(the gate could not run: {type(e).__name__})"], False
+            db.event(self.ctx.job_id, "park:unnamed", {"reason": reason[:200], "blockers": reasons[:6]})
+            return {"error": (f"not parked: '{reason[:60]}' names no hold reason. A park starts with one of "
+                              f"{', '.join(PARK_REASONS_SHOWN)} and says after a colon what blocks the application. "
+                              + ("the code gate PASSES on this page: call submit now." if passed else
+                                 "What the page still needs is listed under blockers: fix it, then Save and Continue.")),
+                    "blockers": reasons[:8]}, None
         if low.startswith("eligibility") and re.search(r"within \d+ miles|commut|local (candidates|to)|relocation (assistance|help)", low)                 and not re.search(r"unpaid|no pay|volunteer", low) and self.ctx.park_attempts < 2:
             # A local-candidates requirement only matters when the role is unpaid (Surya, 2026-10-18).
             from ..answers import posting_pay

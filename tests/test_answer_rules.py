@@ -1432,3 +1432,73 @@ async def test_an_hourly_rate_box_and_a_salary_text_box_keep_his_hourly_figure(s
     d, typed = _salary_dispatcher(monkeypatch, "What are your salary expectations?", tag="textarea")
     await d.t_fill_batch([{"ref": "e44", "answer_key": "bank.desired-hourly-rate", "value": None, "source": None, "label": "Salary expectations"}])
     assert typed == ["20"]                                         # only one-line boxes change
+
+
+
+@pytest.mark.asyncio
+async def test_a_park_without_a_named_reason_never_stands(store, monkeypatch):
+    """Highmark Health (2026-10-20): parks named 'run_incomplete' / 'incomplete' spent the four checked parks in 20
+    seconds, and the fifth ('not completed') went through with a required dropdown still empty."""
+    from types import SimpleNamespace
+    from goat.agent import tools as toolsmod
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher({"id": 439, "company": "Highmark Health", "ats": "workday"})
+    snap = Snapshot(url="u", title="t", headings=["Application Questions"], items=[{"ref": "e48", "tag": "button", "label": "Select One"}],
+                    groups=[], errors={}, challenge={})
+    for i in snap.items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    ctx.park_attempts = 4
+
+    async def page_text(n=30000):
+        return "Application Questions Select One Required Save and Continue"
+
+    async def take(ex):
+        return snap
+    ctx.ex.page_text = page_text
+    monkeypatch.setattr(toolsmod.snapmod, "take", take)
+    blocked = SimpleNamespace(passed=False, result="blocked", reasons=["empty_required:  Select One Required (dropdown) ref=e48"],
+                              as_dict=lambda: {})
+    monkeypatch.setattr(toolsmod, "run_gate", lambda **k: blocked)
+    for why in ("not completed", "run_incomplete", "incomplete", "ready"):
+        out, _ = await d.t_park(why)
+        assert "names no hold reason" in out["error"] and out["blockers"] == blocked.reasons
+    assert ctx.park_attempts == 4                  # the checked parks were not used up
+    with pytest.raises(toolsmod.Parked):           # a named reason past the budget still stands
+        await d.t_park("portal_error: the Save and Continue button does nothing")
+
+
+
+@pytest.mark.asyncio
+async def test_a_gpa_band_radio_takes_his_gpa(store, monkeypatch):
+    """Texas Instruments (2026-10-20): '3.50 - 4.00 or higher' was pre-selected, and neither '4.0' nor the range chain
+    matched its label, so the gate kept blocking and the run stalled."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher({"id": 434, "company": "Texas Instruments", "ats": "oracle"})
+    g = "What is your current overall Grade Point Average (GPA)?"
+    labels = ["1.99 or less", "2.00 - 2.99", "3.00 - 3.49", "3.50 - 4.00 or higher"]
+    items = [{"ref": f"e{93 + n}", "tag": "input", "type": "radio", "label": lab, "group": g} for n, lab in enumerate(labels)]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    typed = {}
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        out = []
+        for p in plan:
+            typed[p["ref"]] = p["value"]
+            out.append(FieldResult(p["ref"], True, "checked", ""))
+        return out
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("education.gpa", "4.0", answer_type="text", source="questionnaire")
+    answers.save_answer("education.gpa_range", "4.0 or above; 4.0 and above; 4.0+; 3.7 - 4.0; 3.5 - 4.0; 3.5+", answer_type="choice_chain",
+                        source="questionnaire")
+    for key in ("education.gpa", "education.gpa_range"):
+        typed.clear()
+        out, _ = await d.t_fill_batch([{"ref": "e96", "answer_key": key, "value": None, "source": None, "label": "GPA"}])
+        assert out["results"][0]["status"] == "set" and typed == {"e96": "true"}, (key, out)
+    out, _ = await d.t_fill_batch([{"ref": "e93", "answer_key": "education.gpa", "value": None, "source": None, "label": "GPA"}])
+    assert out["results"][0]["status"] == "failed" and "[e96]" in out["results"][0]["error"]
