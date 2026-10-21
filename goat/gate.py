@@ -95,6 +95,48 @@ def guardrail_check(text: str) -> tuple[list[str], list[str]]:
     return blocks, warns
 
 
+# A picker's own empty text is no value: Electronic Arts' "Secondary Country Code" showed 'Select an option' and the gate
+# asked for a source for it, which the run could not give (2026-10-21).
+PLACEHOLDER_VALUE = re.compile(r"^(?:(?:please )?(?:select|choose|pick)(?: an?| one| your)?(?: option| item| value| one| country)?"
+                               r"(?:\.\.\.|…)?|no selection|none selected|not selected|--+)$", re.I)
+
+
+# A "required / please complete" message beside a field that now holds a real value is stale: SAP SuccessFactors keeps
+# "Please complete your personal information." beside Salutation after 'Mr' is chosen, until its own next validation, and
+# Westinghouse's run parked over it twice with the rest of the form unfilled (2026-10-21). Format errors stay.
+_REQUIRED_MSG = re.compile(r"\b(required|is mandatory|please (complete|select|enter|provide|fill|choose)|cannot be (blank|empty)|"
+                           r"must not be (blank|empty)|this info is required|missing)\b", re.I)
+
+
+_FORMAT_MSG = re.compile(r"\b(valid|invalid|format|must be|at least|at most|characters?|match(es)?|correct|too (long|short))\b", re.I)
+
+
+def drop_stale_required(errors: dict | None, snapshot) -> dict:
+    """The page's error scan without 'required' messages whose own field now holds a value (and is not marked invalid)."""
+    from . import answers as _answers
+    errs = dict(errors or {})
+    if not errs:
+        return errs
+    filled = {}
+    for it in getattr(snapshot, "items", []) or []:
+        val = str(it.get("shown") or it.get("value") or "").strip()
+        if it.get("type") in ("checkbox", "radio") or not val or PLACEHOLDER_VALUE.match(val) or it.get("invalid") is True:
+            continue
+        lab = _answers.norm(it.get("label") or "")
+        if lab:
+            filled[lab] = val
+
+    def stale(e: dict) -> bool:
+        near = _answers.norm(e.get("near") or "")
+        text = str(e.get("text") or "")
+        return bool(near) and bool(_REQUIRED_MSG.search(text)) and not _FORMAT_MSG.search(text) and near in filled
+
+    for kind in ("error_text", "alerts"):
+        if errs.get(kind):
+            errs[kind] = [e for e in errs[kind] if not stale(e)]
+    return errs
+
+
 _FIELDS_TO_FIX = re.compile(r"(?m)^[ \t]*(.{1,90}?)[ \t]*\n+[ \t]*Fields to fix:?[ \t]*(\d+)")
 
 
@@ -174,7 +216,7 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         missing = review_gaps_from_snapshot(snapshot, job.get("company", ""))
         if missing:
             return GateResult("blocked", [f"the Employment section does not show {m}: call fill_sections, then submit again" for m in missing[:4]])
-    why = why_blocked(snapshot.errors)
+    why = why_blocked(drop_stale_required(snapshot.errors, snapshot))
     reasons += why
 
     # 4. decisions: every value has a source; attestations only from standing answers
@@ -250,7 +292,8 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
             continue
         # A placeholder is not a value: "--" (IXL's office picker) or a select showing its own question as the
         # selection ("What University do you currently attend?", 2026-10-18).
-        if re.fullmatch(r"[\W_]+", str(val)) or (it.get("tag") in ("select", "dropdown") or it.get("combo")) and \
+        if re.fullmatch(r"[\W_]+", str(val)) or PLACEHOLDER_VALUE.match(str(val).strip()) \
+                or (it.get("tag") in ("select", "dropdown") or it.get("combo")) and \
                 _answers.norm(str(val)) == _answers.norm(it.get("label") or "") and it.get("type") not in ("checkbox", "radio"):
             continue
         if not _sourced(it.get("ref", ""), it.get("label", "")):

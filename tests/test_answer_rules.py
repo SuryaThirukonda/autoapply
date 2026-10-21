@@ -1600,3 +1600,15 @@ async def test_a_completed_college_program_question_is_no(store):
     assert out["answer"] == "No" and out["key"] == "education.completed_college_program"
     out, _ = await d.t_lookup_answer("When will you complete your degree program?", [])
     assert out.get("key") != "education.completed_college_program"
+
+
+
+@pytest.mark.asyncio
+async def test_a_boot_camp_degree_or_military_question_is_no(store):
+    """Electronic Arts (2026-10-21): 'completed one of the following in the last 18 months: a Coding Boot Camp, a Degree
+    program from a college/university or Military Service?' was put to Surya."""
+    d, ctx = _dispatcher(_job("Electronic Arts", "EA2"))
+    q = ("Have you completed one of the following in the last 18 months: a Coding Boot Camp, a Degree program from a "
+         "college/university or Military Service?")
+    out, _ = await d.t_lookup_answer(q, ["Yes", "No"])
+    assert out["answer"] == "No" and out["via"] == "degree_rule"

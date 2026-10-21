@@ -740,7 +740,8 @@ def posting_id_pick(question: str, options: list[str], text: str) -> str | None:
 # "Have you completed a college program in the last 18 months?" (Electronic Arts, 2026-10-20): the run answered Yes from
 # his enrollment key. He is still in his first degree (Texas A&M, May 2028) and has completed no college program: No.
 COMPLETED_PROGRAM_QUESTION = re.compile(
-    r"\b(completed|graduated|finished|earned)\b.{0,50}\b(college|university|degree|program|bachelor'?s?|undergraduate)\b"
+    r"\b(completed|graduated|finished|earned)\b.{0,90}\b(college|university|degree|program|bachelor'?s?|undergraduate|"
+    r"boot ?camp|military service)\b"
     r"(.{0,60}\b(last|past|within|in the)\s+(\d+|twelve|eighteen|six|two)\s+(months?|years?))?", re.I)
 
 

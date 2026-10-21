@@ -242,3 +242,30 @@ def test_an_oracle_resume_listed_beside_remove_resume_counts_as_attached(store):
     g = run_gate(job=job, snapshot=_snap(items), page_text="Supporting Documents and URLs\nUpload Cover Letter\nSubmit",
                  expected_resume="Surya_Thirukonda_Resume_SWE.pdf", free_text_answers=[], portal="oracle", page_no=1)
     assert any("resume not attached" in r for r in g.reasons), g.reasons
+
+
+
+def test_a_picker_placeholder_is_not_a_value_to_source(store):
+    """Electronic Arts (2026-10-21): 'Secondary Country Code = Select an option' blocked the gate."""
+    from goat.gate import PLACEHOLDER_VALUE
+    for v in ("Select an option", "Select One", "Please select", "No Selection", "Choose...", "--", "Select country"):
+        assert PLACEHOLDER_VALUE.match(v), v
+    for v in ("Texas", "United States (+1)", "Selected Works", "Choose Life Inc"):
+        assert not PLACEHOLDER_VALUE.match(v), v
+
+
+
+def test_a_required_message_beside_a_filled_field_is_stale(store):
+    """Westinghouse SuccessFactors (2026-10-21): 'Please complete your personal information.' stayed beside Salutation = Mr."""
+    from goat.browser.snapshot import Snapshot
+    from goat.gate import drop_stale_required
+    errs = {"error_text": [{"near": "* Salutation", "text": "Please complete your personal information."},
+                           {"near": "Email", "text": "Please enter a valid email address."}],
+            "alerts": [{"near": "* Veteran Status", "how": "role=alert", "text": "Veteran Status is required"}]}
+    items = [{"ref": "e20", "tag": "input", "label": "* Salutation", "value": "Mr", "combo": True},
+             {"ref": "e21", "tag": "input", "label": "Email", "value": "x@"},
+             {"ref": "e118", "tag": "input", "label": "* Veteran Status", "value": ""}]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors=errs, challenge={})
+    out = drop_stale_required(errs, snap)
+    assert out["error_text"] == [errs["error_text"][1]]            # a format error stays even with a value
+    assert out["alerts"] == errs["alerts"]                          # the empty field keeps its required message
