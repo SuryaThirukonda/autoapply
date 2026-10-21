@@ -461,6 +461,8 @@ JS_SNAPSHOT = r"""
   const bodyText = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ');
   return JSON.stringify({ url: location.href, title: document.title, headings, items: items.slice(0, maxItems),
     groups: groupList, tiles, entry_form_open: Array.from(document.querySelectorAll('.profile-item-content--form')).some(f => vis(f)),
+    required_blocks: Array.from(document.querySelectorAll('.apply-flow-block__form-list[aria-label]')).map(b => b.getAttribute('aria-label') || '')
+      .filter(l => /\bRequired\s*$/i.test(l)).map(l => l.replace(/\s*Required\s*$/i, '').trim()).slice(0, 12),
     total: items.length, scrollY: Math.round(scrollY), pageHeight: Math.round(document.documentElement.scrollHeight), vw: innerWidth, vh: innerHeight,
     text_head: bodyText.slice(0, 600) });
 }

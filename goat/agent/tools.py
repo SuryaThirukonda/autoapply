@@ -2735,7 +2735,8 @@ class ToolDispatcher:
                 opts = info["choices"]       # Surya gets the real choices with the question
             # A picker with exactly one real choice is an acknowledgement ("Thank you" under Lyft's "enter your
             # employment above"): take it; it is not a question for Surya (2026-10-18).
-            real = [o for o in opts if o and not re.match(r"^(select|select\.\.\.|select one|choose|choose one|please select|-+)$", str(o).strip(), re.I)]
+            real = [o for o in opts if o and not re.match(r"^(select|select\.\.\.|select one|choose|choose one|please select|-+)$", str(o).strip(), re.I)
+                    and not fill.NO_RESULTS.match(str(o))]   # a search's 'No results were found' is no option (Vertiv, 2026-10-21)
             if len(real) == 1 and (opts or ftype.lower() in ("select", "dropdown", "combobox", "radio")):
                 key = answers.key_from_question(text)
                 answers.save_answer(key, str(real[0]), answer_type="choice", source="only_option",

@@ -222,7 +222,8 @@ _HIS_DEGREE = re.compile(r"bachelor|undergraduate|computer science|\bb\.?\s?s\b"
 
 
 def oracle_tile_problems(tiles: list[dict], items: list[dict], company: str = "", portal: str = "", *,
-                         entries: list[dict] | None = None, school: str | None = None, high_school: str | None = None) -> list[str]:
+                         entries: list[dict] | None = None, school: str | None = None, high_school: str | None = None,
+                         required_blocks: list[str] | None = None) -> list[str]:
     """What is wrong with Oracle's entry tiles: a work tile whose employer is none of his, an education tile that is not
     his degree, and no education tile for his school while the form offers ADD EDUCATION."""
     from . import answers
@@ -267,7 +268,10 @@ def oracle_tile_problems(tiles: list[dict], items: list[dict], company: str = ""
         out.append(f"the Education tile '{t.get('title')}' / '{t.get('sub')}' is not his {school or 'school'} degree entry (Oracle's "
                    f"résumé import adds such tiles, e.g. 'Engineering Honors'): remove it with its Delete [{t.get('del') or '?'}]")
     add_edu = next((i for i in items or [] if re.fullmatch(r"\s*add education\s*", str(i.get("label") or ""), re.I)), None)
-    if add_edu is not None and school_key and not any(school_key in answers.norm(f"{t.get('title')} {t.get('sub')}") for t in his):
+    # only where the Education block is required: Vertiv's optional block got the rule, its school search found nothing
+    # and the run held over a field the form did not need (2026-10-21)
+    edu_required = required_blocks is None or any(_EDU_SECTION.search(b or "") for b in required_blocks)
+    if add_edu is not None and school_key and edu_required and not any(school_key in answers.norm(f"{t.get('title')} {t.get('sub')}") for t in his):
         out.append(f"Education has no {school} entry: click ADD EDUCATION [{add_edu['ref']}] and enter it from education.* (school, "
                    "degree Bachelor of Science, major Computer Science, graduation May 2028), then SAVE")
     return out
@@ -361,7 +365,8 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         return GateResult("blocked", ["an Experience / Education entry form is open and not saved: fill it from his stored entry "
                                       "(experience.work.N.* / education.*) and click its SAVE, or CANCEL it; the application never "
                                       "goes in with an entry half-entered (AutoZone, 2026-10-21)"])
-    tile_problems = oracle_tile_problems(getattr(snapshot, "tiles", None) or [], snapshot.items, job.get("company", ""), portal)
+    tile_problems = oracle_tile_problems(getattr(snapshot, "tiles", None) or [], snapshot.items, job.get("company", ""), portal,
+                                         required_blocks=list(getattr(snapshot, "required_blocks", None) or []))
     if tile_problems:
         return GateResult("blocked", tile_problems[:5])
     m_issues = ORACLE_ISSUES.search(page_text or "")

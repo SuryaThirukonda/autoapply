@@ -843,3 +843,15 @@ async def test_folded_sections_after_the_click_are_no_failure():
         assert r.status == "submitted" and "Successfully Applied" in r.signal, r
     finally:
         await ex.close()
+
+
+
+def test_his_education_entry_is_asked_for_only_where_the_block_is_required():
+    """Vertiv (Oracle, 2026-10-21): an optional Education block got the rule, the school search found nothing, the run held."""
+    from goat.gate import oracle_tile_problems
+    work = [{"section": "Work History", "title": "Contract Software Engineer", "sub": "Mai Shan Yun 02/2026 - 06/2026", "edit": "e1", "del": "e2"}]
+    items = [{"ref": "e9", "tag": "button", "label": "ADD EDUCATION"}]
+    kw = dict(entries=HIS_ENTRIES, school="Texas A&M University", high_school="Clements High School")
+    assert oracle_tile_problems(work, items, required_blocks=["Work History"], **kw) == []
+    got = oracle_tile_problems(work, items, required_blocks=["Work History", "Education"], **kw)
+    assert len(got) == 1 and got[0].startswith("Education has no Texas A&M University entry"), got

@@ -32,6 +32,7 @@ class Snapshot:
     unsaved: list[dict] = field(default_factory=list)   # answers an autosaving form shows but has not stored (Ashby)
     tiles: list[dict] = field(default_factory=list)     # Oracle's entry tiles: section, title, sub, invalid, edit, del
     entry_form_open: bool = False                       # an Oracle Experience / Education entry form is open (unsaved)
+    required_blocks: list[str] = field(default_factory=list)   # Oracle blocks marked Required ('Work History')
 
     def find(self, ref: str) -> dict | None:
         return self.refs.get(ref)
@@ -164,7 +165,8 @@ async def take(ex: Executor, max_items: int = MAX_ITEMS, with_text: bool = False
     snap = Snapshot(url=raw.get("url", ""), title=raw.get("title", ""), headings=raw.get("headings", []),
                     items=raw.get("items", []), groups=raw.get("groups", []), errors=errors, challenge=challenge,
                     scroll_y=raw.get("scrollY", 0), page_height=raw.get("pageHeight", 0), total_items=raw.get("total", 0),
-                    text=raw.get("text_head", ""), tiles=raw.get("tiles") or [], entry_form_open=bool(raw.get("entry_form_open")))
+                    text=raw.get("text_head", ""), tiles=raw.get("tiles") or [], entry_form_open=bool(raw.get("entry_form_open")),
+                    required_blocks=list(raw.get("required_blocks") or []))
     for i in snap.items:
         snap.refs[i["ref"]] = i
     for g in snap.groups:
