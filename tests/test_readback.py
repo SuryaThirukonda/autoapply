@@ -305,3 +305,21 @@ def test_a_flag_only_phone_country_picker_is_not_compared():
                  {"ref": "e12", "field_label": "Country", "value": "United States", "source": "standing:identity.country", "page": 1}]
     out = readback.diff(decisions, snap, 1)
     assert len(out) == 1 and "Country" in out[0] and "Country code" not in out[0], out
+
+
+@pytest.mark.asyncio
+async def test_a_live_shown_pick_counts_when_the_snapshot_had_none():
+    """ServiceNow (2026-10-21): the live read gave value '' and shown 'Sugar Land, TX, US'; the shown was dropped."""
+    from goat import readback
+    from goat.browser.snapshot import Snapshot
+    item = {"ref": "e10", "tag": "input", "type": "text", "label": "City*", "value": "Sugar Land, TX, US"}
+    snap = Snapshot(url="u", title="t", headings=[], items=[item], groups=[], errors={}, challenge={})
+    snap.refs["e10"] = item
+
+    class Ex:
+        async def eval(self, script, arg):
+            return {"e10": {"value": "", "shown": "Sugar Land, TX, US"}}
+    out = await readback.refresh_values(Ex(), snap, ["e10"])
+    assert out["e10"] == "Sugar Land, TX, US"
+    decisions = [{"ref": "e10", "field_label": "City", "value": "Sugar Land, TX, US", "source": "standing:identity.city", "page": 1}]
+    assert readback.diff(decisions, snap, 1) == []

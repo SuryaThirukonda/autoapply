@@ -298,7 +298,10 @@ async def refresh_values(ex, snap: Snapshot, refs: list[str] | None = None) -> d
             out[ref] = "pressed" if info["pressed"] else ""
         else:
             item["value"] = info.get("value", item.get("value"))
-            if info.get("shown") is not None and item.get("shown"):
+            # the live read's shown pick counts even when the snapshot had none: SmartRecruiters' City box was emptied
+            # while its host kept 'Sugar Land, TX, US', and the read-back called it '' twelve pages running (ServiceNow,
+            # 2026-10-21)
+            if info.get("shown"):
                 item["shown"] = info.get("shown")
             out[ref] = str(item.get("shown") or item.get("value") or "")
     return out
