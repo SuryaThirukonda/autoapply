@@ -813,3 +813,33 @@ async def test_hidden_tiles_still_count_and_an_open_entry_form_blocks_the_gate(s
         assert g.result == "blocked" and "entry form is open" in g.reasons[0], g.reasons
     finally:
         await ex.close()
+
+
+
+SF_APPLIED = """<html><body>
+<form id="f"><input name="a" value="Surya"><input name="b" value="Thirukonda"><input name="c" value="thirukondas@gmail.com"><button type="submit" id="apply" onclick="done(); return false;">Apply</button></form>
+<script>
+function done() {
+  document.body.insertAdjacentHTML('afterbegin', '<a id="j_id1_expandAllSections" href="#">Expand all sections</a>'
+    + '<div class="sectionHeader"><button id="s1:topBar" aria-expanded="false" class="topBar">My Documents</button></div>'
+    + '<div class="sectionHeader"><button id="s2:topBar" aria-expanded="false" class="topBar">Profile Information</button></div>');
+  setTimeout(() => { const d = document.createElement('div'); d.textContent = 'Successfully Applied to Software Engineer Intern (136850).';
+                     document.body.appendChild(d); }, 2500);
+}
+</script></body></html>"""
+
+
+async def test_folded_sections_after_the_click_are_no_failure():
+    """NetApp (SuccessFactors, 2026-10-21): the 'Successfully Applied' page keeps its sections folded and the submission was
+    called failed one second after the click."""
+    from goat.browser.submit import submit
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(SF_APPLIED)
+        await snapshot.take(ex)
+        r = await submit(ex, None, label="Apply", wait_s=8)
+        assert r.status == "submitted" and "Successfully Applied" in r.signal, r
+    finally:
+        await ex.close()

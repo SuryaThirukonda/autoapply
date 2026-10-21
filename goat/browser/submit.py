@@ -115,7 +115,10 @@ async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: f
             # 2026-10-20): that is movement; the next signal check reads the new page
             await asyncio.sleep(1.0)
             continue
-        refused = why_blocked(after_scan) + [f"form summary: {x.get('text')}" for x in (after_scan.get("summaries") or [])]
+        # Folded sections are page layout, not an error from the click: SuccessFactors' 'Successfully Applied' page keeps its
+        # profile sections folded, and NetApp's submission was called failed one second after the click (2026-10-21).
+        refused = [r for r in why_blocked(after_scan) if not str(r).startswith("collapsed_sections")] \
+            + [f"form summary: {x.get('text')}" for x in (after_scan.get("summaries") or [])]
         if refused:
             return SubmitResult("failed", why=refused, url=after_scan.get("url", ""), clicked_label=found.get("text", ""))
 
@@ -130,5 +133,6 @@ async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: f
         if last.get("url") and before.get("url") and last["url"] != before["url"] and not same_form_move(before["url"], last["url"]):
             return SubmitResult("submitted", signal=f"url_changed: {before['url']} -> {last['url']}", url=last.get("url", ""),
                                 clicked_label=found.get("text", ""))
-    return SubmitResult("failed", why=why_blocked(after) or ["page did not change and showed no error; the control may be inert"],
+    return SubmitResult("failed", why=[r for r in why_blocked(after) if not str(r).startswith("collapsed_sections")]
+                        or ["page did not change and showed no error; the control may be inert"],
                         url=after.get("url", ""), clicked_label=found.get("text", ""))
