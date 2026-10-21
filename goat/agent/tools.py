@@ -737,6 +737,13 @@ def posting_id_pick(question: str, options: list[str], text: str) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
+# "Have you completed a college program in the last 18 months?" (Electronic Arts, 2026-10-20): the run answered Yes from
+# his enrollment key. He is still in his first degree (Texas A&M, May 2028) and has completed no college program: No.
+COMPLETED_PROGRAM_QUESTION = re.compile(
+    r"\b(completed|graduated|finished|earned)\b.{0,50}\b(college|university|degree|program|bachelor'?s?|undergraduate)\b"
+    r"(.{0,60}\b(last|past|within|in the)\s+(\d+|twelve|eighteen|six|two)\s+(months?|years?))?", re.I)
+
+
 def pay_meets_desired(snippet: str | None, hourly: float = 20.0, annual: float = 41600.0) -> bool | None:
     """Whether the top of a posted pay range reaches his desired pay; None when the snippet names no figure."""
     vals = []
@@ -2055,6 +2062,16 @@ class ToolDispatcher:
             return {"key": "work_authorization.basis_change", "answer": neg, "confidence": 1.0, "via": "citizen_rule",
                     "note": "he is a U.S. citizen, so his basis for employment authorization never changes: No (a form that says "
                             "not to answer this for citizens is answered No only when the field is already set or required)"}, None
+        if COMPLETED_PROGRAM_QUESTION.search(question or "") and not re.search(r"\b(high school|diploma|ged|when|expected|will you)\b",
+                                                                              question or "", re.I) \
+                and (not options or any(answer_polarity(o) == "no" for o in options)):
+            neg = next((o for o in (options or []) if answer_polarity(o) == "no"), "No")
+            answers.save_answer("education.completed_college_program", "No", answer_type="choice", source="derived",
+                                note="still in his first degree (Texas A&M, graduating May 2028): no college program completed",
+                                aliases=[question])
+            db.event(self.ctx.job_id, "answer:completed_program", {"question": question[:160]})
+            return {"key": "education.completed_college_program", "answer": neg, "confidence": 1.0, "via": "degree_rule",
+                    "note": "he is still in his first degree (Texas A&M, May 2028) and has completed no college program: No"}, None
         if options and POSTING_ID_QUESTION.search(question or ""):
             text = self.ctx.posting_text or ""
             try:

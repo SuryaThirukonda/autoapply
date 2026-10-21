@@ -391,14 +391,29 @@ class WorkdaySections:
         if not sites:
             return
         info = await self.scan()
-        site_heading = re.compile(r"^(websites?|web ?address|social|links)", re.I)
+        # Verizon heads it "Relevant Websites" (2026-10-20: never found, so the model added and deleted URLs by hand until
+        # Workday called his GitHub URL a duplicate)
+        site_heading = re.compile(r"^(relevant |personal |portfolio |professional )?(websites?|web ?address(es)?|links)\b|^social", re.I)
         if not any(site_heading.search(s["heading"]) for s in info["sections"]) and not any(e["kind"] in SITE_KINDS for e in info["entries"]):
             return
         existing = [e for e in info["entries"] if e["kind"] in SITE_KINDS]
         have = {answers.norm(_field(e, "url", "website", "address")["value"]) for e in existing if _field(e, "url", "website", "address")}
+        # a URL the page already holds in another box (his LinkedIn under Social Network URLs) is not added again: Workday
+        # refuses duplicate website URLs and the page cannot be saved (Verizon, 2026-10-20)
+        site_refs = {f["ref"] for e in existing for f in e["fields"].values()}
+        try:
+            others = await self.ex.eval("() => JSON.stringify(Array.from(document.querySelectorAll('input')).map(i => "
+                                        "[i.getAttribute('data-goat-ref') || '', i.value || '']))")
+            others = __import__("json").loads(others) if isinstance(others, str) else (others or [])
+        except Exception:
+            others = []
+        elsewhere = {answers.norm(v) for r, v in others if v and r not in site_refs}
         seen = {f'{e["kind"]}-{e["idx"]}' for e in info["entries"]}
         for i, url in enumerate(sites, 1):
             if answers.norm(url) in have or any(h and (h in answers.norm(url) or answers.norm(url) in h) for h in have):
+                continue
+            if answers.norm(url) in elsewhere:
+                self.report.skipped.append(f"website {url}: already on the page in another field")
                 continue
             # an empty URL box left by a bare Add is reused before another Add
             target = None

@@ -1589,3 +1589,14 @@ async def test_a_job_id_attention_check_is_read_from_the_posting(store):
     d, ctx = _dispatcher(job, posting_text="Job ID: 9849 Date Posted: October 20, 2026")
     out, _ = await d.t_lookup_answer(q, opts)
     assert out["answer"] == "9849" and out["via"] == "posting_rule" and out["key"].startswith("q.posting_id.job")
+
+
+
+@pytest.mark.asyncio
+async def test_a_completed_college_program_question_is_no(store):
+    """Electronic Arts (2026-10-20): 'Have you completed a college program in the last 18 months?' got Yes from enrollment."""
+    d, ctx = _dispatcher(_job("Electronic Arts", "EA1"))
+    out, _ = await d.t_lookup_answer("Have you completed a college program in the last 18 months?", ["Yes", "No"])
+    assert out["answer"] == "No" and out["key"] == "education.completed_college_program"
+    out, _ = await d.t_lookup_answer("When will you complete your degree program?", [])
+    assert out.get("key") != "education.completed_college_program"

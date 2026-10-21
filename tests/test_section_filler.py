@@ -382,3 +382,23 @@ def test_the_review_page_names_an_empty_professional_experience_section():
     assert ws.WORK_HEADING.search("Professional Experience") and ws.WORK_HEADING.search("Work Experience 3")
     assert ws.WORK_HEADING.search("Employment History") and not ws.WORK_HEADING.search("My Experience")
     assert ws.is_experience_page("", ["Professional Experience"])
+
+
+
+@pytest.mark.asyncio
+async def test_relevant_websites_are_found_and_a_url_already_on_the_page_is_not_added_again(stored):
+    """Verizon (2026-10-20): 'Relevant Websites' was never found, and his LinkedIn (already under Social Network URLs) was
+    added as a website too, which Workday refuses as a duplicate."""
+    html = (FIX / "workday" / "sections.html").read_text(encoding="utf-8").replace("<h3>Websites</h3>", "<h3>Relevant Websites</h3>")
+    html = html.replace("</body>", '<h3>Social Network URLs</h3><label for="socialNetworkAccounts--linkedInAccount">LinkedIn</label>'
+                                    '<input id="socialNetworkAccounts--linkedInAccount" type="text" value="https://www.linkedin.com/in/surya-thirukonda"></body>')
+    ex = await _open_html(html)
+    try:
+        f = _filler("workday", ex)
+        await snapshot.take(ex)
+        rep = await f.run()
+        assert [a for a in rep.added if a.startswith("http")] == ["https://github.com/SuryaThirukonda"], rep.summary()
+        assert any("linkedin" in x and "another field" in x for x in rep.skipped), rep.summary()
+        assert not [x for x in rep.failed if "website" in x], rep.summary()
+    finally:
+        await ex.close(close_browser=True)
