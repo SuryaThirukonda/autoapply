@@ -2171,3 +2171,14 @@ def test_a_value_the_page_tells_the_applicant_to_enter_is_sourced_by_the_form():
     assert not dictated_by_form("Yes", 'please enter "Not applicable" in this box')
     assert not dictated_by_form("Not", 'please enter "Not applicable" in this box')
     assert not dictated_by_form("Texas A&M University", "Enter your school name")
+
+
+
+def test_a_select_all_consent_box_is_never_ticked_by_the_consent_pass():
+    """LLNL (SmartRecruiters, 2026-10-21): 'Select all - by selecting all, you acknowledge the checkboxes below' ticked the
+    talent-community box too."""
+    from goat.adapters import SELECT_ALL_BOX
+    assert SELECT_ALL_BOX.match("Select all - by selecting all, you acknowledge the checkboxes below")
+    assert SELECT_ALL_BOX.match("Check all that apply")
+    assert not SELECT_ALL_BOX.match("You declare that you have read and understand the privacy notice of LLNL. *")
+    assert not SELECT_ALL_BOX.match("I agree to the terms")

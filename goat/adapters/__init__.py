@@ -447,6 +447,9 @@ class Adapter:
         return res
 
 
+SELECT_ALL_BOX = re.compile(r"^\s*(select|check|tick|accept|agree to)\s+all\b", re.I)
+
+
 async def _consents_impl(self, ex, snap: Snapshot, job: dict, page_no: int, res: PrefillResult) -> None:
     """Tick required consents/acknowledgements/attestations, type the e-signature and today's date.
     Each one is recorded with the standing key that authorizes it; anything unclear is left to the model."""
@@ -462,6 +465,11 @@ async def _consents_impl(self, ex, snap: Snapshot, job: dict, page_no: int, res:
     ticks = []
     for item in snap.items:
         if item.get("type") != "checkbox" or item.get("checked") or item.get("disabled"):
+            continue
+        # A 'Select all' box ticks every box under it, the optional ones too: LLNL's took 'join future career communities'
+        # (his never-join rule) along with the privacy notices, and unticking it cleared the required ones (2026-10-21).
+        # Each required box is ticked on its own instead.
+        if SELECT_ALL_BOX.match(item.get("label") or ""):
             continue
         label = " ".join([item.get("label") or "", item.get("group") or ""]).strip()
         key = consent_key(label)
