@@ -159,3 +159,11 @@ async def test_an_unoffered_certification_block_is_deleted_and_not_added_again(t
     finally:
         await ex.close(close_browser=True)
 
+
+
+
+def test_workday_hints_cover_education_on_a_return_visit():
+    """GlobalFoundries (2026-10-20): a field of study under the high school, then the Texas A&M entry lost on a return visit."""
+    from goat.adapters import for_portal
+    hints = for_portal("workday").hints
+    assert "never gets a Field of Study" in hints and "delete every Education entry and add each of them again" in hints
