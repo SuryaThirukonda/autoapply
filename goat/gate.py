@@ -187,7 +187,9 @@ def _stored_answer_matching(item: dict, value: str, company: str, portal: str) -
     return None
 
 
-ACCOUNT_PAGE = re.compile(r"\b(password help|forgot (your )?password|reset (your )?password|change (your )?password|"
+# Eightfold's "Please review before continuing" consent step before an account exists (Qualcomm, 2026-10-21): its Submit
+# creates the account; the application comes after it.
+ACCOUNT_PAGE = re.compile(r"\b(please review before continuing|password help|forgot (your )?password|reset (your )?password|change (your )?password|"
                           r"create (an |your )?account|candidate (sign[- ]?in|login)|career opportunities: sign in|"
                           r"(^|\| )(sign[- ]?in|log[- ]?in|register)( \||$))", re.I)
 

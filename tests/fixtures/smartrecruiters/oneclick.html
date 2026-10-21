@@ -14,7 +14,9 @@
 <body>
 <h1>Software Engineering Intern</h1>
 <oc-apply-with-resume><p>Choose an option to autocomplete your application.</p><spl-dropzone id="dz-top"></spl-dropzone></oc-apply-with-resume>
-<oc-personal-information><label for="fn">First name*</label> <input id="fn" type="text" required></oc-personal-information>
+<oc-personal-information><label for="fn">First name*</label> <input id="fn" type="text" required>
+  <oc-location-autocomplete-wrapper><oc-location-autocomplete><spl-autocomplete data-test="location-autocomplete" label="City" cities=""></spl-autocomplete></oc-location-autocomplete></oc-location-autocomplete-wrapper>
+</oc-personal-information>
 <oc-experience>
   <h3>Experience</h3>
   <oc-button data-test="add-experience"><spl-button aria-label="Add experience entry">Add</spl-button></oc-button>
@@ -63,7 +65,9 @@ customElements.define('spl-autocomplete', class extends HTMLElement {
       list.innerHTML = '';
       const t = inp.value.trim();
       if (!t) return;
-      for (const s of [t, t + ' Holdings', 'The ' + t]) {
+      // a city box suggests places, not the typed text (SmartRecruiters' location autocomplete)
+      const sugg = this.hasAttribute('cities') ? [t + ', MI, US', t + ', TX, US'] : [t, t + ' Holdings', 'The ' + t];
+      for (const s of sugg) {
         const o = document.createElement('spl-select-option');
         o.textContent = s;
         o.addEventListener('mousedown', (e) => { e.preventDefault(); this.value = s; inp.value = s; list.innerHTML = ''; });
@@ -90,11 +94,12 @@ customElements.define('spl-date-field', class extends HTMLElement {
 customElements.define('spl-checkbox', class extends HTMLElement {
   connectedCallback() {
     if (this.shadowRoot) return;
-    this.checked = false;
+    // like SmartRecruiters' own: the state is the host's `value`, there is no `checked` property
+    this.value = false;
     const r = this.attachShadow({ mode: 'open' });
     r.innerHTML = '<input type="checkbox"><label id="-label"><slot></slot></label>';
     const cb = r.querySelector('input');
-    cb.addEventListener('change', () => { this.checked = cb.checked; });
+    cb.addEventListener('change', () => { this.value = cb.checked; });
   }
 });
 customElements.define('spl-textarea', class extends HTMLElement {
@@ -161,13 +166,15 @@ function openEditor(kind) {
 function save(kind) {
   const form = document.querySelector('oc-' + kind + '-edit-form');
   const entry = form.parentElement;
-  const from = val(form, kind + '-date-from'), to = val(form, kind + '-date-to'), current = form.querySelector('spl-checkbox').checked;
+  const from = val(form, kind + '-date-from'), to = val(form, kind + '-date-to'), current = form.querySelector('spl-checkbox').value === true;
   const msgs = form.querySelector('.msgs');
   if (kind === 'experience') {
     const title = val(form, 'job-title-autocomplete'), company = val(form, 'company-autocomplete'), desc = val(form, 'experience-description');
     if (!title) { msgs.innerHTML = '<span class="error">Title is required</span>'; return; }
     if (!from) { msgs.innerHTML = '<span class="error">Please provide start date</span>'; return; }
     if (!to && !current) { msgs.innerHTML = '<span class="error">Please provide end date</span>'; return; }
+    // like SmartRecruiters (Wellmark, 2026-10-21): no semicolon in the description
+    if ((desc || '').includes(';')) { msgs.innerHTML = '<span>This field cannot contain following characters: ;</span>'; return; }
     entry.innerHTML = '<div data-test="experience-entry"><p data-test="experience-entry-title">' + esc(title) + ' <span data-test="experience-entry-date">'
       + year(from) + ' - ' + (current ? 'Present' : year(to)) + '</span></p><p data-test="experience-entry-company">' + esc(company) + '</p>'
       + '<p data-test="experience-entry-description">' + esc(desc) + '</p>'

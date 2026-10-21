@@ -257,3 +257,9 @@ def test_judge_knows_the_how_did_you_hear_answer_is_ordered():
     """Verizon (2026-10-20): 'Job Board' (his second preference; no LinkedIn offered) was failed as a wrong value."""
     from goat.judge import JUDGE_INSTRUCTIONS
     assert "ordered preference (LinkedIn, then Job Board" in JUDGE_INSTRUCTIONS
+
+
+def test_the_judge_knows_a_bundled_talent_community_choice_follows_his_rule():
+    """Qualcomm (2026-10-21): the judge failed 'ONLY THE ROLE I AM APPLYING FOR' against keep_profile_future_roles."""
+    from goat.judge import JUDGE_INSTRUCTIONS
+    assert "never to join a talent community" in JUDGE_INSTRUCTIONS and "ONLY THE ROLE I AM APPLYING FOR" in JUDGE_INSTRUCTIONS

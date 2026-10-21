@@ -78,3 +78,19 @@ async def test_an_upload_button_that_only_opens_the_file_chooser_still_takes_the
         assert await ex.page.evaluate("() => document.getElementById('got').textContent") == f.name
     finally:
         await ex.close()
+
+
+@pytest.mark.asyncio
+async def test_eightfolds_consent_step_submit_is_an_account_action():
+    """Qualcomm (2026-10-21): 'Please review before continuing' has a Submit that creates the account; the run parked on it."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content("<html><body><h2>Please review before continuing</h2><input value='a'><input value='b'><input value='c'>"
+                                  "<button type='submit' id='s' style='width:120px;height:40px'>Submit</button></body></html>")
+        box = await ex.page.evaluate("() => { const r = document.getElementById('s').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }")
+        el = await ex.element_at(int(box[0]), int(box[1]))
+        assert el.submit is False
+    finally:
+        await ex.close()

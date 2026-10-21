@@ -56,9 +56,9 @@ JS_OPTIONS = r"""
   const f = document.querySelector(form);
   const h = f && f.querySelector('[data-test="' + tid + '"]');
   if (!h || !h.shadowRoot) return '[]';
-  return JSON.stringify(Array.from(h.shadowRoot.querySelectorAll('spl-select-option')).map(o => {
+  return JSON.stringify(Array.from(h.shadowRoot.querySelectorAll('spl-select-option')).map((o, idx) => {
     const r = o.getBoundingClientRect();
-    return { txt: (o.innerText || o.textContent || '').replace(/\s+/g, ' ').trim(), x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), w: r.width, h: r.height };
+    return { idx, txt: (o.innerText || o.textContent || '').replace(/\s+/g, ' ').trim(), x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), w: r.width, h: r.height };
   }).filter(o => o.w > 0 && o.h > 0 && o.txt));
 }
 """
@@ -78,16 +78,23 @@ JS_EDITOR = r"""
     const h = w.matches('spl-date-field') ? w : w.querySelector('spl-date-field'); const i = deepInput(h);
     out.fields[dt] = { text: i ? i.value : '', set: !!(h && h.value) };
   }
-  const cb = f.querySelector('spl-checkbox'); out.current = !!(cb && cb.checked);
+  const cb = f.querySelector('spl-checkbox'); const cbIn = cb && cb.shadowRoot ? cb.shadowRoot.querySelector('input[type="checkbox"]') : null;
+  out.current = !!(cb && (cb.checked === true || cb.value === true || cb.value === 'true' || (cbIn && cbIn.checked)));
   const ta = f.querySelector('spl-textarea'); const ti = deepInput(ta); out.description = ti ? ti.value : val(ta); out.maxlength = ti && ti.maxLength > 0 ? ti.maxLength : 0;
-  // the editor's messages ('Please provide start date', 'This field is required')
-  const msgs = []; const walk = (r) => { for (const c of r.querySelectorAll('*')) { const cls = (c.className && c.className.baseVal === undefined ? String(c.className) : '') + ' ' + (c.getAttribute('role') || '');
-      if (/error|invalid|alert/i.test(cls) && c.children.length === 0) { const t = (c.innerText || c.textContent || '').replace(/\s+/g, ' ').trim(); if (t && t.length < 160 && !msgs.includes(t)) msgs.push(t); }
+  // the editor's messages ('Please provide start date', 'This field cannot contain following characters: ;'), also when
+  // they sit in a shadow root under no error class
+  const msgs = []; const MSG = /cannot|required|invalid|must|please|exceed|characters|not allowed/i;
+  const walk = (r) => { for (const c of r.querySelectorAll('*')) { const cls = (c.className && c.className.baseVal === undefined ? String(c.className) : '') + ' ' + (c.getAttribute('role') || '');
+      if (c.children.length === 0) { const t = (c.textContent || '').replace(/\s+/g, ' ').trim();
+        if (t && t.length < 160 && !/^fields marked with/i.test(t) && (/error|invalid|alert/i.test(cls) || MSG.test(t)) && !msgs.includes(t)) msgs.push(t); }
       if (c.shadowRoot) walk(c.shadowRoot); } };
   walk(f); out.errors = msgs.slice(0, 6);
   return JSON.stringify(out);
 }
 """
+
+JS_HOST_VALUE = r"""(sel) => { const h = document.querySelector(sel); if (!h) return ''; let v = h.value;
+  if (v && typeof v === 'object') v = v.displayString || v.text || v.name || ''; return v == null ? '' : String(v); }"""
 
 JS_DIALOG_TEXT = r"""() => { const d = document.querySelector('spl-dialog[open]'); return d ? (d.innerText || d.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200) : ''; }"""
 
@@ -160,7 +167,7 @@ class SmartRecruitersSections:
         if hit is None:
             await self.page.keyboard.press("Escape")
             return ""
-        await self.page.mouse.click(hit["x"], hit["y"])
+        await self.page.locator(f'{FORM[kind]} [data-test="{tid}"] spl-select-option').nth(int(hit["idx"])).click(timeout=WAIT_MS)
         for _ in range(12):
             await asyncio.sleep(0.15)
             got = (await self.editor(kind)).get("fields", {}).get(tid, "")
@@ -282,6 +289,9 @@ class SmartRecruitersSections:
             await self._cancel("experience")
             return False, f"To was not taken ({ent['end']!r})"
         desc = bullets_to_lines(ent["description"]) if ent["description"] else ""
+        # SmartRecruiters refuses a semicolon in the description ("This field cannot contain following characters: ;"):
+        # DeKalb's and Southwest's entries were never saved on Wellmark's form (2026-10-21)
+        desc = re.sub(r"\s*;\s*", ", ", desc)
         if desc:
             cap = (await self.editor("experience")).get("maxlength") or 0
             if cap and len(desc) > cap:
@@ -418,6 +428,47 @@ class SmartRecruitersSections:
             else:
                 rep.failed.append(f"education: {school}: {why}")
 
+    # ------------------------------------------------------------------ personal information
+    async def city(self) -> None:
+        """The City box at the top keeps only a picked city (ServiceNow, 2026-10-21: the model could not set it and parked):
+        his city's suggestion in his state ('Sugar Land, TX, US')."""
+        form, tid = "oc-personal-information", "location-autocomplete"
+        host = f'{form} [data-test="{tid}"]'
+        if not await self._has(host + " input"):
+            return
+        if await self.page.evaluate(JS_HOST_VALUE, host):
+            self.rep.present.append("city")
+            return
+        city, state = self._answer("identity.city"), self._answer("identity.state")
+        if not city:
+            return
+        from ..agent.tools import _US_STATES
+        code = next((c for c, n in _US_STATES.items() if answers.norm(n) == answers.norm(state)), "")
+        await self._type_into(host + " input", city)
+        opts = []
+        for _ in range(20):
+            await asyncio.sleep(0.2)
+            opts = json.loads(await self.page.evaluate(JS_OPTIONS, [form, tid]) or "[]")
+            if opts:
+                break
+        want = answers.norm(city)
+        in_state = [o for o in opts if answers.norm(o["txt"]).startswith(want) and (
+            (code and re.search(rf"\b{code}\b", o["txt"])) or (state and state.lower() in o["txt"].lower()))]
+        hit = (in_state or [o for o in opts if answers.norm(o["txt"]).startswith(want)] or [None])[0]
+        if hit is None:
+            await self.page.keyboard.press("Escape")
+            self.rep.failed.append(f"city: no suggestion for {city!r}")
+            return
+        await self.page.locator(f"{host} spl-select-option").nth(int(hit["idx"])).click(timeout=WAIT_MS)
+        for _ in range(10):
+            await asyncio.sleep(0.2)
+            got = await self.page.evaluate(JS_HOST_VALUE, host)
+            if got:
+                records.record_decision(self.job["id"], self.page_no, "City", got, "standing:identity.city", "")
+                self.rep.added.append(f"city: {got}")
+                return
+        self.rep.failed.append("city: the pick did not take")
+
     # ------------------------------------------------------------------
     async def run(self) -> SectionReport:
         if not await self.applies():
@@ -430,7 +481,7 @@ class SmartRecruitersSections:
                     await self._cancel(kind)
             except Exception:
                 pass
-        for kind, step in (("experience", self.experience), ("education", self.education)):
+        for kind, step in (("city", self.city), ("experience", self.experience), ("education", self.education)):
             try:
                 await step()
             except Exception as e:  # noqa: BLE001 - one section's trouble never stops the other

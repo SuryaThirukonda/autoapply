@@ -18,7 +18,7 @@ ENTRIES = [
     {"n": 1, "company": "Revio", "title": "Founding Software Engineer (Part-time)", "location": "Remote", "start": "02/01/2026", "end": "",
      "current": True, "description": "• Launched a beta. • Kept documents intact."},
     {"n": 2, "company": "DeKalb Capital Management", "title": "Software Engineering Intern", "location": "Remote", "start": "06/01/2026",
-     "end": "08/20/2026", "current": False, "description": "• Built analytics. • Synced positions."},
+     "end": "08/20/2026", "current": False, "description": "• Built analytics; synced positions. • Synced positions."},
     {"n": 3, "company": "Mai Shan Yun (WaiterDock)", "title": "Contract Software Engineer", "location": "College Station, TX", "start": "02/01/2026",
      "end": "06/30/2026", "current": False, "description": "• Won the challenge."},
     {"n": 4, "company": "Rathinam Group, Texas A&M", "title": "Undergraduate Research Assistant", "location": "College Station, TX",
@@ -28,7 +28,7 @@ ENTRIES = [
 ]
 EDU = {"education.school": "Texas A&M University", "education.school_variants": "Texas A & M University; Texas A&M University - College Station",
        "education.high_school": "Clements High School", "education.major": "Computer Science", "education.degree": "Bachelor of Science",
-       "education.start": "August 2025", "education.graduation": "May 2028"}
+       "education.start": "August 2025", "education.graduation": "May 2028", "identity.city": "Sugar Land", "identity.state": "Texas"}
 
 
 @pytest.fixture()
@@ -76,7 +76,7 @@ async def test_the_filler_writes_every_stored_entry_and_removes_parsed_cards(sto
             ("Texas A&M University", "2025 - 2028", "Computer Science", "Bachelor of Science")]
         # descriptions go in with real line breaks, one bullet per line
         descs = await ex.page.evaluate("() => window.__descs")
-        assert ("• Built analytics." + NL + "• Synced positions.") in descs
+        assert ("• Built analytics, synced positions." + NL + "• Synced positions.") in descs      # no semicolon (Wellmark)
         # every added value is recorded with its stored key
         srcs = {r["source"] for r in records.decisions(1)}
         assert {"standing:experience.work.2.title", "standing:experience.work.2.company", "standing:experience.work.2.start",
@@ -85,7 +85,7 @@ async def test_the_filler_writes_every_stored_entry_and_removes_parsed_cards(sto
         # a second pass changes nothing
         again = await sr.SmartRecruitersSections(ex, {"id": 1, "company": "Acme"}, 1).run()
         assert again.added == [] and again.updated == [] and again.failed == []
-        assert len(again.present) == 6
+        assert len([x for x in again.present if x != "city"]) == 6
     finally:
         await ex.close()
 
@@ -199,5 +199,19 @@ async def test_a_file_shown_inside_a_shadow_root_counts_as_attached():
     try:
         assert await fill._shows_file(ex, Path("Surya_Thirukonda_Resume_SWE.pdf"))
         assert not await fill._shows_file(ex, Path("Other_File.pdf"))
+    finally:
+        await ex.close()
+
+
+
+@pytest.mark.asyncio
+async def test_the_city_box_takes_his_city_in_his_state(stored):
+    """ServiceNow (2026-10-21): the personal-information City keeps only a picked suggestion; the model could not set it."""
+    ex = await _open()
+    try:
+        rep = await sr.SmartRecruitersSections(ex, {"id": 1, "company": "Acme"}, 1).run()
+        assert "city: Sugar Land, TX, US" in rep.added, rep.added
+        again = await sr.SmartRecruitersSections(ex, {"id": 1, "company": "Acme"}, 1).run()
+        assert "city" in again.present
     finally:
         await ex.close()

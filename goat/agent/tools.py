@@ -2937,7 +2937,9 @@ class ToolDispatcher:
     def grad_window_excludes(cls, reason: str) -> bool:
         """True when the park reason names a graduation window that does not contain May 2028 (his graduation):
         "Dec 2028 - Spring 2029" excludes him, "December 2027 - June 2028" and "2028 graduates" do not."""
-        if not re.search(r"graduat|class of|degree (by|in|before)|completion date", reason, re.I):
+        # 'undergraduate' is no graduation date (CapTech, 2026-10-21: "requires current undergraduate Juniors for Summer
+        # 2027" read as a graduation window ending before May 2028, and the satisfied-bounce was skipped)
+        if not re.search(r"(?<!under)graduat|class of|degree (by|in|before)|completion date", reason, re.I):
             return False
         # the model often appends his own date ("...; Surya graduates May 2028"): only the posting's dates count
         posting = " ".join(part for part in re.split(r"[;.]", reason) if not re.search(r"\bsurya\b|\bhe\b|\bhis\b", part, re.I))
@@ -3232,7 +3234,7 @@ class ToolDispatcher:
         # season terms in a GRADUATION window ("expected graduation in Fall 2027, Spring/Summer 2028 or 2029") are no
         # co-op term: grad_window_excludes judges those (Arconic was held on a window that includes May 2028, 2026-10-19)
         non_grad = " ".join(part for part in re.split(r"[;.]", reason)
-                            if not re.search(r"graduat|class of|degree (by|in|before)|completion date", part, re.I))
+                            if not re.search(r"(?<!under)graduat|class of|degree (by|in|before)|completion date", part, re.I))
         # An eligibility hold names the posting's requirement he does not meet. Motorola (2026-10-20) parked
         # "eligibility: none" right after its real concern was answered as satisfied.
         if low.startswith("eligibility") and len(re.sub(r"[^a-z]", "", low[len("eligibility"):])) < 12 \

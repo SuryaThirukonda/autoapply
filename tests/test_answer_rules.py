@@ -1880,3 +1880,11 @@ async def test_na_goes_into_a_box_that_asks_for_it(store, monkeypatch):
     assert out["results"][0]["status"] == "set", out
     out, _ = await d.t_fill_batch([{"ref": "e40", "answer_key": None, "value": "N/A", "source": "generated", "label": "anything else"}])
     assert out["results"][0]["status"] == "failed", out
+
+
+def test_undergraduate_is_not_a_graduation_window():
+    """CapTech (2026-10-21): 'current undergraduate Juniors for Summer 2027' skipped the satisfied-bounce."""
+    from goat.agent.tools import ToolDispatcher as T
+    assert not T.grad_window_excludes("eligibility: posting requires current undergraduate Juniors for Summer 2027; Surya is a "
+                                      "sophomore by his current year in school and will be a rising senior then.")
+    assert T.grad_window_excludes("eligibility: posting requires graduation between Dec 2028 and Spring 2029")
