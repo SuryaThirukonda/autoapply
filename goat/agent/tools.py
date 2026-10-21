@@ -745,6 +745,40 @@ COMPLETED_PROGRAM_QUESTION = re.compile(
     r"(.{0,60}\b(last|past|within|in the)\s+(\d+|twelve|eighteen|six|two)\s+(months?|years?))?", re.I)
 
 
+# "What state / city do you anticipate working from during your internship?" (Electronic Arts, 2026-10-21), after "Will you
+# work from one of the designated locations listed in the job posting? Yes": the posting's own location, not his home
+# (Sugar Land was typed, the judge failed the draft; the first EA application went in that way). He relocates.
+WORK_FROM_QUESTION = re.compile(r"\b(anticipate|plan|expect|intend|going)\b[^?]{0,40}\bwork(ing)?\s+(from|in|at)\b", re.I)
+_US_STATES = {"AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California", "CO": "Colorado",
+              "CT": "Connecticut", "DE": "Delaware", "DC": "District of Columbia", "FL": "Florida", "GA": "Georgia", "HI": "Hawaii",
+              "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana",
+              "ME": "Maine", "MD": "Maryland", "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+              "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire", "NJ": "New Jersey",
+              "NM": "New Mexico", "NY": "New York", "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+              "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota",
+              "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont", "VA": "Virginia", "WA": "Washington",
+              "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming"}
+_POSTED_LOCATION = re.compile(r"\bLocations?\s*:?\s*([A-Z][A-Za-z .'-]{1,40}?),\s*([A-Z][A-Za-z ]{1,30}?)"
+                              r"(?:,\s*(?:United States(?: of America)?|USA|US)\b|\s*[\n|]|\s*$)")
+
+
+def posting_city_state(job: dict, posting_text: str) -> tuple[str, str] | None:
+    """The posting's first U.S. location as (city, full state name), from the listing or the posting text."""
+    from ..adapters import posting_locations
+    for loc in posting_locations(job):
+        parts = [x.strip() for x in loc.split(",")]
+        if len(parts) >= 2:
+            st = _US_STATES.get(parts[1].upper(), parts[1] if parts[1] in _US_STATES.values() else None)
+            if st:
+                return parts[0], st
+    m = _POSTED_LOCATION.search(posting_text or "")
+    if m:
+        st = _US_STATES.get(m.group(2).strip().upper(), m.group(2).strip())
+        if st in _US_STATES.values():
+            return m.group(1).strip(), st
+    return None
+
+
 def pay_meets_desired(snippet: str | None, hourly: float = 20.0, annual: float = 41600.0) -> bool | None:
     """Whether the top of a posted pay range reaches his desired pay; None when the snippet names no figure."""
     vals = []
@@ -2086,6 +2120,18 @@ class ToolDispatcher:
             db.event(self.ctx.job_id, "answer:completed_program", {"question": question[:160]})
             return {"key": "education.completed_college_program", "answer": neg, "confidence": 1.0, "via": "degree_rule",
                     "note": "he is still in his first degree (Texas A&M, May 2028) and has completed no college program: No"}, None
+        if WORK_FROM_QUESTION.search(question or "") and re.search(r"\b(city|state|province|country)\b", question or "", re.I):
+            loc = posting_city_state(self.ctx.job, self.ctx.posting_text or "")
+            if loc:
+                part = "country" if re.search(r"\bcountry\b", question, re.I) else \
+                    "state" if re.search(r"\b(state|province)\b", question, re.I) else "city"
+                val = {"country": "United States of America", "state": loc[1], "city": loc[0]}[part]
+                k_wf = f"q.work_from.job{self.ctx.job_id}.{part}"   # this posting's location: never shared with another
+                answers.save_answer(k_wf, val, answer_type="choice" if options else "text", source="derived",
+                                    note=f"the posting's location {loc[0]}, {loc[1]}: he relocates for the internship")
+                db.event(self.ctx.job_id, "answer:work_from", {"question": question[:160], "answer": val})
+                return {"key": k_wf, "answer": val, "confidence": 1.0, "via": "posting_rule",
+                        "note": f"he works the internship at the posting's location, {loc[0]}, {loc[1]} (he relocates): {val}"}, None
         if options and POSTING_ID_QUESTION.search(question or ""):
             text = self.ctx.posting_text or ""
             try:

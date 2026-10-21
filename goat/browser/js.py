@@ -700,7 +700,13 @@ JS_CHALLENGE = r"""
   // The invisible reCAPTCHA badge is NOT a challenge.
   const badgeOnly = frames.length > 0 && frames.every(f => !f.visible || f.kind === 'recaptcha_badge');
   const body = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ');
-  const textChallenge = /(i'?m not a robot|verify (that )?you are (a )?human|complete the (security )?check|select all images|prove you'?re not a robot)/i.test(body);
+  // TikTok's ByteDance puzzle (2026-10-21) is drawn in a page container, not an iframe: a visible captcha box of real size,
+  // or its own instructions, is a challenge too
+  const domCaptcha = Array.from(document.querySelectorAll('[id*="captcha" i], [class*="captcha" i]')).some(e => {
+    if (e.closest('.grecaptcha-badge')) return false;
+    const r = e.getBoundingClientRect(); return vis(e) && r.width >= 150 && r.height >= 100; });
+  if (domCaptcha) frames.push({ kind: 'captcha', visible: true, x: 0, y: 0, w: 0, h: 0, dom: true });
+  const textChallenge = /(i'?m not a robot|verify (that )?you are (a )?human|complete the (security )?check|select all images|prove you'?re not a robot|drag the (slider|puzzle)|slide to (verify|complete)|select (2|two) objects that are the same shape|rotate the (image|picture)|complete the puzzle)/i.test(body);
   const codePage = /(verification|security|confirmation|one[- ]time) code/i.test(body) && /(sent|emailed|e-mailed) (to|you)/i.test(body);
   const codeInputs = Array.from(document.querySelectorAll('input')).filter(i => vis(i) && (/security-input|otp|verification|code/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || '')) || i.maxLength === 1 && (i.inputMode === 'numeric' || i.type === 'tel' || i.type === 'text')));
   const visibleChallenge = frames.some(f => f.visible && f.kind !== 'recaptcha_badge' && f.kind !== 'recaptcha_checkbox') || frames.some(f => f.visible && f.kind === 'recaptcha_checkbox' && f.w >= 290) || (textChallenge && !codePage);

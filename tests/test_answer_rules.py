@@ -1667,3 +1667,18 @@ async def test_a_hand_picked_race_is_refused_when_the_list_offers_decline(store,
     monkeypatch.setattr(toolsmod.fill, "peek_options", peek2)
     out = await d._keep_computer_pick({"ref": "e15", "answer_key": "self_id.race_ethnicity", "label": "Ethnicity"}, None)
     assert out["status"] == "kept"
+
+
+
+@pytest.mark.asyncio
+async def test_where_he_will_work_from_is_the_postings_location(store):
+    """Electronic Arts (2026-10-21): 'What state do you anticipate working from during your internship?' got Texas."""
+    from goat.agent import tools as toolsmod
+    text = "General Information\nLocations\n: Orlando, Florida, United States of America\nRole ID 216262"
+    assert toolsmod.posting_city_state({"locations": "[]"}, text) == ("Orlando", "Florida")
+    assert toolsmod.posting_city_state({"locations": '["Bloomfield, CT"]'}, "") == ("Bloomfield", "Connecticut")
+    d, ctx = _dispatcher(_job("Electronic Arts", "EA3"), posting_text=text)
+    out, _ = await d.t_lookup_answer("What state do you anticipate working from during your internship? *", ["Texas", "Florida"])
+    assert out["answer"] == "Florida" and out["via"] == "posting_rule"
+    out, _ = await d.t_lookup_answer("What city do you anticipate working from during your internship? *", [])
+    assert out["answer"] == "Orlando"
