@@ -303,8 +303,9 @@ def save_answer(key: str, answer: str | None, *, answer_type: str = "text", sour
         released = 0
         if approved and answer is not None:
             cur = con.execute(
+                # an answered job resumes before the posting-date order (worker.EXPLICIT_PRIORITY = 1000)
                 "UPDATE jobs SET status=?, blocked_on_question_key=NULL, hold_reason=NULL, "
-                "priority=priority+10, updated_at=? WHERE status=? AND blocked_on_question_key=?",
+                "priority=MAX(COALESCE(priority, 0), 1000)+10, updated_at=? WHERE status=? AND blocked_on_question_key=?",
                 (states.QUEUED, db.now(), states.HOLD, key))
             released = cur.rowcount
             # Also wake jobs that are mid-wait on this key (awaiting_answer): they poll the store.

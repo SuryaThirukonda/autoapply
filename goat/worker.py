@@ -23,14 +23,46 @@ from .human.questions import BROKER
 log = logging.getLogger(__name__)
 
 
+# Surya (2026-10-21): "ensure that the queue sorts by post date for the internship, where recent is at the top ... and
+# the oldest is later in the queue. everything within 1-2 days posted should be applied immediately". His explicit
+# choices stay first: a release (+5000), a pin (10 000), his drag order on the website and `run-once --job` (1000 and up),
+# and a job he unblocked by answering its question. Every other queued job is re-ranked by posting date at each claim.
+EXPLICIT_PRIORITY = 1000      # = cloud.ORDER_BASE
+FRESH_DAYS = 2
+
+
+def rank_queue(con, now: int | None = None) -> int:
+    """Give the queued jobs below EXPLICIT_PRIORITY priorities 999, 998, ... newest posting first (date_posted, else the
+    day goat first saw the listing); posts from the last FRESH_DAYS days lead. Every view sorted by priority (the
+    website, `goat list`) then shows the claim order. Returns how many priorities changed."""
+    now = int(now or db.now())
+    rows = con.execute(
+        "SELECT j.id, j.priority, COALESCE(l.date_posted, l.first_seen, 0) AS posted, COALESCE(j.created_at, 0) AS created "
+        "FROM jobs j JOIN listings l ON l.id=j.listing_id "
+        "WHERE j.status=? AND COALESCE(j.priority, 0) < ? AND COALESCE(j.cleared_live, 0)=0",
+        (states.QUEUED, EXPLICIT_PRIORITY)).fetchall()
+    cutoff = now - FRESH_DAYS * 86400
+    order = sorted(rows, key=lambda r: (int(r["posted"] or 0) >= cutoff, int(r["posted"] or 0), int(r["priority"] or 0),
+                                        int(r["created"] or 0), int(r["id"])), reverse=True)
+    changed = 0
+    for rank, r in enumerate(order):
+        p = max(1, EXPLICIT_PRIORITY - 1 - rank)
+        if p != int(r["priority"] or 0):
+            con.execute("UPDATE jobs SET priority=? WHERE id=?", (p, r["id"]))
+            changed += 1
+    return changed
+
+
 def claim_next() -> dict | None:
-    """Released holds first (priority bump), then newest listings. One claim at a time."""
+    """Surya's explicit choices first (releases, pins, his drag order, answered questions), then the newest postings
+    (rank_queue). One claim at a time."""
     lanes = SETTINGS.lanes_enabled or ["no_account"]
     marks = ",".join("?" for _ in lanes)
     # portals the worker never claims (SKIP_ATS; iCIMS by default: an hCaptcha guards its account creation)
     skip = [a.lower() for a in (SETTINGS.skip_ats or [])] or ["-"]
     skip_marks = ",".join("?" for _ in skip)
     with db.tx() as con:
+        rank_queue(con)
         row = con.execute(
             f"SELECT j.*, l.company, l.title, l.url, l.ats, l.variant, l.locations FROM jobs j JOIN listings l ON l.id=j.listing_id "
             f"WHERE j.status=? AND j.attempts < ? AND j.lane IN ({marks}) AND LOWER(COALESCE(l.ats, '')) NOT IN ({skip_marks}) "

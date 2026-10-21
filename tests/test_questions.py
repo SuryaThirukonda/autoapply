@@ -166,7 +166,8 @@ async def test_deliver_releases_held_job(broker):
     assert job_status(other) == states.HOLD
     row = db.connect().execute("SELECT blocked_on_question_key, hold_reason, priority FROM jobs WHERE id=?",
                                (held,)).fetchone()
-    assert row["blocked_on_question_key"] is None and row["hold_reason"] is None and row["priority"] == 10
+    # an answered job resumes before the posting-date order (worker.EXPLICIT_PRIORITY, Surya 2026-10-21)
+    assert row["blocked_on_question_key"] is None and row["hold_reason"] is None and row["priority"] == 1010
 
 
 # --------------------------------------------------------------------------- (5)
