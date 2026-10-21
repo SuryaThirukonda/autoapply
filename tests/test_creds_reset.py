@@ -518,3 +518,23 @@ async def test_a_park_on_the_create_account_form_names_the_boxes(store):
     ctx.control_failures["creds:create_bounce"] = 1
     out, _ = await d.t_park("credentials_unknown: account creation requires password entry, which is not authorized")
     assert "credentials mode 'create'" in out["error"] and "email_ref 'e5'" in out["error"] and "confirm_password_ref 'e7'" in out["error"]
+
+
+class FormEx(SignInEx):
+    """A create-account form whose two password boxes hold the password after the helper ran."""
+
+    async def read_ref(self, ref):
+        return {"found": True, "value": "(set)" if ref in ("e4", "e6") else ""}
+
+
+@pytest.mark.asyncio
+async def test_create_says_which_password_boxes_hold_the_password(store):
+    """Corning (2026-10-21): 'the helper did not fill the retype-password field' while both boxes held it."""
+    job = _job()
+    d, ctx = _with_ex(job, FormEx(""))
+    ctx.last_snapshot = SimpleNamespace(items=[{"ref": "e4", "type": "password"}, {"ref": "e6", "type": "password"}],
+                                        find=lambda ref: {"tag": "input", "type": "password"})
+    ctx.creds = SimpleNamespace(fill_credentials=lambda *a: "filled_universal", fill_confirm_password=lambda *a: "filled_universal")
+    out, _ = await d.t_credentials("create", "e2", "e4", "e6")
+    assert out["status"] == "filled_universal" and out["password_box"] == "set" and out["confirm_box"] == "set"
+    assert "(set)" not in str(out)

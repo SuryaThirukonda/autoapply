@@ -333,3 +333,28 @@ async def test_a_pickers_search_box_is_never_typed_into(monkeypatch):
         assert await ex.page.evaluate("() => document.getElementById('v').value") == ""
     finally:
         await ex.close()
+
+
+
+CHIP_LIST = """<html><body><div data-automation-id="formField-source"><label for="src">How Did You Hear About Us?*</label>
+<div data-automation-id="multiSelectContainer">
+  <ul role="listbox" data-automation-id="selectedItemList" aria-label="items selected">
+    <li data-automation-id="selectedItem" role="option" aria-label="Job Posting, press delete to clear value.">Job Posting</li>
+  </ul>
+  <input id="src" type="text" placeholder="Search" aria-autocomplete="list">
+</div></div></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_workday_chip_list_reads_its_chips_as_its_value():
+    """Itron (2026-10-21): the read-back found the selected-items list empty although 'Job Posting' was picked."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(CHIP_LIST)
+        snap = await snapshot.take(ex)
+        chips = [i for i in snap.items if "(selected items" in (i.get("label") or "")]
+        assert chips and chips[0].get("value") == "Job Posting" and chips[0].get("selected_items") == 1, chips
+    finally:
+        await ex.close()

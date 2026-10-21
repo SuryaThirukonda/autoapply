@@ -269,6 +269,14 @@ JS_SNAPSHOT = r"""
         item.tag = 'option'; item.label = txt(el).slice(0, 120); item.selected = el.getAttribute('aria-selected') === 'true';
       } else {
         item.label = item.label || txt(el).slice(0, 100);
+        // Workday's selected-items list holds the prompt's picks as chips, and they are its value: Itron's read-back paired
+        // the How Did You Hear decision with this list, found it empty although 'Job Posting' was picked, and blocked the
+        // page (2026-10-21).
+        if (el.getAttribute('data-automation-id') === 'selectedItemList') {
+          const chips = Array.from(el.querySelectorAll('[data-automation-id="selectedItem"]')).map(x => txt(x)).filter(Boolean);
+          item.value = chips.join('; ').slice(0, 300);
+          if (chips.length) item.selected_items = chips.length;
+        }
       }
       items.push(item);
     }

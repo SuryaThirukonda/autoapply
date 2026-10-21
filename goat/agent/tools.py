@@ -2500,7 +2500,19 @@ class ToolDispatcher:
             self.ctx.creds_mode = mode
             if mode == "set_password":
                 self.ctx.reset_needed = False
-        return {"status": status, "email": email}, None
+        out = {"status": status, "email": email}
+        # Say what each password box holds now ('set' / 'empty', never the text): Corning's run (2026-10-21) parked
+        # "the helper did not fill the retype-password field" while both boxes held the password.
+        for name, ref in (("password_box", password_ref), ("confirm_box", confirm_password_ref)):
+            if not ref:
+                continue
+            try:
+                info = await ex.read_ref(ref)
+            except Exception:
+                info = {}
+            if info.get("found"):
+                out[name] = "set" if info.get("value") else "empty"
+        return out, None
 
     async def t_enter_email_code(self, code_refs: list[str]):
         if self.ctx.mail is None:
