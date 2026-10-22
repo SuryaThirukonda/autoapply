@@ -1108,3 +1108,20 @@ async def test_a_dialogs_send_button_is_clickable():
         assert el.submit is False, el
     finally:
         await ex.close()
+
+
+
+@pytest.mark.asyncio
+async def test_a_class_named_modals_send_button_is_clickable():
+    """Mathtech (ADP, 2026-10-22): ADP's code dialog is a div with a modal class, no role=dialog."""
+    html = ADP_SEND.replace('role="dialog" aria-modal="true"', 'class="vdl-modal-content"')
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(html)
+        box = await ex.page.locator("#send").bounding_box()
+        el = await ex.element_at(int(box["x"] + 10), int(box["y"] + 10))
+        assert el.submit is False, el
+    finally:
+        await ex.close()

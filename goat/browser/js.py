@@ -531,7 +531,7 @@ JS_ELEMENT_AT = r"""
       const submitName = names.some(n => SUBMIT.test(n) || (APPLY.test(n) && formFilled));
       if (!submitName && names.some(n => ACCOUNT.test(n))) break;
       // a dialog's own Send / Save / OK (ADP's 'send a verification code' dialog, Mathtech 2026-10-22) is no application submit
-      if (p.closest && p.closest('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"]')
+      if (p.closest && p.closest('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [class*="popup" i], [class*="popover" i]')
           && names.some(n => /^(send|save|ok|done|confirm|send code|send verification code)$/i.test(n))) break;
       if (accountPage) break;
       if (submitName || (type === 'submit' && formFilled)) { submit = true; why = 'submit control: ' + label; }
@@ -674,7 +674,7 @@ JS_TARGET_GUARD = r"""
       const submitName = names.some(n => SUBMIT.test(n) || (APPLY.test(n) && formFilled));
       if (accountPage && names.some(n => ACCOUNT.test(n))) break;
       // a dialog's own Send / Save / OK (ADP's 'send a verification code' dialog, Mathtech 2026-10-22) is no application submit
-      if (p.closest && p.closest('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"]')
+      if (p.closest && p.closest('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [class*="popup" i], [class*="popover" i]')
           && names.some(n => /^(send|save|ok|done|confirm|send code|send verification code)$/i.test(n))) break;
       if (!submitName && names.some(n => /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|back)$/i.test(n))) break;
       if (accountPage) break;
