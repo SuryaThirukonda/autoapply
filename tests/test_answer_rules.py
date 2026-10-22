@@ -2194,3 +2194,16 @@ def test_a_community_consent_is_his_never_join_rule():
                        "communities for future career opportunities") == "policy.may_join_talent_community"
     assert consent_key("Join our Talent Community") == "policy.may_join_talent_community"
     assert consent_key("Do you consent for your data to be further processed for other job opportunities?") == "consent.keep_profile_future_roles"
+
+
+
+def test_fill_batch_never_ticks_a_community_or_select_all_box():
+    """LLNL (2026-10-21) went in with the community box and 'Select all' ticked by fill_batch under consent keys."""
+    from goat.agent.tools import never_tick
+    comm = {"type": "checkbox", "label": "You declare that you have read and understand the privacy notice of LLNL and agree to be "
+                                         "part of communities for future career opportunities"}
+    assert "never to join" in never_tick(comm, "true")
+    assert never_tick(comm, "false") == ""
+    assert "each required box" in never_tick({"type": "checkbox", "label": "Select all - by selecting all, you acknowledge"}, "Yes")
+    assert never_tick({"type": "checkbox", "label": "I have read the job applications privacy notice"}, "true") == ""
+    assert never_tick({"type": "text", "label": "Join our talent community"}, "true") == ""

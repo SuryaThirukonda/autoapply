@@ -550,6 +550,24 @@ def dictated_by_form(value: str, text: str) -> bool:
     return bool(quoted.search(text or "") or bare.search(text or ""))
 
 
+def never_tick(item: dict | None, val) -> str:
+    """Why a checkbox must not be ticked ('' when it may): a talent community (his never-join rule) or a 'Select all' box
+    that bundles optional consents with the required ones."""
+    from ..adapters import SELECT_ALL_BOX, TALENT_COMMUNITY
+    if not item or str(item.get("type") or "").lower() != "checkbox":
+        return ""
+    if str(val).strip().lower() not in ("true", "yes", "checked", "1", "y", "on", "i agree", "agree"):
+        return ""
+    label = str(item.get("label") or "")
+    if TALENT_COMMUNITY.search(" ".join([label, str(item.get("group") or "")])):
+        return ("this box joins a talent / career community: his rule is never to join one, so it stays unticked. If the form "
+                "will not go on without it, park needs_you naming the box.")
+    if SELECT_ALL_BOX.match(label):
+        return ("a 'Select all' box ticks the optional boxes too (a talent community, marketing): tick each required box "
+                "on its own instead.")
+    return ""
+
+
 def other_resume_slot(snap, ref: str, portal: str) -> dict | None:
     """A résumé file box on the page other than this one and other than an Oracle profile import box."""
     from ..adapters import is_profile_import_upload
@@ -1501,6 +1519,12 @@ class ToolDispatcher:
                 continue
             if f.get("_force_true"):
                 val = "true"
+            refusal = never_tick(item, val)
+            if refusal:
+                # LLNL (SmartRecruiters, 2026-10-21) went in with '... agree to be part of communities for future career
+                # opportunities' and 'Select all' ticked by fill_batch under consent keys
+                results.append({"ref": f["ref"], "status": "failed", "error": refusal})
+                continue
             # A text box that says "if no / none, type N/A" takes N/A for a No answer (Fannie Mae, 2026-10-20: the relatives
             # answer was No, the model typed N/A as its own text, that was refused, and the run held).
             if item and item.get("tag") in ("input", "textarea") and item.get("type") not in ("radio", "checkbox") \
