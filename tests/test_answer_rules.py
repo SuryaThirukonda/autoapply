@@ -2371,3 +2371,12 @@ async def test_the_empty_languages_block_is_deleted_when_no_english_is_offered(t
         assert await ex.eval(JS_DELETE_LANGUAGE_BLOCK, "e10") is None      # a work entry is never taken for it
     finally:
         await ex.close(close_browser=True)
+
+
+
+def test_a_vague_eligibility_reason_names_no_requirement():
+    """Creative Artists Agency (2026-10-22) parked 'eligibility: cannot proceed'."""
+    from goat.agent.tools import VAGUE_ELIGIBILITY
+    for r in ("cannot proceed", "unable to continue the application", "stuck", "none"):
+        assert VAGUE_ELIGIBILITY.fullmatch(r), r
+    assert not VAGUE_ELIGIBILITY.fullmatch("the role requires pursuit of a graduate degree")

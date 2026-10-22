@@ -580,6 +580,10 @@ def no_english_offered(label: str, error: str) -> bool:
         and not re.search(r"\benglish\b", error or "", re.I)
 
 
+VAGUE_ELIGIBILITY = re.compile(r"(i |we |the run )?(cannot|can't|can not|unable to|could not|couldn't) (proceed|continue|go on|finish|complete)"
+                               r"( (the |this )?(application|form))?|stuck|stopped|blocked|not possible|n/?a|none|unknown", re.I)
+
+
 def never_tick(item: dict | None, val) -> str:
     """Why a checkbox must not be ticked ('' when it may): a talent community (his never-join rule) or a 'Select all' box
     that bundles optional consents with the required ones."""
@@ -3808,8 +3812,10 @@ class ToolDispatcher:
                             if not re.search(r"(?<!under)graduat|class of|degree (by|in|before)|completion date", part, re.I))
         # An eligibility hold names the posting's requirement he does not meet. Motorola (2026-10-20) parked
         # "eligibility: none" right after its real concern was answered as satisfied.
-        if low.startswith("eligibility") and len(re.sub(r"[^a-z]", "", low[len("eligibility"):])) < 12 \
-                and self.ctx.control_failures.get("park:empty_eligibility", 0) < 2:
+        # Creative Artists Agency (2026-10-22) parked "eligibility: cannot proceed" after its account and blocker parks bounced
+        if low.startswith("eligibility") and (len(re.sub(r"[^a-z]", "", low[len("eligibility"):])) < 12
+                                              or VAGUE_ELIGIBILITY.fullmatch(low[len("eligibility"):].strip(" :.-"))) \
+                and self.ctx.control_failures.get("park:empty_eligibility", 0) < 3:
             self.ctx.control_failures["park:empty_eligibility"] = self.ctx.control_failures.get("park:empty_eligibility", 0) + 1
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "no requirement named"})
             return {"error": "not parked: an eligibility hold must quote the posting's requirement he does not meet, and this "
