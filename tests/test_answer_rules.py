@@ -2339,3 +2339,35 @@ def test_a_language_list_without_english_is_recognised():
     assert no_english_offered("Language", err)
     assert not no_english_offered("Language", err.replace("'Chinese'", "'English'"))
     assert not no_english_offered("Preferred location", err)
+
+
+
+LANG_BLOCKS = """<html><body>
+<div id="work"><h3>Work Experience 1</h3><label>Job Title<input data-goat-ref="e10"></label><label>Company<input></label>
+ <button>Delete</button></div>
+<div id="langs"><h3>Languages</h3>
+ <div id="l1"><h4>Languages 1</h4><button>Delete</button>
+  <label>Language*<button data-goat-ref="e144">Select One</button></label>
+  <label>Read*<button>Fluent</button></label></div>
+ <button>Add Another</button></div>
+<script>document.querySelectorAll('button').forEach(b => { if (b.textContent.trim() === 'Delete') b.addEventListener('click', e =>
+  e.target.parentElement.remove()); });</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_the_empty_languages_block_is_deleted_when_no_english_is_offered(tmp_path):
+    """Ryan (Workday, 2026-10-22): the run added a Languages entry it could not fill and never deleted it."""
+    from goat.agent.tools import JS_DELETE_LANGUAGE_BLOCK
+    from goat.browser.executor import Executor, HostPolicy
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page()
+        await ex.page.set_content(LANG_BLOCKS)
+        ref = await ex.eval(JS_DELETE_LANGUAGE_BLOCK, "e144")
+        assert ref == "e144del", ref
+        await ex.click_ref(ref)
+        assert await ex.page.evaluate("() => !document.getElementById('l1') && !!document.getElementById('work')")
+        assert await ex.eval(JS_DELETE_LANGUAGE_BLOCK, "e10") is None      # a work entry is never taken for it
+    finally:
+        await ex.close(close_browser=True)

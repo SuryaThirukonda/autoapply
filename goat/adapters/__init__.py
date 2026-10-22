@@ -688,7 +688,7 @@ class Workday(Adapter):
              "on Save and Continue, only the Education entries this visit added or changed: to fix one entry there, delete every "
              "Education entry and add each of them again (GlobalFoundries lost its Texas A&M entry when only the high school one "
              "was edited). "
-             "Languages (when the section is there): English, tick 'I am fluent in this language' (answer_key experience.fluent_in_english), and each "
+             "Languages (when the section is there and its Language list offers English; when it does not, leave the section empty): English, tick 'I am fluent in this language' (answer_key experience.fluent_in_english), and each "
              "proficiency dropdown from experience.english_proficiency; the Review page must not show 'I am fluent in this language: No'. "
              "A resumed application opens at its last step: go_to_step('My Experience'), call fill_sections, then Save and Continue forward to Review. "
              "Date fields (graduation, employment dates) are three spinbuttons that ignore ordinary typing: always use "

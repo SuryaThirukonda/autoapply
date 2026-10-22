@@ -553,6 +553,24 @@ def dictated_by_form(value: str, text: str) -> bool:
 ZIP_EXTENSION = re.compile(r"(postal|zip)\s*(code)?\s*(extension|ext\b|suffix)|zip\s*\+\s*4|\+\s*4\b|plus\s*4|zip\s*4\b", re.I)
 
 
+# The Delete button of the one Languages block holding this Language picker: the nearest ancestor with exactly one Delete
+# button, whose text names a language and no work / school field (so a whole section is never taken for the block).
+JS_DELETE_LANGUAGE_BLOCK = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return null;
+  let p = el.parentElement;
+  for (let i = 0; i < 10 && p; i++, p = p.parentElement) {
+    const dels = Array.from(p.querySelectorAll('button')).filter(b => /^delete$/i.test((b.textContent || '').trim())
+      || /^delete\\b/i.test((b.getAttribute('aria-label') || '').trim()));
+    if (dels.length > 1) return null;
+    if (dels.length === 1) {
+      const t = (p.innerText || '').toLowerCase();
+      if (!/language/.test(t) || /job title|company|school|degree|field of study/.test(t)) return null;
+      const d = dels[0];
+      if (!d.getAttribute('data-goat-ref')) d.setAttribute('data-goat-ref', ref + 'del');
+      return d.getAttribute('data-goat-ref');
+    }
+  }
+  return null; }"""
+
 _OTHER_LANGUAGES = re.compile(r"\b(chinese|mandarin|spanish|french|german|hindi|japanese|korean|portuguese|dutch|arabic|italian|russian)\b", re.I)
 
 
@@ -1912,8 +1930,19 @@ class ToolDispatcher:
             # Ryan's Workday Language list holds Chinese ... Spanish and no English (2026-10-22): the gate's 'Languages: No
             # Response' rule had the run add an entry it could never fill, and it asked Surya twice
             db.event(self.ctx.job_id, "languages:no_english", {"ref": ref})
-            out["next"] = ("this employer's Language list has no English, his only language: Delete this Languages entry (its "
-                           "Delete button) and leave the section empty; the Review page may show Languages: No Response here.")
+            try:
+                gone = await self.ctx.ex.eval(JS_DELETE_LANGUAGE_BLOCK, ref)
+            except Exception:  # noqa: BLE001
+                gone = None
+            if gone:
+                await self.ctx.ex.click_ref(str(gone))
+                await self.ctx.ex.settle(quiet_ms=400)
+                self.ctx.last_snapshot = None
+                out["next"] = ("this employer's Language list has no English, his only language, so this Languages entry was "
+                               "deleted: leave the section empty (Review may show Languages: No Response here). Take a snapshot.")
+            else:
+                out["next"] = ("this employer's Language list has no English, his only language: Delete this Languages entry (its "
+                               "Delete button) and leave the section empty; the Review page may show Languages: No Response here.")
         if isinstance(out, dict) and (out.get("status") in ("set", "kept") or str(out.get("summary", "")).startswith("1 set")):
             # a picker set again fixes the read-back complaint recorded for it when its page was left; fill_batch already
             # drops those, choose did not, and American Express' verify kept failing on pickers that held the right values
@@ -2186,6 +2215,10 @@ class ToolDispatcher:
         item = snap.find(ref) if snap else None
         if item and item.get("submitish") and not self._account_page():
             return {"error": "that is a submit control; call submit instead"}, None
+        if re.search(r"\badd\b", label or "", re.I) and re.search(r"language", label or "", re.I) and db.connect().execute(
+                "SELECT 1 FROM events WHERE job_id=? AND kind='languages:no_english' LIMIT 1", (self.ctx.job_id,)).fetchone():
+            return {"error": "not clicked: this employer's Language list has no English (checked on this application already). "
+                             "Leave Languages empty; a Review showing 'Languages: No Response' is correct here."}, None
         if re.search(r"\badd\b", label or "", re.I) and re.search(r"certif|licen", label or "", re.I) and self._cert_unavailable():
             return {"error": "not clicked: this tenant's Certification list does not offer his AWS Certified Cloud Practitioner "
                              "(checked on this portal already). Certifications are optional: leave the section empty; a Review "
