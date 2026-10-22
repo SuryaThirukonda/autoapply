@@ -2390,3 +2390,12 @@ def test_marketing_as_a_field_of_study_is_no_opt_in():
                                 "related field?") is None
     assert consent_question_key("Would you like to receive marketing emails from us?") == "consent.marketing_email"
     assert consent_question_key("Sign me up for marketing communications and job alerts") == "consent.marketing_email"
+
+
+
+def test_a_picker_rule_is_never_typed_into_a_text_box():
+    """Newell Brands (2026-10-22): the location-ranking box got "Keep the form's own order: first option as first preference"."""
+    from goat.agent.tools import RULE_TEXT, concrete_entries
+    v = "Keep the form's own order: first option as first preference"
+    assert RULE_TEXT.search(v) and not concrete_entries(v)
+    assert not RULE_TEXT.search("Dallas; Houston; Austin")

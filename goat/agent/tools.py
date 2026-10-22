@@ -236,8 +236,8 @@ def _plain_wordings(answer) -> list[str]:
 
 # A stored answer that is a rule for pickers ("Select every location offered...", "All offered locations",
 # "San Francisco if only one is allowed"), never text for a box.
-RULE_TEXT = re.compile(r"^\s*(select|pick|choose|tick|check|add|always|leave)\b|\bif only one\b|"
-                       r"^\s*(all|every|any) (offered|available|listed)( \w+)?\s*$", re.I)
+RULE_TEXT = re.compile(r"^\s*(select|pick|choose|tick|check|add|always|leave|keep)\b|\bif only one\b|"
+                       r"^\s*(all|every|any) (offered|available|listed)( \w+)?\s*$|\bthe form'?s own order\b", re.I)
 
 
 from ..adapters import LOCATION_KEY, POSTING_LOCATIONS, posting_locations  # noqa: E402  (Northrop Grumman, 2026-10-19)
@@ -1643,6 +1643,16 @@ class ToolDispatcher:
                 posting_locs = posting_locations(self.ctx.job)
                 if posting_locs:
                     val = "; ".join(posting_locs)
+            # A stored rule for pickers is never text to type, whatever its type: Newell Brands' "Rank your preferred work
+            # locations" box got bank.office-ranking's "Keep the form's own order: first option as first preference" (2026-10-22).
+            if f.get("answer_key") and item and item.get("tag") in ("input", "textarea", "richtext") \
+                    and item.get("type") not in ("radio", "checkbox") and not posting_locs and RULE_TEXT.search(str(val)) \
+                    and not concrete_entries(val):
+                results.append({"ref": f["ref"], "status": "failed", "error": (
+                    f"{f['answer_key']} is a rule for pickers ({str(val)[:90]!r}), not text to type. For a box that ranks the "
+                    "posting's own locations, type them in the order the posting lists them; for other location boxes "
+                    "availability.location_ranking gives his order.")})
+                continue
             # An ordered preference list ("LinkedIn; Job Board; Agency") is for pickers. A text box
             # takes the first choice only, never the whole chain.
             if f.get("answer_key") and item and item.get("tag") in ("input", "textarea", "richtext") \
