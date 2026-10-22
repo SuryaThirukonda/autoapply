@@ -1366,6 +1366,9 @@ class ToolDispatcher:
             tag = f"standing:{answer_key}" if not answer_key.startswith("bank.") else f"bank:{answer_key[5:]}"
             if why and not a.is_blank:
                 tag += f" ({why[:80]})"
+            if (source or "").lower() == "part" and (a.answer_type in ("choice_chain", "choice", "multi", "boolean", "bool")
+                                                      or answer_key.startswith(("self_id.", "consent.", "policy.", "compliance."))):
+                return val, tag, None   # a choice is picked from the whole stored chain (decline first), never from one part of it
             if (source or "").lower() == "part":
                 # One stored answer can hold a whole address: Transcard's Paylocity form wanted line 1, city, county and
                 # ZIP for each employer, Surya's answer named all of them in one line, and the run parked because no single

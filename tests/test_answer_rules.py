@@ -2319,3 +2319,13 @@ def test_a_job_updates_box_is_never_ticked_and_a_zip_extension_stays_blank(store
     assert val is None and "ZIP+4" in err
     answers.save_answer("identity.zip", "77479", answer_type="text", source="questionnaire")
     assert d._resolve_value("identity.zip", None, None, "Postal Code")[:1] == ("77479",)
+
+
+
+def test_a_part_never_picks_one_entry_of_a_choice_chain(store):
+    """2026-10-22: the agent began sending source 'part' on choice fields; a race chain led by a decline must never give
+    its fallback entry alone."""
+    d, ctx = _dispatcher(_job())
+    answers.save_answer("self_id.race_ethnicity", "Decline to self-identify; Asian", answer_type="choice_chain", source="questionnaire")
+    val, tag, err = d._resolve_value("self_id.race_ethnicity", "Asian", "part", "Race")
+    assert err is None and val.startswith("Decline"), val
