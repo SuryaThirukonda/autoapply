@@ -1062,3 +1062,26 @@ def test_a_posting_link_that_opens_the_site_home_is_no_application(store):
     g = run_gate(job=job, snapshot=snap, page_text="Our Openings\nSubmit", expected_resume=None, free_text_answers=[],
                  portal="other", page_no=1)
     assert g.result == "blocked" and "posting is gone" in g.reasons[-1], g.reasons
+
+
+
+DIALOG_SAVE = """<html><body><form>
+<label>First<input value="Surya"></label><label>Last<input value="Thirukonda"></label><label>Email<input value="a@b.c"></label>
+<div role="dialog" aria-modal="true"><h2>Contact information</h2><label>Phone<input value="2818321205"></label>
+ <button type="submit">Save</button></div>
+<button type="submit">Submit Application</button></form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_dialogs_save_button_is_no_application_submit():
+    """SimonComputing (ApplicantPro, 2026-10-22): the contact popup's Save counted as a submit control and click refused it."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(DIALOG_SAVE)
+        snap = await snapshot.take(ex)
+        btns = {i["label"]: i.get("submitish") for i in snap.items if i.get("tag") == "button"}
+        assert btns.get("Save") is False and btns.get("Submit Application") is True, btns
+    finally:
+        await ex.close()
