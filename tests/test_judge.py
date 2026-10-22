@@ -347,3 +347,11 @@ def test_the_judge_takes_na_and_n_slash_a_as_one_answer():
     """LLNL (2026-10-21): the box asked for 'NA', held 'N/A', and the judge failed it."""
     from goat.judge import JUDGE_INSTRUCTIONS
     assert "'N/A', 'NA'" in JUDGE_INSTRUCTIONS
+
+
+
+def test_the_judge_knows_a_no_earlier_application_answer_is_supported():
+    """Ecolab (2026-10-22): the judge failed 'participated in our recruitment process? No' twice."""
+    from goat import judge
+    text = " ".join(str(v) for v in vars(judge).values() if isinstance(v, str))
+    assert "recruitment or hiring process" in text and "application ledger" in text
