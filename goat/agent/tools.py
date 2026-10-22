@@ -601,7 +601,9 @@ def error_or_empty_page(snap) -> bool:
     errs = getattr(snap, "errors", None) or {}
     err_text = " ".join(str(e.get("text") or "") for k in ("error_text", "alerts") for e in (errs.get(k) or []) if isinstance(e, dict))
     empty_search = bool(SEARCH_PAGE_URL.search(url)) and bool(ERROR_PAGE.search(err_text))
-    if not (ERROR_PAGE.search(head) or re.search(r"/(error|404|notfound|not-found)(\b|/|\?|$)", url, re.I) or empty_search):
+    if empty_search:
+        return True     # a careers search's own filters (Category, Country, State boxes) are no application fields
+    if not (ERROR_PAGE.search(head) or re.search(r"/(error|404|notfound|not-found)(\b|/|\?|$)", url, re.I)):
         return False
     fillable = [i for i in (getattr(snap, "items", None) or [])
                 if (i.get("tag") in ("input", "select", "textarea", "dropdown", "toggle") or i.get("combo"))

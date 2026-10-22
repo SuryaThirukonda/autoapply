@@ -2481,5 +2481,7 @@ def test_a_careers_search_page_that_found_nothing_lets_the_park_stand():
                            {"ref": "e4", "tag": "button", "label": "Search"}],
                     groups=[], errors={"error_text": [{"text": "No result found", "near": "Sort by"}]}, challenge={})
     assert error_or_empty_page(snap)
+    snap.items.append({"ref": "e9", "tag": "input", "type": "checkbox", "label": "Technology"})   # a Category filter
+    assert error_or_empty_page(snap)
     snap.errors = {}
     assert not error_or_empty_page(snap)
