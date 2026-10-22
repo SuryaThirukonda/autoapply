@@ -323,3 +323,14 @@ async def test_a_live_shown_pick_counts_when_the_snapshot_had_none():
     assert out["e10"] == "Sugar Land, TX, US"
     decisions = [{"ref": "e10", "field_label": "City", "value": "Sugar Land, TX, US", "source": "standing:identity.city", "page": 1}]
     assert readback.diff(decisions, snap, 1) == []
+
+
+
+def test_a_pressed_no_button_matches_the_decision_no():
+    """Crusoe (Ashby, 2026-10-21): the decision 'No' sits on the button labelled No, which reads back 'pressed'."""
+    from goat.readback import _expect_checked, values_equal
+    item = {"ref": "e16", "tag": "toggle", "label": "No", "pressed": True}
+    assert values_equal(_expect_checked("No", item), "pressed", "toggle")
+    yes = {"ref": "e15", "tag": "toggle", "label": "Yes", "pressed": False}
+    assert not values_equal(_expect_checked("No", yes), "pressed", "toggle")
+    assert values_equal(_expect_checked("No", yes), "", "toggle")

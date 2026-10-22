@@ -75,10 +75,14 @@ def _expect_checked(value: str, item: dict) -> str:
     not had one in the past", "Yes, I have read and consent to the terms") means that option is ticked: T-Mobile and
     Axiom Space were blocked with "shows 'checked' but decision was '<its label>'" (2026-10-19)."""
     v = str(value or "")
+    lab = str(item.get("label") or "")
+    # the option's own wording first: Ashby's Yes / No buttons record "No" on the button labelled No, which shows
+    # 'pressed' (Crusoe, 2026-10-21: "field No [e16] shows 'pressed' but decision was 'No'")
+    if lab and v.strip() and answers.norm(lab) == answers.norm(v):
+        return "checked"
     if _truthy_checked(v) or answers.norm(v) in ("", "unchecked", "false", "off", "0", "no"):
         return v
-    lab = str(item.get("label") or "")
-    if lab and (answers.norm(lab) == answers.norm(v) or values_equal(v, lab, "choice")):
+    if lab and values_equal(v, lab, "choice"):
         return "checked"
     return v
 
@@ -267,7 +271,7 @@ def diff(decisions: list[dict], snap: Snapshot, page_no: int = 0) -> list[str]:
         label = (item.get("label") or d.get("field_label") or "")
         if not str(page_value or "").strip() and PHONE_COUNTRY.match(label):
             continue
-        if kind == "checkbox":
+        if kind in ("checkbox", "toggle"):
             val = _expect_checked(str(val), item)
         if kind != "checkbox" and dial_code_matches(str(val), page_value):
             continue

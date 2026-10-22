@@ -1009,3 +1009,25 @@ def test_an_autofill_box_on_a_later_step_is_no_empty_resume_slot(store):
     g = run_gate(job=job, snapshot=_snap(items), page_text="Questions\nSubmit", expected_resume="Surya_Thirukonda_Resume_SWE.pdf",
                  free_text_answers=[], portal="other", page_no=2)
     assert not any("resume" in r.lower() for r in g.reasons), g.reasons
+
+
+CRUSOE_NOTE = """<html><body><form>
+<div class="field"><label for="q1">Will you now or in the future require immigration sponsorship to work for Crusoe?</label>
+ <div class="desc">Crusoe is not sponsoring visas for these positions at this time or in the future. Candidates must be legally
+ authorized to work in the United States during the internship.</div>
+ <input id="q1" type="text" value="No"></div>
+</form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_an_employer_sponsorship_policy_note_is_no_error():
+    """Crusoe (Ashby, 2026-10-21): the note under the sponsorship question read as an error and blocked every submit."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(CRUSOE_NOTE)
+        snap = await snapshot.take(ex)
+        assert not any("sponsoring" in (e.get("text") or "") for e in snap.errors.get("error_text", [])), snap.errors
+    finally:
+        await ex.close()

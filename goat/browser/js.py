@@ -716,7 +716,9 @@ JS_PAGE_ERRORS = r"""
   const STATUSY = /(loaded|loading|please\s+wait|saved|updated|added|removed|expanded|collapsed|in\s+progress|step\s+\d|page\s+\d|results?\s+(found|updated)|showing\s+\d|selected)/i;
   // ... and a paragraph that explains what a question is for (Rippling, 2026-10-21: "Our internships are designed for
   // students ... Please provide your anticipated graduation date in order to access your eligibility" blocked every submit)
-  const INSTRUCTIONAL = /(if\s+applicable|e\.g\.|for\s+example|\(optional\)|as\s+it\s+appears|do\s+not\s+include|maximum\s+of|up\s+to\s+\d|characters?\s+remaining|format:|in\s+order\s+to|(are|is)\s+designed\s+for|for\s+(demographic|outreach|statistical|reporting)\s+purposes)/i;
+  // ... and an employer's policy note under a question (Crusoe, 2026-10-21: "Crusoe is not sponsoring visas for these
+  // positions ... Candidates must be legally authorized to work" under the sponsorship question blocked every submit)
+  const INSTRUCTIONAL = /(if\s+applicable|e\.g\.|for\s+example|\(optional\)|as\s+it\s+appears|do\s+not\s+include|maximum\s+of|up\s+to\s+\d|characters?\s+remaining|format:|in\s+order\s+to|(are|is)\s+designed\s+for|for\s+(demographic|outreach|statistical|reporting)\s+purposes|(is|are)\s+not\s+(sponsoring|able\s+to\s+sponsor|offering\s+sponsorship)|(does|do|will)\s+not\s+(sponsor|provide\s+sponsorship)|(candidates|applicants)\s+must)/i;
   const alerts = [], errorText = [], emptyRequired = [], summaries = [];
   const seenRoots = new Set(), seenText = new Set();
   function vis(el) { try { const r = el.getBoundingClientRect(); const s = el.ownerDocument.defaultView.getComputedStyle(el);
