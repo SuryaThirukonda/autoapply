@@ -589,6 +589,10 @@ class Executor:
                 if await l2.count():
                     loc = l2
                     break
+            else:
+                # a ref from an earlier snapshot (GM Financial's Oracle step re-rendered, 2026-10-22): say so at once instead
+                # of waiting 30 s for an element that is gone
+                return {"found": False, "error": "ref not on the page any more: take a snapshot and use the fresh ref"}
         try:
             await loc.first.set_input_files(path)
         except Exception as e:

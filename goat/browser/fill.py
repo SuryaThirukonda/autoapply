@@ -1535,6 +1535,8 @@ async def _upload_file(ex: Executor, ref: str, path: Path) -> FieldResult:
     if await _shows_file(ex, path):
         return FieldResult(ref, True, path.name)
     info = await ex.set_file(ref, str(path))
+    if info.get("found") is False and info.get("error"):
+        return FieldResult(ref, False, "", str(info["error"]))
     shown = info.get("value") or ""
     ok = shown.lower() == path.name.lower()
     if not ok:
