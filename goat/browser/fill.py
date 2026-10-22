@@ -1079,6 +1079,137 @@ async def _choose_spl(ex: Executor, ref: str, wants: list[str]) -> FieldResult |
     return FieldResult(ref, ok, shown, "" if ok else f"picked '{pick['text']}' but the box shows '{shown}'")
 
 
+# Paylocity's pickers (pcty-input-select; North Atlantic Industries, Transcard, 2026-10-22): a wrapper '<id>-select-wrapper'
+# (aria-haspopup=listbox) around one typeable input '<id>' that its shown value ('Select a state', 'United States') covers.
+# Focus + ArrowDown (or a click on the wrapper) opens a portal '<id>-dropdown-list-container' (role=list) of role=listitem
+# rows '<id>-select-row-N' with the text in `title`. The generic list read knows no listitem rows, so choose reported
+# "the picker for this field did not open" on every work-history State; the State rows are abbreviations ('TX'), so a
+# typed 'Texas' answered 'No Results Found'; and the Country list renders only its first 57 of 244 rows.
+JS_PCTY_HOST = js._COMMON_WRAP("""
+  const el = findRef(ref);
+  if (!el || !el.closest) return null;
+  const w = el.matches('[id$="-select-wrapper"]') ? el : el.closest('[id$="-select-wrapper"]');
+  if (!w || !/pcty-input-select/.test(String(w.className || ''))) return null;
+  const id = w.id.replace(/-select-wrapper$/, '');
+  const sv = w.querySelector('[class*="single-value"]');
+  return { id, shown: sv ? (sv.textContent || '').trim() : '' };
+""", "ref")
+JS_PCTY_ROWS = """(id) => { const c = document.getElementById(id + '-dropdown-list-container'); if (!c) return null;
+  return Array.from(c.querySelectorAll('[id^="' + id + '-select-row-"]')).map(r => ({ id: r.id, text: (r.getAttribute('title') || r.textContent || '').trim() })); }"""
+
+
+def with_state_codes(wants: list[str]) -> list[str]:
+    """'Texas' -> also 'TX', and 'TX' -> also 'Texas': a state list may hold either form."""
+    from ..agent.tools import _US_STATES
+    by_name = {n.lower(): c for c, n in _US_STATES.items()}
+    out = [w for w in wants if w]
+    for w in list(out):
+        k = w.strip()
+        extra = by_name.get(k.lower()) or _US_STATES.get(k.upper())
+        if extra and extra not in out:
+            out.append(extra)
+    return out
+
+
+async def _choose_pcty(ex: Executor, ref: str, wants: list[str]) -> FieldResult | None:
+    """Pick in a Paylocity pcty-input-select: open its list from the keyboard, click the row a want names (typing each
+    want to filter a list that renders only its first rows), read the shown value back. None when the control is not one."""
+    try:
+        host = await ex.eval(JS_PCTY_HOST, ref)
+    except Exception:
+        host = None
+    if not isinstance(host, dict) or not host.get("id"):
+        return None
+    pid = str(host["id"])
+    wants = with_state_codes(wants)
+    empty = re.compile(r"^(select|choose)\b", re.I)
+    shown = str(host.get("shown") or "").strip()
+    if shown and not empty.match(shown) and best_option([{"text": shown}], wants) is not None:
+        return FieldResult(ref, True, shown)
+    box = ex.page.locator(f'[id="{pid}"]').first
+
+    async def rows() -> list[dict] | None:
+        got = await ex.page.evaluate(JS_PCTY_ROWS, pid)
+        return got if isinstance(got, list) else None          # None: the list is closed
+
+    listed = None
+    for how in ("keys", "click"):
+        try:
+            if how == "keys":
+                await box.focus(timeout=3000)
+                await ex.page.keyboard.press("ArrowDown")
+            else:
+                await ex.page.locator(f'[id="{pid}-select-wrapper"]').first.click(timeout=5000)
+        except Exception:
+            continue
+        for _ in range(8):
+            await asyncio.sleep(0.25)
+            listed = await rows()
+            if listed is not None:
+                break
+        if listed is not None:
+            break
+    if listed is None:
+        return FieldResult(ref, False, shown, "the Paylocity list did not open")
+    first_rows = list(listed)
+    pick = best_option([{"text": r["text"]} for r in listed], wants)
+    typed = False
+    if pick is None:
+        for w in wants[:6]:
+            typed = True
+            try:
+                await box.focus(timeout=3000)
+                await ex.page.keyboard.press("Control+a")
+                await ex.page.keyboard.press("Backspace")
+                await ex.page.keyboard.type(w[:40], delay=40)
+            except Exception:
+                break
+            # the list redraws for the filter a moment after the keys: wait for a match, or for a filtered list that holds
+            # still (the unfiltered first rows read right after typing are no answer; Transcard's Country, 2026-10-22)
+            before_rows, prev = [r["text"] for r in first_rows], None
+            for _ in range(14):
+                await asyncio.sleep(0.25)
+                listed = await rows() or []
+                pick = best_option([{"text": r["text"]} for r in listed], wants)
+                if pick is not None:
+                    break
+                texts = [r["text"] for r in listed]
+                if texts != before_rows and texts == prev:
+                    break
+                prev = texts
+            if pick is not None:
+                break
+    if pick is None:
+        offered = [r["text"] for r in first_rows][:12]
+        try:
+            if typed:         # a filter left in the box is no value
+                await ex.page.keyboard.press("Control+a")
+                await ex.page.keyboard.press("Backspace")
+            await ex.page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return FieldResult(ref, False, shown, f"no option matched {wants[:3]}; the list offers: {offered}")
+    row = ex.page.locator(f'[id="{next(r["id"] for r in listed if r["text"] == pick["text"])}"]').first
+    try:
+        await row.scroll_into_view_if_needed(timeout=3000)
+        await row.click(timeout=5000)
+    except Exception:
+        await row.evaluate("e => e.click()")
+    # the shown value is drawn only once the box loses focus (Transcard's State read back '' right after the pick)
+    try:
+        await ex.page.evaluate("() => document.activeElement && document.activeElement.blur && document.activeElement.blur()")
+    except Exception:
+        pass
+    got = ""
+    for _ in range(12):
+        await asyncio.sleep(0.2)
+        after = await ex.eval(JS_PCTY_HOST, ref)
+        got = str((after or {}).get("shown") or "").strip() if isinstance(after, dict) else ""
+        if got and _norm(got) == _norm(pick["text"]):
+            return FieldResult(ref, True, got)
+    return FieldResult(ref, False, got, f"picked '{pick['text']}' but the box shows '{got}'")
+
+
 async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bool = True) -> FieldResult:
     """Pick an option in a custom dropdown / combobox / autocomplete.
 
@@ -1092,6 +1223,9 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
     spl = await _choose_spl(ex, ref, wants)
     if spl is not None:
         return spl
+    pcty = await _choose_pcty(ex, ref, wants)
+    if pcty is not None:
+        return pcty
     if info.get("tag") != "select":
         try:
             inner = await ex.eval(JS_LISTBOX_WRAPPER_INPUT, ref)

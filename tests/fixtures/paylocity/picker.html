@@ -1,0 +1,77 @@
+<!doctype html>
+<!-- A trimmed model of Paylocity's pcty-input-select pickers (recruiting.paylocity.com Apply pages; Transcard, North
+     Atlantic Industries, 2026-10-22): a wrapper '<id>-select-wrapper' (aria-haspopup=listbox, no role) around one
+     typeable input '<id>' that the shown value ('Select a state', 'United States') covers, so a click on the input lands
+     on the shown value. A click on the wrapper, or ArrowDown in the focused input, opens a portal
+     '<id>-dropdown-list-container' (role=list) of role=listitem rows '<id>-select-row-N' (text also in `title`). The State
+     rows are abbreviations; the Country list renders only its first 57 rows (react-window) until typing filters it; a
+     filter that matches nothing shows 'No Results Found'. A click on a row sets the shown value and closes the list. -->
+<html><head><meta charset="utf-8"><title>Apply - Software Engineer Intern - Transcard Payments</title>
+<style>
+  body { font-family: sans-serif; width: 1000px; margin: 20px; }
+  .pcty-input-select-full-container { position: relative; width: 320px; height: 32px; border: 1px solid #999; margin: 6px 0 18px; }
+  .pcty-input-select-input-container { position: relative; width: 280px; height: 32px; }
+  .pcty-input-select-input-container input { width: 270px; height: 28px; border: 0; }
+  .input-select-input-single-value { position: absolute; left: 0; top: 0; width: 280px; height: 32px; line-height: 32px; background: #fff; }
+  .pcty-input-select__menu-list { position: relative; height: 245px; width: 320px; overflow: auto; border: 1px solid #999; background: #fff; }
+  .ListItemEven, .ListItemOdd { height: 35px; line-height: 35px; cursor: pointer; }
+</style></head>
+<body>
+<h3>Work History</h3>
+<label>Employer <input id="employer" value=""></label>
+<div id="country-block"><label>Country</label></div>
+<div id="state-block"><label>State</label></div>
+<script>
+const STATES = ['AL', 'AK', 'AR', 'AS', 'AZ', 'CA', 'CO', 'CT', 'DC', 'DE', 'FL', 'GA', 'GU', 'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA',
+  'MA', 'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'PR', 'RI', 'SC', 'SD',
+  'TN', 'TX', 'UT', 'VA', 'VI', 'VT', 'WA', 'WI', 'WV', 'WY'];
+const COUNTRIES = ['Afghanistan', 'Albania', 'Canada', 'Mexico'].concat(Array.from({ length: 200 }, (_, i) => 'Place ' + String(i).padStart(3, '0')))
+  .concat(['United Kingdom', 'United States', 'United States Minor Outlying Islands', 'Uruguay']);
+let openId = null, seq = 60;
+
+function picker(block, id, options, shown) {
+  const wrap = document.createElement('div');
+  wrap.id = id + '-select-wrapper';
+  wrap.className = 'pcty-input-select-full-container css-gyv93q';
+  wrap.setAttribute('aria-haspopup', 'listbox');
+  wrap.setAttribute('aria-expanded', 'false');
+  wrap.setAttribute('aria-owns', id + '-dropdown-list-container');
+  wrap.setAttribute('data-goat-ref', 'e' + (++seq));
+  wrap.innerHTML = '<div class="pcty-input-select-input-container"><div class="input-select-input-single-value"></div>' +
+    '<input id="' + id + '" type="text" aria-autocomplete="list" class="css-8nrzws"></div>';
+  block.appendChild(wrap);
+  const sv = wrap.querySelector('.input-select-input-single-value'), inp = wrap.querySelector('input');
+  inp.setAttribute('data-goat-ref', 'e' + (++seq));
+  sv.textContent = shown;
+  const close = () => { const c = document.getElementById(id + '-dropdown-list-container'); if (c) c.remove(); wrap.setAttribute('aria-expanded', 'false'); if (openId === id) openId = null; };
+  const render = (filter) => {
+    if (openId && openId !== id) { const o = document.getElementById(openId + '-dropdown-list-container'); if (o) o.remove(); }
+    let c = document.getElementById(id + '-dropdown-list-container');
+    if (!c) {
+      c = document.createElement('div'); c.id = id + '-dropdown-list-container'; c.setAttribute('role', 'list');
+      c.style.position = 'absolute'; c.style.zIndex = '9999';
+      const r = wrap.getBoundingClientRect(); c.style.left = (r.left + scrollX) + 'px'; c.style.top = (r.bottom + scrollY) + 'px';
+      document.body.appendChild(c);
+    }
+    const f = (filter || '').trim().toLowerCase();
+    const items = options.filter(o => !f || o.toLowerCase().includes(f));
+    const menu = document.createElement('div'); menu.className = 'pcty-input-select__menu-list';
+    const inner = document.createElement('div'); inner.style.height = (Math.max(items.length, 1) * 35) + 'px'; menu.appendChild(inner);
+    if (!items.length) { const n = document.createElement('div'); n.className = 'ListItemEven'; n.textContent = 'No Results Found'; inner.appendChild(n); }
+    items.slice(0, 57).forEach((t, i) => {           // react-window: only the first rows exist until the list is scrolled
+      const row = document.createElement('div'); row.id = id + '-select-row-' + i; row.setAttribute('role', 'listitem'); row.title = t;
+      row.className = i % 2 ? 'ListItemOdd' : 'ListItemEven'; row.textContent = t;
+      row.addEventListener('click', () => { sv.textContent = t; inp.value = ''; close(); });
+      inner.appendChild(row);
+    });
+    c.innerHTML = ''; c.appendChild(menu);
+    wrap.setAttribute('aria-expanded', 'true'); openId = id;
+  };
+  wrap.addEventListener('mousedown', (e) => { if (e.target === inp) return; e.preventDefault(); if (openId === id) close(); else { inp.focus(); render(''); } });
+  inp.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown' && openId !== id) { render(inp.value); e.preventDefault(); } if (e.key === 'Escape') close(); });
+  inp.addEventListener('input', () => { sv.textContent = inp.value ? '' : sv.textContent; render(inp.value); });
+}
+picker(document.getElementById('country-block'), 'public-candidate-work-history-address-0-country', COUNTRIES, 'Canada');
+picker(document.getElementById('state-block'), 'public-candidate-work-history-address-0-us-state', STATES, 'Select a state');
+</script>
+</body></html>

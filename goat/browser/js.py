@@ -867,6 +867,9 @@ JS_PAGE_ERRORS = r"""
       if (el.type === 'hidden' || !vis(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
       const req = el.required || el.getAttribute('aria-required') === 'true' || starRequired(el);
       if (!req) continue;
+      // Paylocity marks every box of a work / education history address required, yet its Next Step takes the entry with
+      // the address empty (Transcard, 2026-10-22); his history holds no employer street, county or ZIP to give
+      if (/^public-candidate-[a-z-]*history-address-\d+-(address-1|address-2|city|county|zip|postal-code|us-state|state|province|country)$/.test(el.id || '')) continue;
       let empty;
       if (el.type === 'checkbox' || el.type === 'radio') {
         const peers = el.name ? Array.from(root.querySelectorAll('input[type="' + el.type + '"][name="' + CSS.escape(el.name) + '"]')) : [el];
