@@ -495,3 +495,15 @@ def test_a_platform_sender_counts_for_a_portal_known_only_by_its_host():
     assert not gmail.sender_allowed("Deals <promo@shop.example.com>", "other", "careers.qualcomm.com", ["qualcomm"])
     q = gmail.build_code_query("other", "careers.qualcomm.com", 1792579000, ["qualcomm"])
     assert "eightfold.ai" in q and "qualcomm.com" in q
+
+
+
+def test_a_distinctive_first_word_finds_an_employer_that_mails_under_its_short_name():
+    """Citizens Financial Group (Oracle, 2026-10-21): the code mail never matched 'citizensfinancial' or 'cfg'."""
+    from goat.mail.gmail import company_sender_tokens, sender_allowed
+    toks = company_sender_tokens("Citizens Financial Group")
+    assert "citizens" in toks, toks
+    assert sender_allowed("Citizens Careers <careers@citizensbank.com>", "oracle", "hcgn.fa.us2.oraclecloud.com", toks)
+    assert not sender_allowed("Deals <x@citizensoffers.example>", "oracle", "hcgn.fa.us2.oraclecloud.com", toks)
+    assert sender_allowed("Talent Team <no-reply@notifications.example.com>", "oracle", "hcgn.fa.us2.oraclecloud.com", toks) is False
+    assert "american" not in company_sender_tokens("American Express")

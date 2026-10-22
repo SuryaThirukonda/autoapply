@@ -201,6 +201,9 @@ def tenant_mismatch(from_header: str, portal_host: str) -> bool:
 
 
 _NAME_SUFFIXES = ("incorporated", "corporation", "company", "group", "inc", "corp", "llc", "ltd", "co")
+_COMMON_FIRST = {"american", "national", "united", "general", "global", "international", "northern", "southern", "western",
+                 "eastern", "central", "pacific", "atlantic", "federal", "capital", "advanced", "applied", "digital",
+                 "standard", "universal", "consolidated", "integrated"}
 _NAME_FILLER = {"the", "of", "and", "for", "a", "an"}
 
 
@@ -223,6 +226,10 @@ def company_sender_tokens(company: str) -> list[str]:
     initials = "".join(w[0] for w in words if w not in _NAME_FILLER)
     if len([w for w in words if w not in _NAME_FILLER]) >= 2 and len(initials) >= 2 and initials not in out:
         out.append(initials)
+    # A distinctive first word alone: Citizens Financial Group's Oracle code was never found in 30 minutes, the bank mails
+    # as 'Citizens' (citizensbank.com) and neither 'citizensfinancial' nor 'cfg' matched (2026-10-21).
+    if len(words) > 1 and len(words[0]) >= 6 and words[0] not in _COMMON_FIRST and words[0] not in out:
+        out.append(words[0])
     return out
 
 
@@ -256,6 +263,11 @@ def sender_allowed(from_header: str, portal: str | None, portal_host: str, extra
     if not domain:
         return False
     if extra and any(t and t in domain.split(".") for t in extra):
+        return True
+    # a long token also matches a whole word of the sender's display name ('Citizens Careers <...>'); never a domain that
+    # merely starts with it (americanexpressoffers.example is no American Express)
+    name = (from_header or "").split("<")[0].lower()
+    if extra and any(t and len(t) >= 6 and re.search(r"\b" + re.escape(t) + r"\b", name) for t in extra):
         return True
     spec = PORTALS.get((portal or "").lower())
     if spec is None:
