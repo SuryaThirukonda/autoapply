@@ -2380,3 +2380,13 @@ def test_a_vague_eligibility_reason_names_no_requirement():
     for r in ("cannot proceed", "unable to continue the application", "stuck", "none"):
         assert VAGUE_ELIGIBILITY.fullmatch(r), r
     assert not VAGUE_ELIGIBILITY.fullmatch("the role requires pursuit of a graduate degree")
+
+
+
+def test_marketing_as_a_field_of_study_is_no_opt_in():
+    """Newell Brands (2026-10-22): a degree question naming Marketing was answered from consent.marketing_email."""
+    from goat.agent.tools import consent_question_key
+    assert consent_question_key("Are you currently pursuing a bachelor's degree in Business, Sales, Marketing, Finance, or a "
+                                "related field?") is None
+    assert consent_question_key("Would you like to receive marketing emails from us?") == "consent.marketing_email"
+    assert consent_question_key("Sign me up for marketing communications and job alerts") == "consent.marketing_email"

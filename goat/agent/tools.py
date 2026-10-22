@@ -843,11 +843,20 @@ def consent_question_key(question: str) -> str | None:
     asks_consent = re.search(r"\b(do|will|would) you (agree|accept|acknowledge|consent|certify|authori[sz]e|understand|confirm)\b", q, re.I)
     if SMS.search(q) and (asks_consent or CONSENT.search(q) or re.search(r"\b(receive|opt in|opt-in)\b", q, re.I)):
         return "consent.sms"
-    if not CONSENT.search(q) and not MARKETING.search(q) and not asks_consent:
+    # 'Marketing' as a field of study or work is no opt-in: Newell Brands' "Are you currently pursuing a bachelor's degree in
+    # Business, Sales, Marketing, Finance, or a related field?" was answered from consent.marketing_email (2026-10-22)
+    marketing = bool(MARKETING.search(q)) and bool(OPT_IN_CONTEXT.search(q)) and not FIELD_OF_STUDY.search(q)
+    if not CONSENT.search(q) and not marketing and not asks_consent:
         return None
-    if MARKETING.search(q) and not SMS.search(q) and not PROCESSING.search(q):
+    if marketing and not SMS.search(q) and not PROCESSING.search(q):
         return "consent.marketing_email"
     return consent_key(q)
+
+
+OPT_IN_CONTEXT = re.compile(r"\b(receive|subscribe|opt[- ]?(in|out)|e-?mails?|communications?|newsletters?|updates|send (you|me)|"
+                            r"contact (you|me)|alerts?|join|sign (me )?up|keep (me|you) (informed|updated)|future (job )?opportunit)", re.I)
+FIELD_OF_STUDY = re.compile(r"\b(degree|major(ing)?|field of study|studying|pursuing|coursework|minor|background in|experience in|"
+                            r"years of experience)\b", re.I)
 
 
 # "Yes, I understand the above information regarding security clearances." against "No, I do not understand. I have
