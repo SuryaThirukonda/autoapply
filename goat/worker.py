@@ -427,6 +427,18 @@ def same_tenant_credentials_hold(job: dict, now: int | None = None) -> int | Non
     return None
 
 
+def ledger_hold(job: dict) -> str | None:
+    """The hold reason for a job whose posting the application ledger already holds, else None."""
+    if job.get("cleared_live") or job.get("_ledger_ok"):
+        return None
+    try:
+        if ledger.already_applied(job.get("company", ""), job.get("title", ""), job.get("url", "")):
+            return "already_applied: the application ledger already holds this posting (same link, posting id, or company and title)"
+    except Exception:  # noqa: BLE001 - the gate checks again
+        return None
+    return None
+
+
 async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutcome:
     job_id = int(job["id"])
     portal = job.get("ats") or "other"
@@ -450,6 +462,13 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
     if cap_reason:
         set_status(job_id, states.HOLD, reason=cap_reason)
         return RunOutcome(states.HOLD, cap_reason)
+
+    # The same posting already applied to: Ryan listed requisition R0020808 on two career sites, and the second job opened
+    # Workday only to read "You applied for this job" (2026-10-22). The gate's ledger check would stop it later anyway.
+    early = ledger_hold(job)
+    if early:
+        set_status(job_id, states.HOLD, reason=early)
+        return RunOutcome(states.HOLD, early)
 
     # Posting still live? (keyless read APIs; None = unknown)
     try:

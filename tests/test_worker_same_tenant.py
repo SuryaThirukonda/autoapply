@@ -22,3 +22,17 @@ def test_same_tenant_credentials_hold(tmp_path):
     assert same_tenant_credentials_hold(row(84), now=6000) is None
     assert same_tenant_credentials_hold(row(85), now=6000) is None
     assert same_tenant_credentials_hold(row(83), now=5000 + 13 * 3600) is None      # older than 12 hours
+
+
+
+def test_a_posting_already_in_the_ledger_is_held_before_any_run(tmp_path):
+    """Ryan (2026-10-22): requisition R0020808 on two career sites; the second job opened Workday to read 'You applied'."""
+    from goat import db, ledger
+    from goat.worker import ledger_hold
+    db.reset_for_tests(tmp_path / "t.db")
+    ledger.record_application(None, "Ryan", "Summer 2027 Intern, Application Engineering",
+                              "https://ryan.wd1.myworkdayjobs.com/RyanCareers/job/Plano/Summer-2027-Intern--Application-Engineering_R0020808-2", "agent")
+    twin = {"company": "Ryan", "title": "Application Engineering Intern",
+            "url": "https://ryan.wd1.myworkdayjobs.com/Students-Graduates/job/Plano/Summer-2027-Intern--Application-Engineering_R0020808-1"}
+    assert ledger_hold(twin).startswith("already_applied")
+    assert ledger_hold({**twin, "url": twin["url"].replace("R0020808", "R0099999"), "title": "Data Intern"}) is None
