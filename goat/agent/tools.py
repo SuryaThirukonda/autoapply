@@ -1367,7 +1367,7 @@ class ToolDispatcher:
             # certification date twice (2026-10-21): that date is when he obtained the citizenship or status listed.
             return None, "", ("this 'Date Obtained' belongs to the citizenship / status block (Country N Name, Type of Status N): "
                               "it is the date he obtained that status, not a certification date. For a U.S. citizen by birth it is "
-                              "his date of birth, which is not stored: ask_user for it.")
+                              "his date of birth: answer_key compliance.date_of_birth (Westinghouse asked Surya for it, 2026-10-22).")
         if answer_key == "identity.zip" and ZIP_EXTENSION.search(label or ""):
             # Berkshire Hathaway Energy's Oracle address got 77479 in 'Postal Code Extension' too (the judge caught it, 2026-10-22)
             return None, "", ("this box takes the 4-digit ZIP+4 extension, which is not stored: leave it blank (it is optional "
