@@ -744,22 +744,18 @@ class Oracle(Adapter):
              "One long page (CSX, 2026-10-19): Yes/No and band questions are toggle buttons (fill_batch with the answer_key: GPA band "
              "education.gpa_range, travel share availability.travel_max_percent); 'How did you hear' is a list where LinkedIn may be "
              "missing: pick 'Other' and type 'LinkedIn' in its 'Specify Other' box; 'ADD EXPERIENCE' opens one block per role "
-             "(experience.work.N title, company, dates) and 'ADD EDUCATION' one for Texas A&M University (major, graduation May 2028; "
-             "when the School search offers no Texas A&M University, pick 'Other', his own rule, and type the name in an 'Other' "
-             "box if one appears); "
+             "(the harness adds those, see below); "
              "Veteran Status is a dropdown (self_id.veteran_status); the Full Name signature takes his legal name. Work through every "
              "section top to bottom before calling submit; never hand the form back while a stored answer covers what is left. "
-             "Experience and Education keep each saved entry as a tile with Edit / Delete (onsemi, 2026-10-19): read the tiles "
-             "first and add only stored entries that have no tile, never a second copy. 'Add Experience' opens a form: Employer "
-             "Name, Job Title, Employer City / Country, then the Start Date and End Date pickers (Month and Year are separate "
-             "pickers: choose the month name, then the year), Current Job for the current role, Responsibilities from "
-             ".description; then click the form's own ADD EXPERIENCE (or ADD EDUCATION) button to save it as a tile. A form "
-             "left open for an entry that already has a tile is closed with its CANCEL button. The resume import can add "
-             "tiles that are not his entries (GM Financial, 2026-10-19: an 'Engineering Honors' education record with a "
-             "required Degree): delete any tile that matches none of his stored entries with its Delete button, then go on. "
-             "The outline lists each tile as ENTRY TILE with its own Edit and Delete refs ('Edit: <title> / <employer>'); a tile "
-             "from an earlier résumé import can name a skill list as its employer (AutoZone, 2026-10-21): open it with its Edit, "
-             "set Employer Name and the other fields from his stored entry for that role, and SAVE.")
+             "Experience and Education (tiles with Edit / Delete, or one 'Work and Education History' timeline) are written by the "
+             "harness whenever you take a snapshot of the step that shows them: it deletes the résumé import's entries that are "
+             "none of his (skill lists as Employer Name, 'Unnamed Job Title', 'Engineering Honors'), sets his own entries' "
+             "employer, title, dates and responsibilities from experience.work.N, fixes his Texas A&M entry (degree, school, "
+             "dates, Graduated unticked) and adds what is missing. The outline's HARNESS line says what it did: never add, edit "
+             "or delete those entries yourself. If the HARNESS line reports a FAILED entry, call fill_sections once; only what "
+             "it still reports failed is yours to fix by hand (its form: Employer Name, Job Title, the Month and Year pickers, "
+             "Current Job, Responsibilities, then the form's own SAVE / ADD EXPERIENCE button; when the School search offers no "
+             "Texas A&M University pick 'Other').")
 
 
 class ICIMS(Adapter):

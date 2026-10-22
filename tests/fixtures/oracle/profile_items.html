@@ -1,0 +1,307 @@
+<!doctype html>
+<!-- A trimmed model of Oracle Recruiting Cloud's apply flow (Candidate Experience), from GM Financial, Uber and BNY
+     (2026-10-22). Two layouts:
+     - tiles: an 'Experience' and an 'Education' block (.apply-flow-block__form-list[aria-label]); each saved entry is an
+       article.apply-flow-profile-item-tile (summary title / subtitle 'Employer MM/YYYY - MM/YYYY', 'Fields to fix'
+       when invalid, Edit and Delete icons); 'Add Experience' opens an empty form; while a form is open the tiles hide;
+     - timeline: one 'Work and Education History' block; entries are .beautiful-timeline-item blocks (the employer shows
+       only on some), clicking one opens its form, hovering shows Edit / Remove; ADD EXPERIENCE / ADD EDUCATION.
+     The entry form's inputs carry id-numbered names (employerName-41, month-startDate-43 ...) that stay while the form
+     is open; Month, Year, Degree, School and Country are cx-select pickers: a role=combobox input, its -toggle-button,
+     a -reset-button once set, and a role=grid -listbox of gridcells (typing filters it, the School list is a search that
+     lists nothing until typed into; text that was never picked is dropped on blur). Ticking Current Job hides End Date.
+     BNY's education form: Degree as single-select pills (role=radio buttons, no input), the school in an 'Educator'
+     text box, no Graduated box (setup: degreePills, schoolName 'educator', noGraduated).
+     Save checks the required fields and keeps the form open with 'input-row--invalid' rows when one is missing. Delete
+     acts at once. window.setup(state) renders a state; window.state() returns the saved entries. -->
+<html><head><meta charset="utf-8"><title>Intern - Data Science - Careers</title>
+<style>
+  body { font-family: sans-serif; width: 1100px; margin: 10px; }
+  .hidden { display: none !important; }
+  .input-row { margin: 6px 0; position: relative; }
+  .input-row__hidden-control { position: absolute; opacity: 0; width: 14px; height: 14px; margin: 0; }
+  .apply-flow-input-checkbox { padding-left: 20px; cursor: pointer; }
+  .cx-select__list { border: 1px solid #888; max-height: 140px; overflow-y: auto; width: 320px; }
+  .cx-select__list-item { height: 20px; line-height: 20px; cursor: pointer; }
+  article.apply-flow-profile-item-tile { border: 1px solid #ccc; margin: 4px 0; padding: 4px; }
+  .apply-flow-profile-item-tile__edit-item-icon, .apply-flow-profile-item-tile__delete-icon,
+  .beautiful-timeline-item__edit-icon, .beautiful-timeline-item__delete-icon { width: 24px; height: 18px; }
+  .beautiful-timeline-item { display: block; border: 1px solid #36c; margin: 4px 0; padding: 4px; width: 420px; }
+  .oj-helper-hidden-accessible { position: absolute; clip: rect(0 0 0 0); width: 1px; height: 1px; overflow: hidden; }
+  textarea { width: 600px; height: 60px; }
+</style></head>
+<body>
+<h1>Intern - Data Science application</h1>
+<ul class="apply-flow-page-list"><li><div id="page"></div></li></ul>
+<script>
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const YEARS = Array.from({ length: 45 }, (_, i) => String(2035 - i));
+const DEGREES = ['Associates', 'Bachelors', 'Doctorate', 'GED', 'High_Diploma', 'Juris_Doctorate', 'Masters', 'Other'];
+const SCHOOLS = ['Texas A&M University', 'Texas A&M University - Commerce', 'Texas A&M University - Kingsville', 'Texas Tech University', 'Other'];
+const COUNTRIES = ['Canada', 'Mexico', 'United Kingdom', 'United States'];
+// BNY's Degree: single-select pills, no input
+const DEGREE_PILLS = ["Associate's Degree/College Diploma", "Bachelor's Degree", 'Doctorate Degree', 'High School Diploma/GED', 'Higher Degree',
+                      "Master's Degree", 'Non-Degree Program', 'None', 'Other', 'Technical Diploma'];
+let S = null, F = null, seq = 40, hover = '';
+
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === false || v == null) continue;
+    if (k === 'text') e.textContent = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const k of kids.flat()) if (k) e.appendChild(typeof k === 'string' ? document.createTextNode(k) : k);
+  return e;
+}
+const mmYYYY = (m, y) => (m && y) ? String(MONTHS.indexOf(m) + 1).padStart(2, '0') + '/' + y : '';
+const longDate = (m, y) => (m && y) ? m + ' ' + y : 'No date provided';
+function workSub(w) {
+  const a = mmYYYY(w.sm, w.sy), b = (w.current || !w.em) ? '' : mmYYYY(w.em, w.ey);
+  return [w.employer || '', b ? a + ' - ' + b : a].filter(Boolean).join(' ');
+}
+function eduSub(d) {
+  const a = mmYYYY(d.sm, d.sy), b = mmYYYY(d.em, d.ey);
+  return [d.school || '', a && b ? a + ' - ' + b : (a || b)].filter(Boolean).join(' ');
+}
+const workInvalid = (w) => !w.title || !w.employer || !w.sm || (S.extraRequired && !w.business);
+const eduInvalid = (d) => (S.degreeField && !d.degree) || !d.school;
+
+// ------------------------------------------------------------------ form controls (changed in place, never re-rendered)
+function cxSelect(name, label, options, value, opt) {
+  const id = name + '-' + (++seq);
+  const input = h('input', { type: 'text', id, name, role: 'combobox', 'aria-autocomplete': 'list', 'aria-haspopup': 'grid', 'aria-controls': id + '-listbox',
+                             'aria-expanded': 'false', autocomplete: 'none', class: 'cx-select-input', 'aria-required': opt && opt.required ? 'true' : false });
+  input.value = value || ''; input.dataset.picked = value || '';
+  const list = h('div', { id: id + '-listbox', role: 'grid', class: 'cx-select__list hidden' });
+  const wrap = h('div', { class: 'input-field-container' }, input);
+  let reset = null;
+  const syncReset = () => {
+    if (input.dataset.picked && !reset) {
+      reset = h('button', { type: 'button', id: id + '-reset-button', class: 'icon-clear', 'aria-label': 'Remove value for the ' + label + ' field.',
+                            onclick: () => { input.value = ''; input.dataset.picked = ''; syncReset(); } }, 'x');
+      wrap.insertBefore(reset, tog);
+    } else if (!input.dataset.picked && reset) { reset.remove(); reset = null; }
+  };
+  const show = (items) => {
+    list.innerHTML = '';
+    items.forEach((t, i) => list.appendChild(h('div', { role: 'row' }, h('div', { role: 'gridcell', id: id + '-listitem-' + i, class: 'cx-select__list-item',
+      onmousedown: (ev) => { ev.preventDefault(); input.value = t; input.dataset.picked = t; list.classList.add('hidden'); input.setAttribute('aria-expanded', 'false'); syncReset(); } },
+      h('span', {}, h('span', { class: 'highlight' }), h('span', { text: t }))))));
+    list.classList.toggle('hidden', !items.length); input.setAttribute('aria-expanded', items.length ? 'true' : 'false');
+  };
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    show(q ? options.filter(o => o.toLowerCase().includes(q)) : (opt && opt.search ? [] : options));
+  });
+  input.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') list.classList.add('hidden'); });
+  input.addEventListener('blur', () => setTimeout(() => { input.value = input.dataset.picked; list.classList.add('hidden'); }, 150));
+  const tog = h('button', { type: 'button', id: id + '-toggle-button', class: 'icon-dropdown-arrow', 'aria-label': 'Open the drop-down list for ' + label + '.',
+                            tabindex: '-1', onclick: () => show(opt && opt.search ? [] : options) }, 'v');
+  wrap.appendChild(tog);
+  syncReset();
+  return { input, el: h('div', { class: 'cx-select-container' }, wrap, list) };
+}
+
+function textRow(name, label, value, opt) {
+  const id = name + '-' + (++seq);
+  const ctl = opt && opt.area ? h('textarea', { id, name, class: 'input-row__control' }) : h('input', { id, name, class: 'input-row__control', 'aria-required': opt && opt.required ? 'true' : false });
+  ctl.value = value || '';
+  return { input: ctl, el: h('div', { class: 'input-row input-row--text' + (opt && opt.invalid ? ' input-row--invalid' : '') },
+    h('label', { for: id, class: 'input-row__label' + (opt && opt.required ? ' input-row__label--required' : '') }, h('span', { text: label })),
+    h('div', { class: 'input-row__control-container' }, ctl), opt && opt.invalid ? h('span', { class: 'input-row__error', text: 'The ' + label + ' field is required.' }) : null) };
+}
+
+function pickRow(name, label, options, value, opt) {
+  const c = cxSelect(name, label, options, value, opt);
+  return { input: c.input, el: h('div', { class: 'input-row input-row--has-picker' + (opt && opt.invalid ? ' input-row--invalid' : '') },
+    h('label', { for: c.input.id, class: 'input-row__label' + (opt && opt.required ? ' input-row__label--required' : '') }, h('span', { text: label })),
+    c.el, opt && opt.invalid ? h('span', { text: 'The ' + label + ' field is required.' }) : null) };
+}
+
+function dateRow(which, label, m, y) {
+  const mm = cxSelect('month-' + which + 'Date', 'Month', MONTHS, m), yy = cxSelect('year-' + which + 'Date', 'Year', YEARS, y);
+  return { month: mm.input, year: yy.input, el: h('div', { class: 'datepicker-row input-row' }, h('span', { text: label }), mm.el, yy.el) };
+}
+
+function pillsRow(label, options, value) {
+  let cur = value || '';
+  const ul = h('ul', { role: 'radiogroup', 'aria-label': label, class: 'cx-select-pills-container' });
+  for (const o of options) {
+    ul.appendChild(h('li', { role: 'presentation' }, h('button', { type: 'button', role: 'radio', 'aria-checked': o === cur ? 'true' : 'false', class: 'cx-select-pill-section',
+      onclick: () => { cur = o; ul.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', b.textContent.trim() === o ? 'true' : 'false')); } },
+      h('span', { class: 'cx-select-pill-name', text: ' ' + o }))));
+  }
+  return { value: () => cur, el: h('div', { class: 'input-row' }, h('span', { text: label }), h('div', { class: 'input-row__control-container', 'data-qa': 'contentItemId' }, ul)) };
+}
+
+function checkRow(name, label, checked, onchange) {
+  const id = 'af-checkbox-' + name + '-' + (++seq);
+  const box = h('input', { type: 'checkbox', id, class: 'input-row__hidden-control' });
+  box.checked = !!checked;
+  if (onchange) box.addEventListener('change', onchange);
+  return { input: box, el: h('div', { class: 'input-row input-row--checkbox' }, box,
+    h('label', { for: id, class: 'apply-flow-input-checkbox' }, h('span', { class: 'apply-flow-input-checkbox__label', text: label }))) };
+}
+
+// ------------------------------------------------------------------ the open form
+function startForm(kind, idx) {
+  const src = idx >= 0 ? (kind === 'work' ? S.work[idx] : S.education[idx]) : {};
+  F = { kind, idx, data: JSON.parse(JSON.stringify(src)), errors: {}, rows: null, nodes: null };
+  hover = ''; render();
+}
+function readForm() {
+  const d = F.data, r = F.rows, p = (x) => x ? x.dataset.picked : '';
+  if (F.kind === 'work') {
+    Object.assign(d, { employer: r.employer.input.value.trim(), title: r.title.input.value.trim(), sm: p(r.start.month), sy: p(r.start.year),
+      city: r.city.input.value.trim(), desc: r.desc.input.value, country: p(r.country.input) });
+    if (r.current) d.current = r.current.input.checked;
+    const ended = !(r.current && r.current.input.checked);
+    d.em = ended ? p(r.end.month) : ''; d.ey = ended ? p(r.end.year) : '';
+    if (r.business) d.business = r.business.input.value.trim();
+  } else {
+    const picker = r.school.input.getAttribute('role') === 'combobox';
+    Object.assign(d, { major: r.major.input.value.trim(), school: picker ? p(r.school.input) : r.school.input.value.trim(), sm: p(r.start.month),
+      sy: p(r.start.year), em: p(r.end.month), ey: p(r.end.year), graduated: r.graduated ? r.graduated.input.checked : d.graduated });
+    if (r.degree) d.degree = r.degree.value ? r.degree.value() : p(r.degree.input);
+  }
+}
+function save() {
+  readForm();
+  const d = F.data, errs = {};
+  if (F.kind === 'work') {
+    if (!d.employer) errs.employer = 1;
+    if (!d.title) errs.title = 1;
+    if (S.extraRequired && !d.business) errs.business = 1;
+  } else {
+    if (S.degreeField && !d.degree) errs.degree = 1;
+    if (!d.school) errs.school = 1;
+  }
+  if (Object.keys(errs).length) { F.errors = errs; F.nodes = null; render(); return; }
+  const list = F.kind === 'work' ? S.work : S.education;
+  if (F.idx >= 0) list[F.idx] = d; else list.push(d);
+  F = null; render();
+}
+function cancel() { F = null; render(); }
+
+function formNodes(footerCls) {
+  if (F.nodes && F.nodes.footerCls === footerCls) return F.nodes;
+  if (F.rows) readForm();              // a refused Save redraws the form with its errors, keeping what was entered
+  const d = F.data, e = F.errors, rows = {}, kids = [];
+  if (F.kind === 'work') {
+    rows.employer = textRow('employerName', 'Employer Name', d.employer, { required: true, invalid: e.employer });
+    rows.title = textRow('jobTitle', 'Job Title', d.title, { required: true, invalid: e.title });
+    rows.start = dateRow('start', 'Start Date', d.sm, d.sy);
+    rows.end = dateRow('end', 'End Date', d.em, d.ey);
+    kids.push(rows.employer.el, rows.title.el, rows.start.el, rows.end.el);
+    if (S.currentFlag) {
+      rows.current = checkRow('currentJobFlag', 'Current Job', d.current, () => rows.end.el.classList.toggle('hidden', rows.current.input.checked));
+      rows.end.el.classList.toggle('hidden', !!d.current);
+      kids.push(rows.current.el);
+    }
+    rows.country = pickRow('countryCode', 'Employer Country', COUNTRIES, d.country);
+    rows.city = textRow('employerCity', 'Employer City', d.city);
+    rows.desc = textRow('responsibilities', 'Responsibilities', d.desc, { area: true });
+    kids.push(rows.country.el, rows.city.el, rows.desc.el);
+    if (S.extraRequired) { rows.business = textRow('businessType', 'Type of Business', d.business, { required: true, invalid: e.business }); kids.push(rows.business.el); }
+  } else {
+    if (S.degreeField) {
+      rows.degree = S.degreePills ? pillsRow('Degree', DEGREE_PILLS, d.degree) : pickRow('contentItemId', 'Degree', DEGREES, d.degree, { required: true, invalid: e.degree });
+      kids.push(rows.degree.el);
+    }
+    rows.major = textRow('major', 'Major', d.major);
+    // BNY's form has no School picker: an 'Educator' text box
+    rows.school = S.schoolName === 'educator' ? textRow('educator', 'Educator', d.school)
+                                              : pickRow(S.schoolName || 'educationalEstablishment', 'School', SCHOOLS, d.school, { search: true, invalid: e.school });
+    rows.start = dateRow('start', 'Start Date', d.sm, d.sy);
+    rows.end = dateRow('end', 'End Date', d.em, d.ey);
+    kids.push(rows.major.el, rows.school.el, rows.start.el, rows.end.el);
+    if (!S.noGraduated) { rows.graduated = checkRow('graduatedFlag', 'Graduated', d.graduated); kids.push(rows.graduated.el); }
+  }
+  F.rows = rows;
+  const saveText = F.idx >= 0 ? 'Save' : (F.kind === 'work' ? 'Add experience' : 'Add education');
+  const footer = h('div', { class: footerCls }, h('div', { class: 'app-dialog__buttons-bar' },
+    h('button', { class: 'button app-dialog__footer-button cancel-btn', onclick: cancel }, h('span', { class: 'button__label', text: 'Cancel' })),
+    h('button', { class: 'button app-dialog__footer-button save-btn', onclick: save }, h('span', { class: 'button__label', text: saveText }))));
+  F.nodes = { footerCls, kids, footer };
+  return F.nodes;
+}
+
+// ------------------------------------------------------------------ rendering
+function tilesBlock(kind) {
+  const label = kind === 'work' ? 'Experience' : 'Education';
+  const required = kind === 'work' ? S.requiredWork : S.requiredEdu;
+  const list = kind === 'work' ? S.work : S.education;
+  const tiles = list.map((x, i) => {
+    const inv = kind === 'work' ? workInvalid(x) : eduInvalid(x);
+    const title = kind === 'work' ? (x.title || 'Unnamed Job Title') : (x.major || 'Unnamed Major');
+    return h('article', { class: 'apply-flow-profile-item-tile' + (inv ? ' apply-flow-profile-item-tile--invalid' : '') + (F ? ' hidden' : '') },
+      h('div', { class: 'apply-flow-profile-item-tile__summary', 'data-profile-item-tile': 'true', 'data-profile-item-invalid': inv ? 'true' : false, role: 'group', tabindex: '0' },
+        h('div', { class: 'apply-flow-profile-item-tile__summary-content' },
+          h('div', { class: 'apply-flow-profile-item-tile__summary-title' }, h('span', { text: title })),
+          h('div', { class: 'apply-flow-profile-item-tile__summary-subtitle', text: kind === 'work' ? workSub(x) : eduSub(x) }),
+          inv ? h('div', { class: 'apply-flow-profile-item-tile__summary-validation' }, h('span', { text: 'Fields to fix: 1' })) : null),
+        h('div', { class: 'apply-flow-profile-item-tile__actions-container' },
+          h('button', { 'aria-label': 'Edit', class: 'apply-flow-profile-item-tile__edit-item-icon', onclick: () => startForm(kind, i) }),
+          h('button', { 'aria-label': 'Delete', class: 'apply-flow-profile-item-tile__delete-icon', onclick: () => { list.splice(i, 1); render(); } }))));
+  });
+  const item = h('div', { class: 'standard-apply-flow-profile-item' }, h('div', { class: 'profile-item-list' }, tiles));
+  if (F && F.kind === kind) {
+    const n = formNodes('profile-item-footer');
+    item.appendChild(h('div', { class: 'profile-item-content' }, h('div', { class: 'profile-item-content--form' }, n.kids), n.footer));
+  }
+  item.appendChild(h('button', { class: 'button apply-flow-profile-item-tile__new-tile', type: 'button', onclick: () => startForm(kind, -1) },
+    h('span', { class: 'button__label', text: 'Add ' + label })));
+  return h('div', { class: 'apply-flow-block apply-flow-block--tile-profile-items' }, h('h3', { text: label }),
+    h('div', { class: 'apply-flow-block__form-list', 'aria-label': label + (required ? ' Required' : ' '), role: 'region' },
+      h('div', { class: 'profile-item-container' }, item)));
+}
+
+function timelineBlock() {
+  const kids = [];
+  if (F) {
+    const n = formNodes('timeline-form-footer');
+    kids.push(h('timeline-form-inline', {}, h('div', { class: 'standard-apply-flow-timeline-form' }, h('div', { class: 'timeline-form-content' }, n.kids), n.footer)));
+  } else {
+    kids.push(h('button', { class: 'button work-and-education-timeline-add-button timeline-work-add-button', type: 'button', onclick: () => startForm('work', -1) }, 'ADD EXPERIENCE'));
+    kids.push(h('button', { class: 'button work-and-education-timeline-add-button timeline-education-add-button', type: 'button', onclick: () => startForm('education', -1) }, 'ADD EDUCATION'));
+    const items = [];
+    const item = (kind, x, i, n) => {
+      const inv = kind === 'work' ? workInvalid(x) : eduInvalid(x);
+      const title = kind === 'work' ? (x.title || 'Unnamed Job Title') : (x.major || 'Unnamed Major');
+      const key = kind + i;
+      items.push(h('div', { class: 'beautiful-timeline-item beautiful-timeline-item--level1 beautiful-timeline-item--' + (kind === 'work' ? 'experiences__' : 'educations__') + n + (inv ? ' beautiful-timeline-item--invalid-item' : ''),
+                            tabindex: '0', 'data-profile-item-tile': 'true', role: 'group',
+                            onmouseover: () => { if (hover !== key) { hover = key; render(); } },
+                            onclick: (ev) => { if (!ev.target.closest('button')) startForm(kind, i); } },
+        h('div', { class: 'beautiful-timeline-item__content' }, h('div', { class: 'beautiful-timeline-item__info' },
+          h('span', { class: 'beautiful-timeline-item__title', text: title }),
+          kind === 'work' && x.showSub ? h('span', { class: 'beautiful-timeline-item__subtitle', text: x.employer || '' }) : null,
+          h('span', { class: 'oj-helper-hidden-accessible', text: 'From ' + longDate(x.sm, x.sy) + ' to ' + (kind === 'work' && x.current ? 'No date provided' : longDate(x.em, x.ey)) }))),
+        hover === key ? h('div', { class: 'beautiful-timeline-item__actions' },
+          h('button', { type: 'button', class: 'beautiful-timeline-item__edit-icon', 'aria-label': 'Edit', onclick: () => startForm(kind, i) }),
+          h('button', { type: 'button', class: 'beautiful-timeline-item__delete-icon', 'aria-label': 'Remove',
+                        onclick: () => { (kind === 'work' ? S.work : S.education).splice(i, 1); hover = ''; render(); } })) : null));
+    };
+    S.work.forEach((x, i) => item('work', x, i, i + 3));
+    S.education.forEach((x, i) => item('education', x, i, i + 1));
+    kids.push(h('beautiful-timeline', {}, h('div', { class: 'beautiful-timeline' }, items)));
+  }
+  return h('div', { class: 'apply-flow-block apply-flow-block--work-and-education-timeline' }, h('h3', { text: 'Work and Education History' }),
+    h('div', { class: 'apply-flow-block__form-list', 'aria-label': 'Work and Education History ', role: 'region' }, h('div', { class: 'timeline-container' }, kids)));
+}
+
+function render() {
+  const page = document.getElementById('page');
+  page.innerHTML = '';
+  page.appendChild(h('div', { class: 'apply-flow-block' }, h('div', { class: 'apply-flow-block__form-list', 'aria-label': 'Work Preferences ', role: 'region' },
+    h('label', { for: 'travel' }, 'Willing to travel?'), h('input', { id: 'travel', class: 'input-row__control' }))));
+  if (S.layout === 'timeline') page.appendChild(timelineBlock());
+  else { page.appendChild(tilesBlock('work')); page.appendChild(tilesBlock('education')); }
+  page.appendChild(h('button', { type: 'button', class: 'button apply-flow-pagination__button' }, 'NEXT'));
+}
+
+window.setup = (state) => { S = Object.assign({ layout: 'tiles', work: [], education: [], requiredWork: true, requiredEdu: true, currentFlag: true, degreeField: true }, state); F = null; hover = ''; render(); };
+window.state = () => JSON.parse(JSON.stringify({ work: S.work, education: S.education, open: !!F }));
+window.setup({});
+</script>
+</body></html>

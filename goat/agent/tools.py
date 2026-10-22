@@ -1407,23 +1407,31 @@ class ToolDispatcher:
             if opened:
                 snap = await snapmod.take(self.ctx.ex, with_text=with_text)
         # SmartRecruiters' Experience / Education cards are written by the harness: the agent could not see their buttons
-        # and the résumé parse adds wrong cards (CapTech, Wellmark, 2026-10-21). Checked on every snapshot of the form (a
-        # read when nothing is missing); at most three passes that change something per run.
+        # and the résumé parse adds wrong cards (CapTech, Wellmark, 2026-10-21). Oracle's entry tiles likewise: its résumé
+        # import wrote skill lists as employers and an 'Engineering Honors' degree, and ten applications parked over them
+        # (GM Financial, Citizens, BNY, Uber, 2026-10-22). Checked on every snapshot of the form (a read when nothing is
+        # missing); at most three passes that change something per run.
         sections_note = ""
-        if self.ctx.portal == "smartrecruiters" and self.ctx.control_failures.get("sections:auto", 0) < 3:
+        filler_cls, noun = None, "cards"
+        if self.ctx.portal == "smartrecruiters":
+            from ..adapters.smartrecruiters_sections import SmartRecruitersSections as filler_cls
+        elif self.ctx.portal == "oracle":
+            from ..adapters.oracle_sections import OracleSections as filler_cls
+            noun = "entries (tiles)"
+        if filler_cls is not None and self.ctx.control_failures.get("sections:auto", 0) < 3:
             try:
-                from ..adapters.smartrecruiters_sections import SmartRecruitersSections
-                filler = SmartRecruitersSections(self.ctx.ex, self.ctx.job, self.ctx.page_no)
+                filler = filler_cls(self.ctx.ex, self.ctx.job, self.ctx.page_no)
                 if await filler.applies():
                     rep = await filler.run()
                     if rep.added or rep.updated or rep.failed:
                         self.ctx.control_failures["sections:auto"] = self.ctx.control_failures.get("sections:auto", 0) + 1
                         db.event(self.ctx.job_id, "adapter:sections", {**rep.summary(), "by": "snapshot"})
                         snap = await snapmod.take(self.ctx.ex, with_text=with_text)
-                    sections_note = ("HARNESS: the Experience and Education cards hold his stored entries"
+                    sections_note = (f"HARNESS: the Experience and Education {noun} hold his stored entries"
                                      + (f" (added {len(rep.added)}, replaced {len(rep.updated)})" if rep.added or rep.updated else "")
                                      + (f"; FAILED: {'; '.join(rep.failed)[:300]}" if rep.failed else "")
-                                     + ". Leave those cards alone.\n")
+                                     + f". Leave those {noun.split(' ')[0]} alone"
+                                     + ("; for what FAILED call fill_sections once, then fix only that by hand" if rep.failed else "") + ".\n")
             except Exception as e:  # noqa: BLE001 - best effort; the model can call fill_sections
                 self.ctx.control_failures["sections:auto"] = self.ctx.control_failures.get("sections:auto", 0) + 1
                 db.event(self.ctx.job_id, "adapter:sections:error", {"error": f"{type(e).__name__}: {e}"[:300]})
@@ -2454,6 +2462,12 @@ class ToolDispatcher:
         if self.ctx.portal == "smartrecruiters":
             from ..adapters.smartrecruiters_sections import SmartRecruitersSections
             rep = await SmartRecruitersSections(self.ctx.ex, self.ctx.job, self.ctx.page_no).run()
+        elif self.ctx.portal == "oracle":
+            from ..adapters.oracle_sections import OracleSections
+            rep = await OracleSections(self.ctx.ex, self.ctx.job, self.ctx.page_no).run()
+            if rep.skipped and not (rep.added or rep.updated or rep.failed or rep.present):
+                return {**rep.summary(), "note": "no Experience / Education block on this step of the form: go to the step "
+                                                 "that shows them (NEXT or BACK), then call fill_sections there"}, None
         elif self.ctx.portal == "greenhouse":
             from ..adapters.greenhouse_sections import GreenhouseSections, is_employment_page
             snap = await snapmod.take(self.ctx.ex)

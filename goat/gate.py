@@ -446,13 +446,25 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     # Oracle's own count of what blocks its SUBMIT (Berkshire Hathaway Energy, 2026-10-21: "You have 7 issues that need to be
     # fixed before you can submit your application"; the gate passed and the click did nothing)
     if getattr(snapshot, "entry_form_open", False):
-        return GateResult("blocked", ["an Experience / Education entry form is open and not saved: fill it from his stored entry "
-                                      "(experience.work.N.* / education.*) and click its SAVE, or CANCEL it; the application never "
-                                      "goes in with an entry half-entered (AutoZone, 2026-10-21)"])
+        return GateResult("blocked", ["an Experience / Education entry form is open and not saved: call fill_sections (it closes "
+                                      "the form and writes his stored entries), or fill it from his stored entry (experience.work.N.* "
+                                      "/ education.*) and click its SAVE, or CANCEL it; the application never goes in with an entry "
+                                      "half-entered (AutoZone, 2026-10-21)"])
     tile_problems = oracle_tile_problems(getattr(snapshot, "tiles", None) or [], snapshot.items, job.get("company", ""), portal,
                                          required_blocks=list(getattr(snapshot, "required_blocks", None) or []))
     if tile_problems:
-        return GateResult("blocked", tile_problems[:5])
+        # the harness rewrites Oracle's entries from the store (oracle_sections) when their step is on screen: the model's
+        # hand edits are the fallback. Entries on another step cannot be reached from here: fill_sections on step 1 found
+        # nothing to do and the run circled (GM Financial's shadow retry, 2026-10-22).
+        here = [t for t in tile_problems if "on another step of the form" not in t]
+        if here:
+            return GateResult("blocked", ["call fill_sections first: the harness deletes, fixes and adds Oracle's Experience / "
+                                          "Education entries from his stored ones; only what it reports failed is yours to fix. "
+                                          f"What it has to fix: {here[0]}"] + here[1:5])
+        return GateResult("blocked", ["Oracle's Experience / Education entries on another step of the form are not his yet: go "
+                                      "to that step (NEXT, or BACK if it is behind you) and take a snapshot there; the harness "
+                                      "rewrites them from his stored entries. This step's own fields come first. What waits "
+                                      f"there: {tile_problems[0]}"] + tile_problems[1:4])
     m_issues = ORACLE_ISSUES.search(page_text or "")
     if m_issues:
         return GateResult("blocked", [
