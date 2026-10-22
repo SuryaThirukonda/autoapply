@@ -64,6 +64,7 @@ async def test_an_aria_hidden_layout_mirror_is_not_a_field():
 
 OPT_IN = """<html><body>
 <label><input type="checkbox" id="alerts" checked> I agree to receive updates about new job opportunities.</label>
+<label><input type="checkbox" id="projects" checked> I agree to receive updates about new job projects.</label>
 <label><input type="checkbox" id="privacy"> I have read and agree to the privacy policy.</label>
 </body></html>"""
 
@@ -87,6 +88,8 @@ async def test_a_ticked_marketing_opt_in_is_unticked_by_the_consent_pass(tmp_pat
         snap = await snapshot.take(ex)
         res = await for_portal("oracle").prefill(ex, snap, job, 1)
         assert await ex.page.evaluate("() => document.getElementById('alerts').checked") is False, res.details
+        # Berkshire Hathaway Energy's wording (2026-10-22)
+        assert await ex.page.evaluate("() => document.getElementById('projects').checked") is False, res.details
         assert await ex.page.evaluate("() => document.getElementById('privacy').checked") is True, res.details
     finally:
         await ex.close()

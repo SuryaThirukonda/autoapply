@@ -513,7 +513,7 @@ async def _consents_impl(self, ex, snap: Snapshot, job: dict, page_no: int, res:
                    and ((MARKETING.search(i.get("label") or "") and not PROCESSING.search(i.get("label") or "")
                          and not future_roles_consent(i.get("label") or "")
                          and not SMS.search(i.get("label") or ""))
-                        or TALENT_COMMUNITY.search(i.get("label") or ""))]
+                        or TALENT_COMMUNITY.search(i.get("label") or "") or JOB_ALERTS.search(i.get("label") or ""))]
         if unticks:
             out = await fill.fill_batch(ex, [{"ref": i["ref"], "value": "false"} for i in unticks])
             for i, r in zip(unticks, out):
