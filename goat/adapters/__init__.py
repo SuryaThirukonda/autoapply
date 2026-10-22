@@ -135,7 +135,10 @@ def consent_key(label: str) -> str | None:
 # the posting's own locations, not his "Anywhere in the United States".
 POSTING_LOCATIONS = re.compile(
     r"(locations?(\(s\))?\s+(that are |which are )?(listed |shown |offered |posted )?(on|in) (the|this) (job )?(posting|requisition|job description|job ad)\b|"
-    r"(available|listed|posted|offered) locations?(\(s\))? (on|in|for) (the|this) (job|posting|position|role|requisition)\b)", re.I)
+    r"(available|listed|posted|offered) locations?(\(s\))? (on|in|for) (the|this) (job|posting|position|role|requisition)\b|"
+    # "Rank your preferred work locations" over the posting's own sites (Newell Brands, 2026-10-22: Dallas and "Anywhere in
+    # the United States" were typed, and the judge failed both against Huntersville, NC / Brampton, ON)
+    r"\brank\b.{0,40}\b(work |office |job )?locations?\b)", re.I)
 LOCATION_KEY = re.compile(r"(relocat|location|office)", re.I)
 
 

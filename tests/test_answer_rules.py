@@ -2399,3 +2399,12 @@ def test_a_picker_rule_is_never_typed_into_a_text_box():
     v = "Keep the form's own order: first option as first preference"
     assert RULE_TEXT.search(v) and not concrete_entries(v)
     assert not RULE_TEXT.search("Dallas; Houston; Austin")
+
+
+
+def test_a_rank_your_locations_box_takes_the_posting_locations():
+    """Newell Brands (2026-10-22): 'Rank preferred work locations' over Huntersville, NC and Brampton, ON."""
+    from goat.adapters import POSTING_LOCATIONS
+    assert POSTING_LOCATIONS.search("Rank preferred work locations")
+    assert POSTING_LOCATIONS.search("Please rank the locations below in order of preference")
+    assert not POSTING_LOCATIONS.search("Current location")
