@@ -2207,3 +2207,20 @@ def test_fill_batch_never_ticks_a_community_or_select_all_box():
     assert "each required box" in never_tick({"type": "checkbox", "label": "Select all - by selecting all, you acknowledge"}, "Yes")
     assert never_tick({"type": "checkbox", "label": "I have read the job applications privacy notice"}, "true") == ""
     assert never_tick({"type": "text", "label": "Join our talent community"}, "true") == ""
+
+
+
+def test_open_questions_are_found_for_the_idle_hold(store):
+    """Wellmark (2026-10-21): the run asked, went quiet, and was held 'stuck' with nothing waiting on the answer."""
+    from types import SimpleNamespace
+    from goat import db
+    from goat.agent.loop import open_question_keys
+    job = _job()
+    with db.tx() as con:
+        con.execute("INSERT INTO pending_questions(job_id,key,question,options,field_type,asked_at,deadline_at,answered_at,answer) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)", (job["id"], "q.open", "Open?", "[]", "text", 1, 2, None, None))
+        con.execute("INSERT INTO pending_questions(job_id,key,question,options,field_type,asked_at,deadline_at,answered_at,answer) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)", (job["id"], "q.done", "Done?", "[]", "text", 1, 2, 3, "No"))
+    ctx = SimpleNamespace(asked_keys=["q.open", "q.done", "q.other"], job_id=job["id"])
+    assert open_question_keys(ctx) == ["q.open"]
+    assert open_question_keys(SimpleNamespace(asked_keys=[], job_id=job["id"])) == []

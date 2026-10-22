@@ -328,10 +328,18 @@ class AgentLoop:
             else:
                 self.idle_steps += 1
                 if self.idle_steps >= 6:
-                    # American Express (2026-10-19): eight minutes of reasoning-only replies every 3 s, with no step cap
+                    # American Express (2026-10-19): eight minutes of reasoning-only replies every 3 s, with no step cap.
+                    # With questions open, the hold waits on them, so his answer releases the job (Wellmark, 2026-10-21:
+                    # the run went quiet after asking and its 'stuck' hold was never released by the answer).
+                    waiting = open_question_keys(ctx)
+                    if waiting:
+                        raise Parked(f"needs_you: waiting for Surya's answer to {', '.join(waiting)[:160]}", "hold", blocked_on=waiting)
                     raise Parked("stuck: the model returned no tool call six times in a row", "hold")
             if not produced_tool and resp.output and all(getattr(o, "type", "") == "reasoning" for o in resp.output):
-                self.items.append({"role": "user", "content": [{"type": "input_text", "text": "Continue with a tool call."}]})
+                waiting = open_question_keys(ctx)
+                nudge = ("Questions are with Surya (" + ", ".join(waiting)[:200] + "): call await_answers with those keys to wait for "
+                         "his answer, or fill the other fields first." if waiting else "Continue with a tool call.")
+                self.items.append({"role": "user", "content": [{"type": "input_text", "text": nudge}]})
 
             # Effort escalation: one retry at medium right after a failed step, then back to low.
             if step_failed and not self.retried_step:
@@ -369,3 +377,17 @@ class AgentLoop:
                 if advice:
                     self.items.append({"role": "user", "content": [{"type": "input_text", "text": "ADVISOR (a senior engineer looked at the page):\n" + advice}]})
             last_failed = step_failed
+
+
+def open_question_keys(ctx) -> list[str]:
+    """Keys this run asked Surya that are still unanswered."""
+    keys = [k for k in (getattr(ctx, "asked_keys", None) or []) if k]
+    if not keys:
+        return []
+    try:
+        rows = db.connect().execute(
+            "SELECT DISTINCT key FROM pending_questions WHERE job_id=? AND answered_at IS NULL AND key IN (%s)" % ",".join("?" * len(keys)),
+            (ctx.job_id, *keys)).fetchall()
+    except Exception:  # noqa: BLE001 - without it the old 'stuck' hold stands
+        return []
+    return [r[0] for r in rows]
