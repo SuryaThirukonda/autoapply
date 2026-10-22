@@ -6,6 +6,7 @@
 #   Stop:   New-Item logs\agent-loop.stop, then kill the python process
 #
 # Never start a second agent by hand while this loop runs: two workers would share one browser.
+# The run includes the Simplify scraper (every SCRAPE_INTERVAL_S): new postings in his roles go first in the queue.
 $ErrorActionPreference = 'Continue'
 Set-Location (Split-Path $PSScriptRoot -Parent)
 $err = "logs\agent-loop.err"
@@ -13,7 +14,7 @@ Remove-Item "logs\agent-loop.stop" -ErrorAction SilentlyContinue
 while ($true) {
     if (Test-Path "logs\agent-loop.stop") { break }
     Add-Content -Path $err -Value ("{0} loop: starting goat run" -f (Get-Date -Format s))
-    & cmd /c ".venv\Scripts\python.exe -m goat run --no-scraper >> logs\agent-loop.log 2>> logs\agent-loop.err"
+    & cmd /c ".venv\Scripts\python.exe -m goat run >> logs\agent-loop.log 2>> logs\agent-loop.err"
     Add-Content -Path $err -Value ("{0} loop: goat run exited with code {1}" -f (Get-Date -Format s), $LASTEXITCODE)
     Start-Sleep -Seconds 5
 }

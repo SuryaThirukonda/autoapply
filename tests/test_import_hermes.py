@@ -58,7 +58,7 @@ def hermes_dir(tmp_path):
         _listing("q-old", "OldCo", "Backend Intern", OLD_QUEUED_URL, "hold",
                  ats="ashby", date_posted=1788000000, reason="login_or_2fa_wall: stale"),
         _listing("q-wd", "Mega", "SWE Intern", WORKDAY_URL, "queued", ats="workday", date_posted=1791000000),
-        _listing("q-other", "Tiny", "SWE Intern", OTHER_URL, "queued", ats="other", date_posted=1791500000),
+        _listing("q-other", "Tiny", "SWE Intern", OTHER_URL, "queued", ats="eightfold", date_posted=1791500000),
         _listing("base-1", "Base", "Data Intern", "https://boards.greenhouse.io/base/jobs/1", "baseline",
                  ats="greenhouse", date_posted=1790000000, reason="would_be:queued:"),
         _listing("rej-1", "Rej", "Quant Intern", "https://boards.greenhouse.io/rej/jobs/2", "rejected",

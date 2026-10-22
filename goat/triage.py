@@ -27,6 +27,11 @@ LANES = {
     "workday": LANE_ACCOUNT,
     "oracle": LANE_ACCOUNT,
     "icims": LANE_ACCOUNT,
+    # the agent applies through these too (NetApp and Corning on SuccessFactors, five SmartRecruiters and sixteen
+    # company-hosted forms confirmed by 2026-10-21); Eightfold stays manual: none of its six jobs got through
+    "successfactors": LANE_ACCOUNT,
+    "smartrecruiters": LANE_NO_ACCOUNT,
+    "other": LANE_ACCOUNT,
 }
 
 
@@ -46,6 +51,25 @@ def detect_ats(url: str, r: dict | None = None) -> str:
 
 def lane_for(ats: str) -> str | None:
     return LANES.get(ats)
+
+
+ALIGNED = "aligned"     # the roles Surya named first (2026-10-21)
+NEUTRAL = "neutral"
+OFF_ROLE = "off_role"
+
+
+def role_fit(title: str, r: dict | None = None) -> str:
+    """How well a title fits the roles Surya wants first: SWE, SDE, application development, programming, technology,
+    data science, data engineering and data analytics. A title naming one of those is 'aligned' even when it also names
+    another field ('Marketing Analytics Intern'); one naming only another field ('Mechanical Engineer Intern',
+    'Business Operations Engineer Intern') is 'off_role'; the rest are 'neutral'."""
+    r = r or rules()
+    t = (title or "").lower()
+    if r.get("aligned_title_pattern") and re.search(r["aligned_title_pattern"], t, re.I):
+        return ALIGNED
+    if r.get("off_role_title_pattern") and re.search(r["off_role_title_pattern"], t, re.I):
+        return OFF_ROLE
+    return NEUTRAL
 
 
 def classify(listing: dict, r: dict | None = None) -> tuple[str, str, str, str]:
@@ -87,6 +111,8 @@ def classify(listing: dict, r: dict | None = None) -> tuple[str, str, str, str]:
     relevant = r.get("relevant_title_pattern")
     if relevant and not re.search(relevant, low_title, re.I):
         return UNSURE, "title:not_obviously_technical", ats, variant
+    if role_fit(title, r) == OFF_ROLE:
+        return UNSURE, "title:off_role", ats, variant
     if lane_for(ats):
         return QUEUED, "", ats, variant
     return MANUAL, f"portal:{ats}", ats, variant

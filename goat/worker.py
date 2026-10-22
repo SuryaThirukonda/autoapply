@@ -31,20 +31,33 @@ log = logging.getLogger(__name__)
 EXPLICIT_PRIORITY = 1000      # = cloud.ORDER_BASE
 AUTO_TOP = 899                # auto ranks stay below 900 so a requeue's +5 / +10 never crosses into the explicit band
 FRESH_DAYS = 2
+ALIGNED_DAYS = 7              # a posting this recent whose title fits his roles (triage.role_fit) leads the queue
 
 
 def rank_queue(con, now: int | None = None) -> int:
     """Give the queued jobs below EXPLICIT_PRIORITY priorities 899, 898, ... newest posting first (date_posted, else the
-    day goat first saw the listing); posts from the last FRESH_DAYS days lead. Every view sorted by priority (the
-    website, `goat list`) then shows the claim order. Returns how many priorities changed."""
+    day goat first saw the listing). Postings from the last ALIGNED_DAYS days whose title fits his roles (SWE, SDE,
+    application development, data science / engineering / analytics: triage.role_fit) lead, then the rest of the last
+    FRESH_DAYS days, then everything else (Surya, 2026-10-21). Every view sorted by priority (the website, `goat list`)
+    then shows the claim order. Returns how many priorities changed."""
+    from . import triage
     now = int(now or db.now())
     rows = con.execute(
-        "SELECT j.id, j.priority, COALESCE(l.date_posted, l.first_seen, 0) AS posted, COALESCE(j.created_at, 0) AS created "
-        "FROM jobs j JOIN listings l ON l.id=j.listing_id "
+        "SELECT j.id, j.priority, COALESCE(l.date_posted, l.first_seen, 0) AS posted, COALESCE(j.created_at, 0) AS created, "
+        "COALESCE(l.title, '') AS title FROM jobs j JOIN listings l ON l.id=j.listing_id "
         "WHERE j.status=? AND COALESCE(j.priority, 0) < ? AND COALESCE(j.cleared_live, 0)=0",
         (states.QUEUED, EXPLICIT_PRIORITY)).fetchall()
     cutoff = now - FRESH_DAYS * 86400
-    order = sorted(rows, key=lambda r: (int(r["posted"] or 0) >= cutoff, int(r["posted"] or 0), int(r["priority"] or 0),
+    aligned_cutoff = now - ALIGNED_DAYS * 86400
+
+    def fits(title: str) -> bool:
+        try:
+            return triage.role_fit(title) == triage.ALIGNED
+        except Exception:  # noqa: BLE001 - without the rules file the posting order alone stands
+            return False
+
+    order = sorted(rows, key=lambda r: (int(r["posted"] or 0) >= aligned_cutoff and fits(r["title"]),
+                                        int(r["posted"] or 0) >= cutoff, int(r["posted"] or 0), int(r["priority"] or 0),
                                         int(r["created"] or 0), int(r["id"])), reverse=True)
     changed = 0
     for rank, r in enumerate(order):

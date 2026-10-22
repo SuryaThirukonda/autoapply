@@ -65,7 +65,8 @@ def test_triage():
     assert triage.classify({**row, "title": "Quantitative Trading Intern"})[0] == triage.REJECTED
     assert triage.classify({**row, "url": "https://jobs.lever.co/acme/abc"})[2] == "lever"
     assert triage.lane_for("lever") == triage.LANE_READY_FOR_YOU
-    assert triage.classify({**row, "url": "https://careers.smartrecruiters.com/acme/1"})[0] == triage.MANUAL
+    assert triage.classify({**row, "url": "https://careers.smartrecruiters.com/acme/1"})[0] == triage.QUEUED
+    assert triage.classify({**row, "url": "https://acme.eightfold.ai/careers/job/1"})[0] == triage.MANUAL
 
 
 def test_gate_patterns():
@@ -86,3 +87,26 @@ def test_reconcile_after_restart(fresh):
     assert out == {"requeued": 1, "submitting_held": 1}
     rows = {r["listing_id"]: (r["status"], r["hold_reason"]) for r in db.connect().execute("SELECT listing_id,status,hold_reason FROM jobs")}
     assert rows["L1"][0] == "queued" and rows["L2"][0] == "hold" and "unreconciled" in rows["L2"][1]
+
+
+
+def test_role_fit_names_his_roles_and_holds_other_fields():
+    """Surya (2026-10-21): SWE, SDE, application development, programming, technology, data science / engineering /
+    analytics first; a title in another field only waits for his call."""
+    from goat import triage
+    for t in ("Software Engineer Intern", "Software Development Engineer Intern", "SDE Intern", "Application Engineering Intern",
+              "Application Analyst Intern", "Information Technology Development and Infrastructure Intern", "Data Science Intern",
+              "Data Engineer Intern", "Data Analyst Undergraduate Intern", "Marketing Analytics Intern", "AI Engineer Intern",
+              "Cloud Software Developer Intern", "Technology Intern", "Machine Learning Research Intern", "Programmer Intern"):
+        assert triage.role_fit(t) == triage.ALIGNED, t
+    for t in ("Mechanical Engineer Intern", "Business Operations Engineer Intern", "Operations Analyst Intern",
+              "Systems/Process Engineering Intern - Tapeout Operations", "AI Consulting Associate Program Product Owner Intern",
+              "Reimbursement Analyst Intern"):
+        assert triage.role_fit(t) == triage.OFF_ROLE, t
+    for t in ("Business Analyst Intern", "Engineering Intern", "AI and Estimation Intern"):
+        assert triage.role_fit(t) == triage.NEUTRAL, t
+    row = {"id": "x", "title": "Mechanical Engineer Intern", "company_name": "Zebra", "category": "Software",
+           "terms": ["Summer 2027"], "url": "https://zebra.wd5.myworkdayjobs.com/x/job/y/z", "active": True, "is_visible": True}
+    assert triage.classify(row)[:2] == (triage.UNSURE, "title:off_role")
+    assert triage.classify({**row, "title": "Wireless Hardware Engineer Intern"})[:2] == (triage.UNSURE, "title:hardware_role")
+    assert triage.classify({**row, "title": "Software Engineer Intern"})[0] == triage.QUEUED

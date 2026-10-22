@@ -94,3 +94,19 @@ async def test_a_fresh_successfactors_job_starts_signed_out():
         assert left == ["jobs.lever.co"], left
     finally:
         await ex.close()
+
+
+def test_a_recent_posting_in_his_roles_leads_the_queue(store, monkeypatch):
+    """Surya (2026-10-21): recent SWE / SDE / application development / data postings go first, so they finish first."""
+    monkeypatch.setattr(SETTINGS, "lanes_enabled", ["no_account"])
+    now = int(time.time())
+    with db.tx() as con:
+        _job(con, 1, now - 3600)                                   # fresh, neutral title
+        _job(con, 2, now - 4 * DAY)                                # four days old, aligned
+        _job(con, 3, now - 20 * DAY)                               # old, aligned: no lead
+        _job(con, 4, now - 1 * DAY)                                # yesterday, aligned
+        con.execute("UPDATE listings SET title='Software Engineer Intern' WHERE id='L2'")
+        con.execute("UPDATE listings SET title='Data Engineer Intern' WHERE id='L3'")
+        con.execute("UPDATE listings SET title='Data Analytics Intern' WHERE id='L4'")
+        con.execute("UPDATE listings SET title='Business Analyst Intern' WHERE id='L1'")
+    assert _claims(4) == [4, 2, 1, 3]

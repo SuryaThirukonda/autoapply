@@ -163,11 +163,14 @@ def ingest(rows: list[dict], *, first_run: bool) -> dict:
                     counts["already_applied"] += 1
             con.execute(_INSERT_LISTING, _listing_values(
                 row, ats=ats, variant=variant, triage_status=status, triage_reason=reason, ts=ts))
+            fit = triage.role_fit(title)
             if status == triage.QUEUED:
                 job_id = _insert_job(con, lid, ats=ats, variant=variant, url=url)
+                if fit == triage.ALIGNED:
+                    counts["aligned"] = counts.get("aligned", 0) + 1     # worker.rank_queue puts these first
             counts[status] = counts.get(status, 0) + 1
             _event(con, job_id, "listing:new", {"listing_id": lid, "status": status, "reason": reason,
-                                                "ats": ats, "company": company, "title": title})
+                                                "ats": ats, "company": company, "title": title, "role_fit": fit})
     return counts
 
 

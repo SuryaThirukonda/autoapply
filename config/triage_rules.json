@@ -16,7 +16,7 @@
   },
   "unsure_title_patterns": {
     "off_season_or_coop": "\\b(co-?op|fall|spring|winter|part[- ]time|2026)\\b",
-    "hardware_role": "\b(hardware|electrical|fpga|asic|rtl|verilog|vhdl|pcb|analog|circuit|chip design|silicon)\b"
+    "hardware_role": "\\b(hardware|electrical|fpga|asic|rtl|verilog|vhdl|pcb|analog|circuit|chip design|silicon)\\b"
   },
   "foreign_location_patterns": [
     "canada",
@@ -106,5 +106,8 @@
       "_source": "Scale AI: 90 days before reapplying to the same role"
     }
   ],
-  "_hardware_note": "Surya 2026-10-18: apply to EE/CE 'or related' postings whose work is software; not to straight hardware roles. Titles that look like hardware wait for his call; the agent judges the rest from the posting."
+  "_hardware_note": "Surya 2026-10-18: apply to EE/CE 'or related' postings whose work is software; not to straight hardware roles. Titles that look like hardware wait for his call; the agent judges the rest from the posting.",
+  "aligned_title_pattern": "\\b(software|swe|sde|developer|programm(er|ing)|application(s)? (develop\\w*|engineer\\w*|analyst|programm\\w*)|(information )?technology|data (science|scientist|engineer\\w*|analy\\w*|platform)|analytics|machine learning|ml|ai[/ ]ml|ai (engineer|scientist|software|developer|research)|artificial intelligence|computer science|back[- ]?end|front[- ]?end|full[- ]?stack|web|mobile|ios|android|cloud|devops|site reliability|sre|cyber ?security|computer vision|nlp)\\b",
+  "off_role_title_pattern": "\\b(mechanical|civil|chemical|electrical|wireless|rf|manufacturing|process engineer\\w*|tapeout|product (owner|manag\\w*)|marketing|sales|human resources|people services|recruit\\w*|accounting|reimbursement|brokerage|supply chain|business operations|operations analyst|financial analyst|legal|procurement|quality assurance technician)\\b",
+  "_role_note": "Surya 2026-10-21: SWE, SDE, application development, programming, technology, data science, data engineering and data analytics roles go first in the queue (aligned_title_pattern). A title that only names another field (off_role_title_pattern) waits as 'unsure' for his call."
 }

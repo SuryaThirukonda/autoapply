@@ -139,3 +139,18 @@ def test_parse_ashby():
 def test_check_posting_live_unknown_ats_and_unparseable():
     assert scraper.check_posting_live("workday", "https://x.myworkdayjobs.com/a/job/b") is None
     assert scraper.check_posting_live("greenhouse", "https://example.com/nothing") is None
+
+
+def test_ingest_marks_his_roles_and_holds_other_fields(fresh_db):
+    """Surya (2026-10-21): the feed's new postings in his roles are counted 'aligned' (rank_queue puts them first);
+    a posting in another field waits as 'unsure'; a SuccessFactors posting is queued for the agent."""
+    import json
+    mech = _row("me-1", "Zebra", "Mechanical Engineer Intern", "https://job-boards.greenhouse.io/zebra/jobs/4003")
+    sf = _row("sf-1", "NetApp", "Data Engineer Intern", "https://career4.successfactors.com/career?career_job_req_id=12345")
+    counts = scraper.ingest([GH, mech, sf], first_run=False)
+    assert counts["aligned"] == 2 and counts["queued"] == 2 and counts["unsure"] == 1
+    assert _job("me-1") is None and _listing("me-1")["triage_reason"] == "title:off_role"
+    assert _job("sf-1")["status"] == states.QUEUED and _job("sf-1")["lane"] == "account"
+    fits = {json.loads(r["detail"])["listing_id"]: json.loads(r["detail"])["role_fit"]
+            for r in db.connect().execute("SELECT detail FROM events WHERE kind='listing:new'")}
+    assert fits == {"gh-1": "aligned", "me-1": "off_role", "sf-1": "aligned"}
