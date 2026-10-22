@@ -488,9 +488,17 @@ def _build_service():
 
     creds = _load_credentials()
     try:
-        return build("gmail", "v1", credentials=creds, cache_discovery=False)
+        # Every Gmail request gets a 30 s socket timeout: without one a stalled request hung Deutsche Bank's run for
+        # 15 minutes with no event and no log line (2026-10-22).
+        import google_auth_httplib2
+        import httplib2
+        http = google_auth_httplib2.AuthorizedHttp(creds, http=httplib2.Http(timeout=GMAIL_TIMEOUT_S))
+        return build("gmail", "v1", http=http, cache_discovery=False)
     except Exception as e:
         raise MailUnavailable(f"Gmail service build failed ({type(e).__name__})") from None
+
+
+GMAIL_TIMEOUT_S = 30
 
 
 def authorize_interactive() -> str:
