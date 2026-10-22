@@ -340,3 +340,10 @@ def test_the_judge_gets_suryas_own_answers_to_this_applications_questions(tmp_pa
     assert "Add an end date of today" in got and "Unanswered" not in got, got
     assert surya_answers(8) == "(none)"
     assert "SURYA'S OWN ANSWERS" in JUDGE_INSTRUCTIONS
+
+
+
+def test_the_judge_takes_na_and_n_slash_a_as_one_answer():
+    """LLNL (2026-10-21): the box asked for 'NA', held 'N/A', and the judge failed it."""
+    from goat.judge import JUDGE_INSTRUCTIONS
+    assert "'N/A', 'NA'" in JUDGE_INSTRUCTIONS
