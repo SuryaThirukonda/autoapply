@@ -26,6 +26,19 @@ class SubmitResult:
                 "clicked_label": self.clicked_label}
 
 
+# A chat widget over the submit button (LLNL's SmartRecruiters 'Chatbot' iframe from winstonchat, z-index 2147483647,
+# 2026-10-21): it is no part of the application, so it is hidden and the point probed again.
+JS_HIDE_CHAT_AT = r"""([x, y]) => {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return '';
+  const host = el.closest('iframe, [class*="widget" i], [id*="chat" i], [class*="chat" i]') || el;
+  const desc = [host.tagName, host.id || '', String(host.className || ''), host.getAttribute('title') || '', host.getAttribute('src') || ''].join(' ');
+  if (!/chat|\bbot\b|intercom|drift|zendesk|livechat|joveo|winston|messenger/i.test(desc)) return '';
+  host.style.setProperty('display', 'none', 'important');
+  return desc.slice(0, 160);
+}"""
+
+
 def same_form_move(a: str, b: str) -> bool:
     """A move between sections of one application form, not a submission: Oracle went from /apply/section/1 to
     /apply/section/3 to show 'You have 2 issues that need to be fixed before you can submit your application', and
@@ -69,6 +82,15 @@ async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: f
 
     # The click point must be the page's own submit control, not an extension panel.
     el = await ex.element_at(int(found["x"]), int(found["y"]))
+    if not el.submit and not el.captcha:
+        try:
+            hidden = await ex.eval(JS_HIDE_CHAT_AT, [int(found["x"]), int(found["y"])])
+        except Exception:
+            hidden = ""
+        if hidden:
+            if job_id is not None:
+                db.event(job_id, "submit:chat_widget_hidden", {"what": str(hidden)[:160]})
+            el = await ex.element_at(int(found["x"]), int(found["y"]))
     if el.captcha:
         return SubmitResult("blocked", why=["submit control is covered by a human-verification challenge"], url=ex.url)
     if not el.submit:

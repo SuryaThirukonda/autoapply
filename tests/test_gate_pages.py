@@ -969,3 +969,28 @@ def test_a_tile_on_another_step_sends_the_run_back_to_that_step():
     got = oracle_tile_problems(tiles, [], entries=HIS_ENTRIES + [{"n": 4, "company": "Rathinam Group", "title": "Undergraduate Research Assistant"}],
                                school="Texas A&M University", high_school="", required_blocks=[])
     assert len(got) == 1 and "another step of the form" in got[0] and "[e77]" not in got[0], got
+
+
+
+CHAT_OVER_SUBMIT = """<html><body>
+<form id="f"><input name="a" value="Surya"><input name="b" value="Thirukonda"><input name="c" value="thirukondas@gmail.com">
+<button type="submit" id="go" style="position:fixed;left:300px;top:300px;width:100px;height:40px"
+  onclick="document.getElementById('f').outerHTML='<p>Thank you for applying</p>'; return false;">Submit</button></form>
+<iframe title="Chatbot" class="joveo-web-widget" srcdoc="<p>Hi! Ask me</p>"
+  style="position:fixed;left:250px;top:250px;width:300px;height:200px;z-index:2147483647;border:0"></iframe>
+</body></html>"""
+
+
+async def test_a_chat_widget_over_the_submit_button_is_hidden_and_the_click_goes_through():
+    """LLNL (SmartRecruiters, 2026-10-21): a 'Chatbot' iframe sat over Submit and every verified submit was refused."""
+    from goat.browser.submit import submit
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(CHAT_OVER_SUBMIT)
+        await snapshot.take(ex)
+        r = await submit(ex, None, label="Submit", wait_s=6)
+        assert r.status == "submitted", r
+    finally:
+        await ex.close()
