@@ -1361,7 +1361,9 @@ class ToolDispatcher:
                 # ZIP for each employer, Surya's answer named all of them in one line, and the run parked because no single
                 # field could take it (2026-10-21). A part copied from the stored words keeps that answer as its source.
                 part = str(value or "").strip()
-                if not part or answers.norm(part) not in answers.norm(str(val)):
+                if not part:
+                    return val, tag, None      # 'part' with no value is the whole answer (DP World, 2026-10-21)
+                if answers.norm(part) not in answers.norm(str(val)):
                     return None, "", (f"'{part[:60]}' is not part of {answer_key}'s stored answer ('{str(val)[:160]}'): "
                                       "copy the exact words it holds for this field")
                 return part, tag + " (part)", None

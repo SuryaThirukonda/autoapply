@@ -2250,4 +2250,5 @@ def test_a_part_of_a_stored_address_answer_fills_one_field(store):
     assert d._resolve_value("q.remote_employer_address", "77479", "part", "Zip Code")[0] == "77479"
     val, tag, err = d._resolve_value("q.remote_employer_address", "Harris", "part", "County")
     assert val is None and "not part of" in err
-    assert d._resolve_value("q.remote_employer_address", "", "part", "County")[0] is None
+    # 'part' with no value takes the whole answer: DP World's run sent every field that way and all failed (2026-10-21)
+    assert d._resolve_value("q.remote_employer_address", None, "part", "Address")[0].startswith("Remote role worked from home")
