@@ -276,7 +276,19 @@ def unconfirmed_source(source: str | None, company: str = "", ats: str = "") -> 
     if low.startswith("judgment:"):
         key = s.split(":", 1)[1].strip()
         a = get(key, company, ats)
-        return True, (f"the agent picked this option for the stored answer {key} = {str(a.answer)[:160]!r}" if a and a.has_value else "")
+        if not (a and a.has_value):
+            return True, ""
+        shown = repr(str(a.answer)[:160])
+        # a conditional answer ('Yes / No' from the application ledger) is shown resolved: the judge failed Ecolab's
+        # ledger-backed No three times reading only 'Yes / No' (2026-10-22)
+        if str(a.answer_type or "").startswith("conditional"):
+            try:
+                val, why = concrete_value(a, company=company, posting_text="", listing_id=None)
+            except Exception:  # noqa: BLE001
+                val, why = None, ""
+            if val:
+                shown = f"{val!r} ({why})" if why else repr(val)
+        return True, f"the agent picked this option for the stored answer {key} = {shown}"
     return True, ""
 
 

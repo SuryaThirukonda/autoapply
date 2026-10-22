@@ -2439,3 +2439,12 @@ def test_disabled_submits_are_counted_for_the_park(store):
         db.event(job["id"], "submit:blocked", {"why": ["no enabled submit control found (label=Apply; 46 candidates)"]})
     db.event(job["id"], "submit:blocked", {"why": ["something else"]})
     assert disabled_submits(job["id"]) == 2
+
+
+
+def test_a_judgment_on_a_ledger_answer_shows_the_resolved_value(store):
+    """Ecolab (2026-10-22): the judge saw 'preferences.applied_before = Yes / No' and failed the ledger-backed No."""
+    from goat import answers
+    answers.save_answer("preferences.applied_before", "Yes / No", answer_type="conditional:ledger_company", source="seed:spec")
+    unconf, ev = answers.unconfirmed_source("judgment:preferences.applied_before", "Ecolab", "workday")
+    assert unconf and "'No'" in ev and "ledger" in ev, ev
