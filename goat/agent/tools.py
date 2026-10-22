@@ -2624,8 +2624,16 @@ class ToolDispatcher:
         if not p or not p.exists():
             return {"error": f"{document} file not available in the résumé folder"}, None
         if self.ctx.resume_file == p.name and document == "resume":
-            return {"ref": ref, "status": "set", "readback": p.name,
-                    "note": "already attached in this run; do not upload it again"}, None
+            # 'already attached' only while the page shows it: SimonComputing's ApplicantPro took the résumé on its first step
+            # and then asked again on its Resume section ('No file chosen'); the shortcut refused every upload (2026-10-22)
+            try:
+                info = await self.ctx.ex.read_ref(ref)
+                seen = " ".join([str(info.get("value") or ""), str(info.get("shown") or ""), await self.ctx.ex.page_text(20000)])
+            except Exception:  # noqa: BLE001
+                seen = ""
+            if p.name.lower() in seen.lower():
+                return {"ref": ref, "status": "set", "readback": p.name,
+                        "note": "already attached in this run; do not upload it again"}, None
         chooser = self.ctx.ex.pending_chooser
         if chooser is not None and (not self.ctx.last_snapshot or not self.ctx.last_snapshot.find(ref)):
             # The page opened a file picker (a custom upload button): answer the picker directly.
