@@ -363,6 +363,15 @@ JS_SELECT2_TWIN = """(ref) => { const el = document.querySelector('[data-goat-re
   if (!s.getAttribute('data-goat-ref')) s.setAttribute('data-goat-ref', ref + 'n');
   return s.getAttribute('data-goat-ref'); }"""
 
+# A wrapper that only announces a listbox (aria-haspopup="listbox", no role) around one typeable input: Paylocity's State
+# picker never opened on a click of the wrapper (North Atlantic Industries, Transcard, 2026-10-22). The input is the picker.
+JS_LISTBOX_WRAPPER_INPUT = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return null;
+  if (el.tagName === 'INPUT' || el.getAttribute('role') || el.getAttribute('aria-haspopup') !== 'listbox') return null;
+  const ins = Array.from(el.querySelectorAll('input')).filter(i => !['hidden', 'checkbox', 'radio', 'file'].includes((i.type || '').toLowerCase()));
+  if (ins.length !== 1) return null;
+  if (!ins[0].getAttribute('data-goat-ref')) ins[0].setAttribute('data-goat-ref', ref + 'i');
+  return ins[0].getAttribute('data-goat-ref'); }"""
+
 JS_IS_WORKDAY_PROMPT = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return false;
   const a = el.getAttribute('data-automation-id') || '';
   if (el.tagName === 'INPUT') return /search|prompt/i.test(a) || !!el.closest('[data-automation-id*="prompt" i], [data-automation-id*="multiSelect" i], [data-automation-id*="selectWidget" i], [data-automation-id*="searchBox" i]');
@@ -1084,6 +1093,13 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
     if spl is not None:
         return spl
     if info.get("tag") != "select":
+        try:
+            inner = await ex.eval(JS_LISTBOX_WRAPPER_INPUT, ref)
+        except Exception:
+            inner = None
+        if inner and inner != ref:
+            r = await _choose(ex, str(inner), wants, type_to_filter=type_to_filter)
+            return FieldResult(ref, r.ok, r.readback, r.error)
         try:
             twin = await ex.eval(JS_SELECT2_TWIN, ref)
         except Exception:

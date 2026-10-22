@@ -166,3 +166,38 @@ async def test_choose_on_a_select2_box_picks_on_its_hidden_select(tmp_path):
         assert await ex.page.inner_text("#shown") == "Texas A&M University"
     finally:
         await ex.close(close_browser=True)
+
+
+
+PAYLOCITY_STATE = """<html><body>
+<label for="st">State</label>
+<div id="wrap" data-goat-ref="e63" aria-expanded="false" aria-haspopup="listbox" aria-owns="lst" style="width:200px;height:30px;border:1px solid">
+  <div id="shown">Select a state</div><input id="st" aria-autocomplete="list" type="text" data-goat-ref="e64" style="width:150px"></div>
+<ul id="lst" role="listbox" style="display:none"></ul>
+<script>
+const states = ['Tennessee', 'Texas', 'Utah'];
+const inp = document.getElementById('st'), lst = document.getElementById('lst');
+function show(f) { lst.innerHTML = ''; states.filter(s => s.toLowerCase().startsWith(f.toLowerCase())).forEach(s => {
+  const li = document.createElement('li'); li.setAttribute('role', 'option'); li.textContent = s; li.style.height = '20px';
+  li.addEventListener('mousedown', e => { e.preventDefault(); document.getElementById('shown').textContent = s; inp.value = '';
+    lst.style.display = 'none'; }); lst.appendChild(li); }); lst.style.display = 'block'; }
+inp.addEventListener('focus', () => show(inp.value)); inp.addEventListener('input', () => show(inp.value));
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_choose_on_a_listbox_wrapper_types_into_its_input(tmp_path):
+    """North Atlantic Industries / Transcard (Paylocity, 2026-10-22): a click on the State wrapper never opened its list."""
+    from goat.browser.executor import Executor, HostPolicy
+    db.reset_for_tests(tmp_path / "t.db")
+    page = tmp_path / "pl.html"
+    page.write_text(PAYLOCITY_STATE, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        r = await fill.choose(ex, "e63", ["Texas", "TX"])
+        assert await ex.page.inner_text("#shown") == "Texas", (r.ok, r.readback, r.error)
+    finally:
+        await ex.close(close_browser=True)
