@@ -2224,3 +2224,15 @@ def test_open_questions_are_found_for_the_idle_hold(store):
     ctx = SimpleNamespace(asked_keys=["q.open", "q.done", "q.other"], job_id=job["id"])
     assert open_question_keys(ctx) == ["q.open"]
     assert open_question_keys(SimpleNamespace(asked_keys=[], job_id=job["id"])) == []
+
+
+
+def test_a_bounced_park_lists_the_blockers_his_stored_answers_cover(store):
+    """Westinghouse (2026-10-21) parked 'no_standing_answer' five times over fields with stored answers."""
+    from goat import answers
+    from goat.agent.tools import stored_for_blockers
+    answers.save_answer("identity.age_18_plus", "Yes", source="questionnaire", aliases=["are you 18 years or older"])
+    got = stored_for_blockers(["empty_required: * Are you 18 years or older? (text) ref=e124",
+                               "empty_required: * What is your favourite colour? (text) ref=e130",
+                               "not an application page: no submit control"])
+    assert got == ["[e124] Are you 18 years or older? -> identity.age_18_plus = Yes"], got

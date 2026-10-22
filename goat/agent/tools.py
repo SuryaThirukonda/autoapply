@@ -568,6 +568,29 @@ def never_tick(item: dict | None, val) -> str:
     return ""
 
 
+_EMPTY_REQ = re.compile(r"^empty_required: (?P<label>.+?) \((?P<type>[a-z]+)\) ref=(?P<ref>e\d+)")
+
+
+def stored_for_blockers(reasons: list[str], company: str = "", portal: str = "") -> list[str]:
+    """'[ref] label -> key = answer' for each empty required field whose question his stored answers cover."""
+    out = []
+    for r in reasons or []:
+        m = _EMPTY_REQ.match(str(r))
+        if not m:
+            continue
+        label = m.group("label").strip(" *:")
+        try:
+            a = answers.lookup(label, company, portal)
+        except Exception:  # noqa: BLE001 - a hint only
+            a = None
+        if a is None or not a.has_value or a.is_blank:
+            continue
+        out.append(f"[{m.group('ref')}] {label[:70]} -> {a.key} = {str(a.answer).split(';')[0][:40]}")
+        if len(out) >= 12:
+            break
+    return out
+
+
 def other_resume_slot(snap, ref: str, portal: str) -> dict | None:
     """A résumé file box on the page other than this one and other than an Oracle profile import box."""
     from ..adapters import is_profile_import_upload
@@ -3825,6 +3848,13 @@ class ToolDispatcher:
                 hint = ""
                 if any(re.search(r"resume|résumé|\bcv\b", r, re.I) for r in gate.reasons):
                     hint = " The résumé is on file: call upload_resume on the Resume/CV slot."
-                return {"error": "not parked yet: the gate names concrete blockers. Fix them, then call submit; park only if one truly has no stored answer." + hint,
-                        "blockers": gate.reasons}, None
+                out = {"error": "not parked yet: the gate names concrete blockers. Fix them, then call submit; park only if one truly has no stored answer." + hint,
+                       "blockers": gate.reasons}
+                # the blockers his stored answers already cover, with their keys: Westinghouse's run parked 'no_standing_answer'
+                # five times in two minutes over 'Are you 18 years or older?' and the like (2026-10-21)
+                known = stored_for_blockers(gate.reasons, self.ctx.job.get("company", ""), self.ctx.portal)
+                if known:
+                    out["stored_answers"] = known
+                    out["error"] += " These blockers have stored answers: fill them now with fill_batch / choose and the answer_key shown."
+                return out, None
         raise Parked(reason, state, blocked_on=pending if state == "hold" else None)
