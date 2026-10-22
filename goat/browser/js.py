@@ -388,7 +388,7 @@ JS_SNAPSHOT = r"""
             || (/^(apply|apply now|apply for this job|apply to this job)$/i.test(n) && nFilled >= 3));
           const accountBtn = onAccountPage || (!submitName && names.some(n => /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|verify email|send code|resend|back)$/i.test(n)));
           // a modal's own Save (ApplicantPro's contact-information popup, SimonComputing 2026-10-22) is no application submit
-          const inDialog = !!(el.closest && el.closest('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"]'));
+          const inDialog = !!(el.closest && el.closest('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [class*="popup" i], [class*="popover" i]'));
           item.submitish = !accountBtn && (submitName || (type === 'submit' && nFilled >= 3 && !inDialog));
           // Toggle buttons (Ashby Yes/No, segmented choices) carry aria-pressed/aria-checked: an answer, not navigation.
           const pressed = el.getAttribute('aria-pressed') ?? el.getAttribute('aria-checked');
