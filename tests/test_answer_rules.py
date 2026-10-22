@@ -2408,3 +2408,20 @@ def test_a_rank_your_locations_box_takes_the_posting_locations():
     assert POSTING_LOCATIONS.search("Rank preferred work locations")
     assert POSTING_LOCATIONS.search("Please rank the locations below in order of preference")
     assert not POSTING_LOCATIONS.search("Current location")
+
+
+
+def test_an_error_page_with_only_links_is_no_form_page():
+    """Deloitte (2026-10-22): 'An error has occurred / Page not found' and links only; the park was refused four times."""
+    from goat.agent.tools import error_or_empty_page
+    from goat.browser.snapshot import Snapshot
+    err = Snapshot(url="https://apply.deloitte.com/en_US/careers/Error", title="Error | Deloitte US",
+                   headings=["Deloitte US", "An error has occurred"], items=[{"ref": "e1", "tag": "a", "label": "Continue to home"}],
+                   groups=[], errors={}, challenge={})
+    assert error_or_empty_page(err)
+    form = Snapshot(url="u", title="My Information", headings=["My Information"],
+                    items=[{"ref": "e1", "tag": "input", "type": "text", "label": "First Name"}], groups=[], errors={}, challenge={})
+    assert not error_or_empty_page(form)
+    posting = Snapshot(url="https://jobs.example.com/job/123", title="Software Intern", headings=["Software Intern"],
+                       items=[{"ref": "e1", "tag": "button", "label": "Apply"}], groups=[], errors={}, challenge={})
+    assert not error_or_empty_page(posting)      # a posting page before Apply is no error page

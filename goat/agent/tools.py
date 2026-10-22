@@ -584,6 +584,26 @@ VAGUE_ELIGIBILITY = re.compile(r"(i |we |the run )?(cannot|can't|can not|unable 
                                r"( (the |this )?(application|form))?|stuck|stopped|blocked|not possible|n/?a|none|unknown", re.I)
 
 
+ERROR_PAGE = re.compile(r"an error (has )?occurred|page not found|\b404\b|something went wrong|no longer (available|accepting)|"
+                        r"(job|posting|position|requisition) (is |has been )?(closed|expired|filled|no longer)|"
+                        r"this (job|position) is (not|no longer) available", re.I)
+
+
+def error_or_empty_page(snap) -> bool:
+    """The site's own error / not-found page (its title or headings say so, or its address is an /error page) with nothing
+    to fill. A posting page before Apply has no fields either, so an empty page alone never counts."""
+    if snap is None:
+        return False
+    head = " ".join([str(getattr(snap, "title", "") or ""), *[str(h) for h in (getattr(snap, "headings", None) or [])]])
+    url = str(getattr(snap, "url", "") or "")
+    if not (ERROR_PAGE.search(head) or re.search(r"/(error|404|notfound|not-found)(\b|/|\?|$)", url, re.I)):
+        return False
+    fillable = [i for i in (getattr(snap, "items", None) or [])
+                if (i.get("tag") in ("input", "select", "textarea", "dropdown", "toggle") or i.get("combo"))
+                and str(i.get("type") or "").lower() not in ("hidden", "search", "submit", "button")]
+    return not fillable
+
+
 def never_tick(item: dict | None, val) -> str:
     """Why a checkbox must not be ticked ('' when it may): a talent community (his never-join rule) or a 'Select all' box
     that bundles optional consents with the required ones."""
@@ -3951,6 +3971,9 @@ class ToolDispatcher:
                 pass   # past the budget and the gate blocks: the park stands
             elif gate.result == "blocked" and low.startswith("portal_error") and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons)                     and any("error or maintenance notice" in r for r in gate.reasons):
                 pass   # the page shows the portal's own error or maintenance notice: the park stands
+            elif gate.result == "blocked" and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons) \
+                    and (low.startswith(("portal_error", "posting_closed")) and error_or_empty_page(snap)):
+                pass   # Deloitte (2026-10-22): "An error has occurred / Page not found" with links only; four parks were refused
             elif gate.result == "blocked" and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons):
                 # a mid-form page (no submit control) is no portal error: Northrop Grumman parked on My Information after
                 # Workday sent it back there with the last attempt's values (2026-10-19)
