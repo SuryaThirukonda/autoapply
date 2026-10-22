@@ -994,3 +994,18 @@ async def test_a_chat_widget_over_the_submit_button_is_hidden_and_the_click_goes
         assert r.status == "submitted", r
     finally:
         await ex.close()
+
+
+
+def test_an_autofill_box_on_a_later_step_is_no_empty_resume_slot(store):
+    """North Atlantic Industries (2026-10-21): step 2's 'Upload your resume and we'll automatically fill out your
+    application' box held the gate on 'resume not attached' after the résumé went in on step 1."""
+    from goat import records
+    job = _job()
+    records.record_decision(job["id"], 1, "resume upload", "Surya_Thirukonda_Resume_SWE.pdf", "resume", "e3")
+    items = [{"ref": "e1", "tag": "input", "type": "file", "label": "Upload your resume and we'll automatically fill out your application",
+              "name": "btn-forceResume", "value": ""},
+             {"ref": "e9", "tag": "button", "label": "Submit", "submitish": True}]
+    g = run_gate(job=job, snapshot=_snap(items), page_text="Questions\nSubmit", expected_resume="Surya_Thirukonda_Resume_SWE.pdf",
+                 free_text_answers=[], portal="other", page_no=2)
+    assert not any("resume" in r.lower() for r in g.reasons), g.reasons

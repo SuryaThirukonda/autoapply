@@ -353,6 +353,10 @@ def fields_to_fix(page_text: str) -> list[tuple[str, int]]:
     return out
 
 
+# (never Oracle's 'Import your profile from resume': on some tenants it is the only résumé box)
+AUTOFILL_BOX = re.compile(r"automatically fill|auto-?fill|autocomplete (your )?application|fill (out )?(your|the) application (for you|automatically)", re.I)
+
+
 def job_resume_name(job: dict) -> str:
     """The résumé file this job's variant names (delegation.yaml), '' when there is none."""
     try:
@@ -476,9 +480,12 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
             reasons.append(f"choice set from generated text, not a stored answer: {d['field_label']}")
 
     # 5. résumé on the page: whenever the form has a résumé slot, the expected file must be in it.
+    # a box that fills the form from a résumé is no résumé slot (North Atlantic Industries' 'Upload your resume and we'll
+    # automatically fill out your application' on step 2, after the résumé went in on step 1, 2026-10-21)
     resume_slots = [fi for fi in snapshot.file_inputs()
                     if re.search(r"resume|résumé|\bcv\b|curriculum", " ".join([fi.get("label") or "", fi.get("name") or ""]), re.I)
-                    and not re.search(r"cover|transcript", " ".join([fi.get("label") or "", fi.get("name") or ""]), re.I)]
+                    and not re.search(r"cover|transcript", " ".join([fi.get("label") or "", fi.get("name") or ""]), re.I)
+                    and not AUTOFILL_BOX.search(" ".join([fi.get("label") or "", fi.get("placeholder") or ""]))]
     # The run's own upload, else the file this job's résumé variant names: a résumé attached on an earlier attempt shows only
     # as text, and with no upload in this run to compare against the gate called the slot empty (Arconic's Oracle page
     # listed Surya_Thirukonda_Resume_SWE.pdf beside REMOVE RESUME, 2026-10-21).
@@ -496,6 +503,9 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
                      and re.search(r"resume|résumé|\bcv\b", str(i.get("label") or ""), re.I)]
             if any(expected_resume.lower() in b.lower() for b in boxed):
                 shown = expected_resume.lower()
+        if not shown and expected_resume and any(str(d.get("source") or "") == "resume" and str(d.get("value") or "").lower() == expected_resume.lower()
+                                                 and d.get("page") != page_no for d in decs):
+            shown = expected_resume.lower()      # attached on an earlier step of this attempt
         if not shown:
             reasons.append("resume not attached: the Resume/CV slot is empty (call upload_resume on its ref)")
         elif expected_resume and expected_resume.lower() not in shown:
