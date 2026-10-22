@@ -99,6 +99,8 @@ def test_places_abroad_or_unknown(place):
     ("Epidemiology and RWE Capabilities & Analytics Intern", "Merck", False),
     ("Software Engineer Intern", "Optiver", False),                             # quant and trading firms
     ("Software Engineer Intern", "Jump Trading", False),
+    ("Technology Summer Analyst", "Goldman Sachs", True),
+    ("Asset Management Data Scientist - Summer Associate", "JP Morgan Chase", False),   # MBA and graduate program
 ])
 def test_keep_extra_takes_internships_in_his_roles(title, company, kept):
     assert scraper.keep_extra({"title": title, "company_name": company, "locations": ["Austin, TX"], "active": True}) is kept
@@ -167,8 +169,10 @@ def test_a_list_that_cannot_be_read_does_not_stop_the_other(fresh_db):
     out = scraper.poll_extra_once(FEEDS, fetch=_fetcher({"zshah101:jobs.json": RuntimeError("down"),
                                                          "adminazhar:README.md": md}))
     assert out["zshah101:jobs.json"] == {"error": "RuntimeError: down"} and out["adminazhar:README.md"]["queued"] == 1
+    assert db.meta_get("extra_feed:zshah101:jobs.json:last_ok") is None
     out = scraper.poll_extra_once(FEEDS, fetch=_fetcher({"zshah101:jobs.json": None, "adminazhar:README.md": None}))
     assert out == {"zshah101:jobs.json": {"status": 304}, "adminazhar:README.md": {"status": 304}}
+    assert db.meta_get("extra_feed:zshah101:jobs.json:last_ok") is not None      # an unchanged list was still read
 
 
 def test_simplify_adds_no_second_job_for_a_posting_another_list_gave(fresh_db):

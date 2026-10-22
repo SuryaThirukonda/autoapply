@@ -291,7 +291,8 @@ EXTRA_FEEDS = (
 )
 # which feed gave goat a listing, by its id ('manual:' rows come from the tracker sheet, the rest from Simplify)
 FEED_PREFIXES = {"zshah-": "zshah101", "adminazhar-": "adminazhar", "manual:": "manual"}
-_INTERNSHIP = re.compile(r"\b(intern|internship|co-?op|summer (analyst|associate)|apprentice(ship)?)\b", re.I)
+# a bank's 'Summer Associate' is its MBA and graduate program; 'Summer Analyst' is the undergraduate one
+_INTERNSHIP = re.compile(r"\b(intern|internship|co-?op|summer analyst|apprentice(ship)?)\b", re.I)
 _US_STATES = ("AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|"
               "OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC|PR")
 _US_STATE_NAMES = ("alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|"
@@ -477,6 +478,7 @@ def poll_extra_once(feeds=EXTRA_FEEDS, fetch=None) -> dict:
             text = fetch(label, url)
             if text is None:
                 out[label] = {"status": 304}
+                db.meta_set(f"extra_feed:{label}:last_ok", db.now())     # read fine, nothing changed
                 continue
             rows = zshah_rows(json.loads(text)) if name == "zshah101" else adminazhar_rows(text)
         except Exception as e:  # noqa: BLE001 - a feed that cannot be read is skipped this time
