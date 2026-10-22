@@ -353,6 +353,16 @@ JS_COMPANION_VALUE = """(ref) => { const el = document.querySelector('[data-goat
   }
   return { from: '', value: '' }; }"""
 
+# Select2 keeps the real <select> hidden ("select2-hidden-accessible") just before its own box, and its list renders only
+# the first options: Lever's university picker holds 2,966 schools and showed Australian ones only (Shield AI, 2026-10-21).
+JS_SELECT2_TWIN = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return null;
+  const box = el.closest('.select2-container'); if (!box) return null;
+  let s = box.previousElementSibling;
+  if (!(s && s.tagName === 'SELECT') && box.parentElement) s = box.parentElement.querySelector('select.select2-hidden-accessible');
+  if (!s || s.tagName !== 'SELECT') return null;
+  if (!s.getAttribute('data-goat-ref')) s.setAttribute('data-goat-ref', ref + 'n');
+  return s.getAttribute('data-goat-ref'); }"""
+
 JS_IS_WORKDAY_PROMPT = """(ref) => { const el = document.querySelector('[data-goat-ref="' + ref + '"]'); if (!el) return false;
   const a = el.getAttribute('data-automation-id') || '';
   if (el.tagName === 'INPUT') return /search|prompt/i.test(a) || !!el.closest('[data-automation-id*="prompt" i], [data-automation-id*="multiSelect" i], [data-automation-id*="selectWidget" i], [data-automation-id*="searchBox" i]');
@@ -1068,6 +1078,15 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
     spl = await _choose_spl(ex, ref, wants)
     if spl is not None:
         return spl
+    if info.get("tag") != "select":
+        try:
+            twin = await ex.eval(JS_SELECT2_TWIN, ref)
+        except Exception:
+            twin = None
+        if twin and twin != ref:
+            # pick on the hidden native select, which holds every option; its change event updates the Select2 box
+            r = await _choose(ex, str(twin), wants, type_to_filter=type_to_filter)
+            return FieldResult(ref, r.ok, r.readback, r.error)
     if info.get("tag") == "select":
         # A native <select> has no DOM list to click (Lever's custom questions, 2026-10-18): pick by its options.
         native = await ex.eval(js.JS_FIELD_CHOICES, ref)

@@ -137,3 +137,32 @@ async def test_choose_on_an_ashby_toggle_button_reads_the_companion_input(tmp_pa
         assert await ex.page.evaluate("() => document.getElementById('q1').value") == "LinkedIn"
     finally:
         await ex.close(close_browser=True)
+
+
+
+@pytest.mark.asyncio
+async def test_choose_on_a_select2_box_picks_on_its_hidden_select(tmp_path):
+    """Shield AI (Lever, 2026-10-21): the university picker is Select2 over a hidden <select> of 2,966 schools; its list
+    showed Australian schools only, so Texas A&M was never found by clicking."""
+    from goat.browser.executor import Executor, HostPolicy
+    db.reset_for_tests(tmp_path / "t.db")
+    opts = "".join(f"<option>{n}</option>" for n in ["", "ACAP University College", "Prairie View A&M University", "Texas A&M University",
+                                                       "Texas A&M University - Commerce", "Texas A&M University - Galveston"])
+    page = tmp_path / "s2.html"
+    page.write_text('<html><body><div class="application-university"><select data-goat-ref="e47" class="select2-hidden-accessible" '
+                    'aria-hidden="true" style="width:1px;height:1px" required>' + opts + '</select>'
+                    '<span class="select2 select2-container"><span class="selection"><span class="select2-selection" role="combobox" '
+                    'data-goat-ref="e48" tabindex="0"><span id="shown">Select a university or college</span></span></span></span></div>'
+                    '<script>document.querySelector("select").addEventListener("change", e => '
+                    'document.getElementById("shown").textContent = e.target.value);</script></body></html>', encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        r = await fill.choose(ex, "e48", ["Texas A & M University", "Texas A&M University - College Station"])
+        assert r.ok and r.readback == "Texas A&M University", (r.readback, r.error)
+        assert await ex.page.evaluate("() => document.querySelector('select').value") == "Texas A&M University"
+        assert await ex.page.inner_text("#shown") == "Texas A&M University"
+    finally:
+        await ex.close(close_browser=True)
