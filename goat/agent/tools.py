@@ -626,6 +626,21 @@ VERIFY_BUTTON = re.compile(r"^(send|send (me )?(a |the )?(code|verification code
                            r"get (a )?code|verify( (email|phone|me))?|send code to (email|phone))$", re.I)
 
 
+FINAL_SUBMIT_LABEL = re.compile(r"^(apply|apply now|submit|submit application|submit my application|send application)\W*$", re.I)
+
+
+def combined_account_application(snap) -> bool:
+    """A page that creates the account and carries the application too (SuccessFactors quick apply): a password box plus
+    six or more filled answer fields."""
+    items = getattr(snap, "items", None) or []
+    if not any(str(i.get("type") or "").lower() == "password" for i in items):
+        return False
+    filled = [i for i in items if i.get("tag") in ("input", "textarea", "select", "dropdown")
+              and str(i.get("type") or "").lower() not in ("password", "hidden", "file", "checkbox", "radio", "submit", "button")
+              and str(i.get("value") or i.get("shown") or "").strip()]
+    return len(filled) >= 6
+
+
 def never_tick(item: dict | None, val) -> str:
     """Why a checkbox must not be ticked ('' when it may): a talent community (his never-join rule) or a 'Select all' box
     that bundles optional consents with the required ones."""
@@ -2283,6 +2298,11 @@ class ToolDispatcher:
         if item and item.get("submitish") and not self._account_page() \
                 and not VERIFY_BUTTON.match(str(item.get("label") or label or "").strip()):
             return {"error": "that is a submit control; call submit instead"}, None
+        # Safran's SuccessFactors 'quick apply' page creates the account AND holds the whole application: its 'Apply' was
+        # clicked as 'Create Account' and the application went in with no gate, read-back or judge (2026-10-22)
+        if item and combined_account_application(snap) and FINAL_SUBMIT_LABEL.match(str(item.get("label") or "").strip()):
+            return {"error": "this page is the application itself (the account is created with it): fill every field, then call "
+                             f"submit with button_label {str(item.get('label') or '').strip()!r}; never click it"}, None
         if re.search(r"\badd\b", label or "", re.I) and re.search(r"language", label or "", re.I) and db.connect().execute(
                 "SELECT 1 FROM events WHERE job_id=? AND kind='languages:no_english' LIMIT 1", (self.ctx.job_id,)).fetchone():
             return {"error": "not clicked: this employer's Language list has no English (checked on this application already). "
@@ -3425,7 +3445,7 @@ class ToolDispatcher:
             await fill.ashby_resave(ctx.ex)   # an answer shown but never stored is missing on submit (Sierra, 2026-10-19)
         snap = await snapmod.take(ctx.ex)
         ctx.last_snapshot = snap
-        if any(i.get("type") == "password" for i in snap.items):
+        if any(i.get("type") == "password" for i in snap.items) and not combined_account_application(snap):
             return {"error": "this page has a password field: it is a sign-in or account page, not the application. Use `credentials` "
                              "for the email and password, then `click` Sign In / Create Account, and fill the application that follows."}, None
         page_text = await ctx.ex.page_text(30000)

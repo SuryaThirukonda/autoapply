@@ -533,7 +533,11 @@ JS_ELEMENT_AT = r"""
       // a dialog's own Send / Save / OK (ADP's 'send a verification code' dialog, Mathtech 2026-10-22) is no application submit
       if (p.closest && p.closest('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [class*="popup" i], [class*="popover" i]')
           && names.some(n => /^(send|save|ok|done|confirm|send code|send verification code)$/i.test(n))) break;
-      if (accountPage) break;
+      // ... unless the account form IS the application (SuccessFactors quick apply: Safran's 'Apply' sent it, 2026-10-22)
+      const quickApply = names.some(n => /^(apply|apply now|submit|submit application|submit my application|send application)$/i.test(n))
+        && Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=password]), textarea')).filter(i => (i.value || '').trim()).length >= 6;
+      if (accountPage && !quickApply) break;
+      if (quickApply) { submit = true; why = 'submit control (application on an account page): ' + label; break; }
       if (submitName || (type === 'submit' && formFilled)) { submit = true; why = 'submit control: ' + label; }
       // Simplify's panel "Submit Application" is also a submit control; any extension panel is.
       break;
@@ -677,7 +681,11 @@ JS_TARGET_GUARD = r"""
       if (p.closest && p.closest('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [class*="popup" i], [class*="popover" i]')
           && names.some(n => /^(send|save|ok|done|confirm|send code|send verification code)$/i.test(n))) break;
       if (!submitName && names.some(n => /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|back)$/i.test(n))) break;
-      if (accountPage) break;
+      // ... unless the account form IS the application (SuccessFactors quick apply: Safran's 'Apply' sent it, 2026-10-22)
+      const quickApply = names.some(n => /^(apply|apply now|submit|submit application|submit my application|send application)$/i.test(n))
+        && Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=password]), textarea')).filter(i => (i.value || '').trim()).length >= 6;
+      if (accountPage && !quickApply) break;
+      if (quickApply) { submit = true; why = 'submit control (application on an account page): ' + label; break; }
       if (submitName || (type === 'submit' && formFilled)) { submit = true; why = 'submit control: ' + label; }
       break;
     }

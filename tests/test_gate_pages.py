@@ -1125,3 +1125,26 @@ async def test_a_class_named_modals_send_button_is_clickable():
         assert el.submit is False, el
     finally:
         await ex.close()
+
+
+
+QUICK_APPLY = """<html><body><form>
+<label>Email<input value="a@b.c"></label><label>Retype<input value="a@b.c"></label><label>Password<input type="password" value="x"></label>
+<label>First<input value="Surya"></label><label>Last<input value="Thirukonda"></label><label>Phone<input value="281"></label>
+<label>City<input value="Sugar Land"></label>
+<button id="apply" type="button" style="width:120px;height:40px">Apply</button></form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_apply_on_a_quick_apply_account_page_is_a_submit_control():
+    """Safran (2026-10-22): the guard waved 'Apply' through because the page had a password box."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(QUICK_APPLY)
+        box = await ex.page.locator("#apply").bounding_box()
+        el = await ex.element_at(int(box["x"] + 10), int(box["y"] + 10))
+        assert el.submit is True, el
+    finally:
+        await ex.close()

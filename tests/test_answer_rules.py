@@ -2495,3 +2495,17 @@ def test_a_send_code_button_is_no_application_submit():
         assert VERIFY_BUTTON.match(b), b
     for b in ("Submit", "Submit Application", "Send Application"):
         assert not VERIFY_BUTTON.match(b), b
+
+
+
+def test_a_quick_apply_page_is_an_application_not_an_account_page():
+    """Safran (SuccessFactors quick apply, 2026-10-22): account creation and the whole application on one page; its 'Apply'
+    was clicked as 'Create Account' and the application was sent without the gate or the judge."""
+    from types import SimpleNamespace
+    from goat.agent.tools import FINAL_SUBMIT_LABEL, combined_account_application
+    fields = [{"tag": "input", "type": "text", "value": v} for v in ("Surya", "Thirukonda", "a@b.c", "a@b.c", "281", "Sugar Land")]
+    pw = [{"tag": "input", "type": "password", "value": "x"}]
+    assert combined_account_application(SimpleNamespace(items=fields + pw))
+    assert not combined_account_application(SimpleNamespace(items=fields[:3] + pw))      # a create-account form
+    assert not combined_account_application(SimpleNamespace(items=fields))              # no password box
+    assert FINAL_SUBMIT_LABEL.match("Apply") and not FINAL_SUBMIT_LABEL.match("Create Account")
