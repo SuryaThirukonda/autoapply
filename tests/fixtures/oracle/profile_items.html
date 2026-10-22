@@ -11,7 +11,8 @@
      a -reset-button once set, and a role=grid -listbox of gridcells (typing filters it, the School list is a search that
      lists nothing until typed into; text that was never picked is dropped on blur). Ticking Current Job hides End Date.
      BNY's education form: Degree as single-select pills (role=radio buttons, no input), the school in an 'Educator'
-     text box, no Graduated box (setup: degreePills, schoolName 'educator', noGraduated).
+     text box, no Graduated box (setup: degreePills, schoolName 'educator', noGraduated). Berkshire Hathaway Energy's
+     forms require Employer Country on work entries and Country / City on the degree (setup: requireCountry).
      Save checks the required fields and keeps the form open with 'input-row--invalid' rows when one is missing. Delete
      acts at once. window.setup(state) renders a state; window.state() returns the saved entries. -->
 <html><head><meta charset="utf-8"><title>Intern - Data Science - Careers</title>
@@ -63,8 +64,8 @@ function eduSub(d) {
   const a = mmYYYY(d.sm, d.sy), b = mmYYYY(d.em, d.ey);
   return [d.school || '', a && b ? a + ' - ' + b : (a || b)].filter(Boolean).join(' ');
 }
-const workInvalid = (w) => !w.title || !w.employer || !w.sm || (S.extraRequired && !w.business);
-const eduInvalid = (d) => (S.degreeField && !d.degree) || !d.school;
+const workInvalid = (w) => !w.title || !w.employer || !w.sm || (S.extraRequired && !w.business) || (S.requireCountry && !w.country);
+const eduInvalid = (d) => (S.degreeField && !d.degree) || !d.school || (S.requireCountry && (!d.country || !d.city));
 
 // ------------------------------------------------------------------ form controls (changed in place, never re-rendered)
 function cxSelect(name, label, options, value, opt) {
@@ -161,7 +162,8 @@ function readForm() {
   } else {
     const picker = r.school.input.getAttribute('role') === 'combobox';
     Object.assign(d, { major: r.major.input.value.trim(), school: picker ? p(r.school.input) : r.school.input.value.trim(), sm: p(r.start.month),
-      sy: p(r.start.year), em: p(r.end.month), ey: p(r.end.year), graduated: r.graduated ? r.graduated.input.checked : d.graduated });
+      sy: p(r.start.year), em: p(r.end.month), ey: p(r.end.year), graduated: r.graduated ? r.graduated.input.checked : d.graduated,
+      country: p(r.ecountry.input), city: r.ecity.input.value.trim() });
     if (r.degree) d.degree = r.degree.value ? r.degree.value() : p(r.degree.input);
   }
 }
@@ -172,9 +174,12 @@ function save() {
     if (!d.employer) errs.employer = 1;
     if (!d.title) errs.title = 1;
     if (S.extraRequired && !d.business) errs.business = 1;
+    if (S.requireCountry && !d.country) errs.country = 1;
   } else {
     if (S.degreeField && !d.degree) errs.degree = 1;
     if (!d.school) errs.school = 1;
+    if (S.requireCountry && !d.country) errs.ecountry = 1;
+    if (S.requireCountry && !d.city) errs.ecity = 1;
   }
   if (Object.keys(errs).length) { F.errors = errs; F.nodes = null; render(); return; }
   const list = F.kind === 'work' ? S.work : S.education;
@@ -198,7 +203,7 @@ function formNodes(footerCls) {
       rows.end.el.classList.toggle('hidden', !!d.current);
       kids.push(rows.current.el);
     }
-    rows.country = pickRow('countryCode', 'Employer Country', COUNTRIES, d.country);
+    rows.country = pickRow('countryCode', 'Employer Country', COUNTRIES, d.country, { required: S.requireCountry, invalid: e.country });
     rows.city = textRow('employerCity', 'Employer City', d.city);
     rows.desc = textRow('responsibilities', 'Responsibilities', d.desc, { area: true });
     kids.push(rows.country.el, rows.city.el, rows.desc.el);
@@ -214,7 +219,10 @@ function formNodes(footerCls) {
                                               : pickRow(S.schoolName || 'educationalEstablishment', 'School', SCHOOLS, d.school, { search: true, invalid: e.school });
     rows.start = dateRow('start', 'Start Date', d.sm, d.sy);
     rows.end = dateRow('end', 'End Date', d.em, d.ey);
-    kids.push(rows.major.el, rows.school.el, rows.start.el, rows.end.el);
+    // Berkshire Hathaway Energy's degree form requires Country and City (setup: requireCountry)
+    rows.ecountry = pickRow('countryCode', 'Country', COUNTRIES, d.country, { required: S.requireCountry, invalid: e.ecountry });
+    rows.ecity = textRow('city', 'City', d.city, { required: S.requireCountry, invalid: e.ecity });
+    kids.push(rows.major.el, rows.school.el, rows.start.el, rows.end.el, rows.ecountry.el, rows.ecity.el);
     if (!S.noGraduated) { rows.graduated = checkRow('graduatedFlag', 'Graduated', d.graduated); kids.push(rows.graduated.el); }
   }
   F.rows = rows;

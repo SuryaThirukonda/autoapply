@@ -296,3 +296,23 @@ def test_the_gate_sends_the_run_to_the_step_that_holds_entries_it_cannot_see(sto
     monkeypatch.setattr(g, "oracle_tile_problems", lambda *a, **k: ["the Education tile 'Engineering Honors' / '' is not his degree entry: remove it"])
     r = g.run_gate(job=job, snapshot=snap, page_text="NEXT", expected_resume=None, free_text_answers=[], portal="oracle", page_no=1)
     assert r.reasons[0].startswith("call fill_sections first") and "Engineering Honors" in r.reasons[0], r.reasons
+
+
+@pytest.mark.asyncio
+async def test_required_country_and_city_are_filled_from_his_own_places(stored):
+    """Berkshire Hathaway Energy (2026-10-22): Save was refused over Employer Country on a work entry and Country / City on
+    his degree; the model then edited the degree by hand and left its start year blank. The required boxes take his
+    entry's own place: a remote role is in his country, Texas A&M is where his research role there is (College Station)."""
+    ex = await _open(dict(GM, layout="timeline", requireCountry=True, currentFlag=True))
+    try:
+        rep = await _filler(ex).run()
+        assert rep.failed == [], rep.failed
+        st = await _state(ex)
+        _assert_his_work(st, current_flag=True)
+        assert {w["employer"]: w["country"] for w in st["work"]} == {e["company"]: "United States" for e in ENTRIES}
+        assert [(d["school"], d["sm"], d["sy"], d["country"], d["city"]) for d in st["education"]] == [
+            ("Texas A&M University", "August", "2025", "United States", "College Station")]
+        srcs = {r["source"] for r in records.decisions(1)}
+        assert "standing:experience.work.1.location" in srcs and "standing:education.school" in srcs
+    finally:
+        await ex.close()

@@ -280,6 +280,11 @@ def city_of(location: str) -> str:
     return loc.split(",")[0].strip()
 
 
+def _us_states() -> dict:
+    from ..agent.tools import _US_STATES
+    return _US_STATES
+
+
 def signature(t: dict) -> str:
     return "|".join((t.get("kind") or "", _norm(t.get("title")), _norm(t.get("sub")), _norm(t.get("dates"))))
 
@@ -677,18 +682,74 @@ class OracleSections:
             done.append(("Graduated", "No", "graduation"))
         return True, "", done
 
+    def _place(self, kind: str, ent: dict | None) -> tuple[str, str, str, str]:
+        """(city, state, country, stored key) for a work entry (its location; a remote role is in his own country) or for
+        his school (education.city / .state / .country, else the location of his stored role at that school: 'Rathinam
+        Group, Texas A&M ...' is in College Station, TX)."""
+        from ..agent.tools import _US_STATES
+        if kind == "work":
+            loc, key = (ent or {}).get("location", ""), "location"
+        else:
+            key = "school"
+            city, state, country = (self._answer(f"education.{k}") for k in ("city", "state", "country"))
+            if city or state or country:
+                return city, state, country or "United States", key
+            short = [" ".join(_norm(n).split()[:3]) for n in self._school_names()]
+            loc = next((e.get("location", "") for e in stored_work_entries(self.company, "oracle")
+                        if any(k and k in _norm(e.get("company")) for k in short)), "")
+        m = re.search(r",\s*([A-Z]{2})\b", loc or "")
+        state = _US_STATES.get(m.group(1), "") if m else ""
+        country = "United States" if state else (self._answer("identity.country") or "United States")
+        return city_of(loc), state, country, key
+
+    async def _fill_required(self, kind: str, ent: dict | None) -> list[tuple[str, str, str]]:
+        """Required boxes his entries have no field for, left empty (Berkshire Hathaway Energy, 2026-10-22: Save refused
+        over Employer Country on a work entry and Country / City on his degree; the model then edited the degree by hand
+        and left its start year blank): his entry's own place."""
+        city, state, country, key = self._place(kind, ent)
+        fl = (await self.form()).get("fields") or {}
+        done: list[tuple[str, str, str]] = []
+        for name, f in fl.items():
+            if f.get("value") or f.get("type") == "checkbox" or not f.get("vis") or not (f.get("required") or f.get("invalid")):
+                continue
+            if re.fullmatch(r"(employer)?country(code)?", name, re.I):
+                want, wants = country, [country, "United States", "United States of America", "USA"]
+            elif re.fullmatch(r"(employer)?city", name, re.I):
+                want, wants = city, [city]
+            elif re.search(r"state|region|province", name, re.I):
+                code = next((c for c, n in _us_states().items() if n == state), "")
+                want, wants = state, [state, code]
+            else:
+                continue
+            if not want:
+                continue
+            got = (await self._pick(f, [w for w in wants if w], search=want) if f.get("combo")
+                   else (want if await self._set_text(f, want) else ""))
+            if got:
+                done.append((f.get("label") or name, got, key))
+        return done
+
     def _record(self, what: str, done: list[tuple[str, str, str]], prefix: str) -> None:
         for label, value, key in done:
             records.record_decision(self.job["id"], self.page_no, f"{what}: {label}", value, f"standing:{prefix}.{key}", "")
 
-    async def _finish(self, ok: bool, why: str) -> tuple[bool, str]:
+    async def _finish(self, ok: bool, why: str, kind: str = "work", ent: dict | None = None,
+                      done: list | None = None) -> tuple[bool, str]:
         if not ok:
             await self._cancel()
             return False, why
+        extra = await self._fill_required(kind, ent)
         saved, errs = await self._save()
+        if not saved:
+            more = await self._fill_required(kind, ent)
+            extra += more
+            if more:
+                saved, errs = await self._save()
         if not saved:
             await self._cancel()
             return False, "Save was refused: " + "; ".join(errs)[:200]
+        if done is not None:
+            done.extend(extra)
         return True, ""
 
     # ------------------------------------------------------------------ work entries
@@ -729,12 +790,12 @@ class OracleSections:
                 continue
             self.dirty = False
             ok, why, done = await self._write_work(ent)
-            if ok and not self.dirty:
+            if ok and not self.dirty and not t.get("invalid"):
                 await self._cancel()          # it already held every stored value: nothing to save
                 self.rep.present.append(f"experience: {ent['company']}")
                 await self._remember("work", ent)
                 continue
-            ok, why = await self._finish(ok, why)
+            ok, why = await self._finish(ok, why, "work", ent, done)
             if not ok:
                 self.rep.failed.append(f"experience: {ent['company']}: {why}")
                 continue
@@ -752,7 +813,7 @@ class OracleSections:
                 self.rep.failed.append(f"experience: {ent['company']}: Add Experience did not open a form")
                 continue
             ok, why, done = await self._write_work(ent)
-            ok, why = await self._finish(ok, why)
+            ok, why = await self._finish(ok, why, "work", ent, done)
             if not ok:
                 self.rep.failed.append(f"experience: {ent['company']}: {why}")
                 continue
@@ -819,12 +880,12 @@ class OracleSections:
             return
         self.dirty = False
         ok, why, done = await self._write_education()
-        if ok and not self.dirty and mine is not None:
+        if ok and not self.dirty and mine is not None and not mine.get("invalid"):
             await self._cancel()
             self.rep.present.append(f"education: {names[0]}")
             await self._remember("education", None)
             return
-        ok, why = await self._finish(ok, why)
+        ok, why = await self._finish(ok, why, "education", None, done)
         if not ok:
             self.rep.failed.append(f"education: {names[0]}: {why}")
             return
