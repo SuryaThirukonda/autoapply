@@ -2448,3 +2448,23 @@ def test_a_judgment_on_a_ledger_answer_shows_the_resolved_value(store):
     answers.save_answer("preferences.applied_before", "Yes / No", answer_type="conditional:ledger_company", source="seed:spec")
     unconf, ev = answers.unconfirmed_source("judgment:preferences.applied_before", "Ecolab", "workday")
     assert unconf and "'No'" in ev and "ledger" in ev, ev
+
+
+@pytest.mark.asyncio
+async def test_another_sites_verification_mail_is_looked_past_before_parking(store):
+    """Deutsche Bank (Recsolu, 2026-10-22): an Oracle tenant's day-old mail was the newest 'verify' email; the run was held
+    at once. The link is never opened; the run looks again, and parks on the third such find."""
+    from goat.budget import Parked
+    from goat.mail import gmail
+    d, ctx = _dispatcher(_job())
+
+    class Mail:
+        def fetch_verification_link(self, *a, **k):
+            return gmail.LinkResult("host_mismatch", None, "m1")
+
+    ctx.mail = Mail()
+    for _ in range(2):
+        out, _ = await d.t_open_verification_link()
+        assert out["status"] == "not_received" and "not opened" in out["note"]
+    with pytest.raises(Parked):
+        await d.t_open_verification_link()

@@ -3361,7 +3361,17 @@ class ToolDispatcher:
                     "next": "the email is confirmed: sign in now (credentials login_universal on the Sign In form, then click Sign "
                             "In). Never open the link again; a 'Invalid Token' note on the sign-in page after it is expected."}, None
         if status == "host_mismatch":
-            raise Parked("host_mismatch: verification link pointed at another host", "hold")
+            # The link is never opened. But the newest 'verify' email can be another site's: Deutsche Bank's Recsolu run
+            # found an Oracle tenant's mail from the day before and was held at once (2026-10-22). Look again first.
+            n = self.ctx.control_failures.get("verify:host_mismatch", 0) + 1
+            self.ctx.control_failures["verify:host_mismatch"] = n
+            db.event(self.ctx.job_id, "creds:verify_link_other_host", {"host": self.ctx.portal_host, "n": n})
+            if n >= 3:
+                raise Parked("host_mismatch: verification link pointed at another host", "hold")
+            return {"status": "not_received",
+                    "note": "the newest verification email found belongs to another site; its link was not opened. If this "
+                            "page says an email was sent, call open_verification_link again (it waits for new mail); if "
+                            "none comes, park needs_you."}, None
         return {"status": status}, None
 
     # The portal did not load or stalled (a spinner, a disabled Save and Continue): retried later, not held.
