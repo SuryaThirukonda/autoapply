@@ -58,7 +58,10 @@ PORTALS: dict[str, dict[str, Any]] = {
         link_host_rule="same_host",
     ),
     "oracle": dict(
-        senders=["oraclecloud.com", "oracle.com"],
+        # 'noreply_fusion_essf@' is Oracle Fusion's mailer on the employer's own domain: Berkshire Hathaway Energy's code
+        # came from noreply_fusion_essf@oci.brkenergy.com and was never found (2026-10-22). An entry ending in '@' is a
+        # sender name on any domain.
+        senders=["oraclecloud.com", "oracle.com", "noreply_fusion_essf@"],
         # onsemi's tenant titles its one-time code email "onsemi Confirm Your Identity".
         subject_hints=["code", "Verify", "verification", "Confirm", "Identity", "passcode", "one-time"],
         code_regex=SIX_DIGITS,
@@ -277,7 +280,10 @@ def sender_allowed(from_header: str, portal: str | None, portal_host: str, extra
         return False
     for s in spec["senders"]:
         s = s.lower()
-        if "@" in s:
+        if s.endswith("@"):
+            if (addr or "").startswith(s):
+                return True
+        elif "@" in s:
             if addr == s:
                 return True
         elif domain == s or domain.endswith("." + s):
@@ -607,6 +613,7 @@ def build_code_query(portal: str, portal_host: str, after_ts: int, extra_senders
         senders = [registrable_domain(portal_host)] + list(PLATFORM_SENDERS)
         hints = ["code", "Verify", "verification", "Confirm"]
     senders += [t for t in extra_senders if t and t not in senders]
+    senders = [s[:-1] if s.endswith("@") else s for s in senders]
     q = f"from:({' OR '.join(senders)}) after:{int(after_ts)} newer_than:1d"
     if hints:
         q += " (" + " OR ".join(f"subject:{_quote(h)}" for h in hints) + ")"
@@ -793,6 +800,7 @@ def build_reset_query(portal: str, portal_host: str, after_ts: int, extra_sender
     spec = PORTALS.get((portal or "").lower())
     senders = list(spec["senders"]) if spec else [registrable_domain(portal_host)]
     senders += [t for t in extra_senders if t and t not in senders]
+    senders = [s[:-1] if s.endswith("@") else s for s in senders]
     q = f"from:({' OR '.join(senders)}) after:{int(after_ts)} newer_than:1d"
     return q + " (" + " OR ".join(f"subject:{_quote(h)}" for h in ("password", "reset", "Reset", "Forgot")) + ")"
 

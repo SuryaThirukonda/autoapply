@@ -507,3 +507,16 @@ def test_a_distinctive_first_word_finds_an_employer_that_mails_under_its_short_n
     assert not sender_allowed("Deals <x@citizensoffers.example>", "oracle", "hcgn.fa.us2.oraclecloud.com", toks)
     assert sender_allowed("Talent Team <no-reply@notifications.example.com>", "oracle", "hcgn.fa.us2.oraclecloud.com", toks) is False
     assert "american" not in company_sender_tokens("American Express")
+
+
+
+def test_oracle_fusion_mail_on_the_employer_domain_is_found():
+    """Berkshire Hathaway Energy (Oracle, 2026-10-22): the code came from noreply_fusion_essf@oci.brkenergy.com."""
+    from goat.mail.gmail import build_code_query, company_sender_tokens, sender_allowed
+    host = "fa-essf-saasfaprod1.fa.ocs.oraclecloud.com"
+    toks = company_sender_tokens("Berkshire Hathaway Energy")
+    q = build_code_query("oracle", host, 1792649600, toks)
+    assert "noreply_fusion_essf " in q or "noreply_fusion_essf)" in q, q
+    assert "@" not in q.split("after:")[0], q
+    assert sender_allowed("noreply_fusion_essf@oci.brkenergy.com", "oracle", host, toks)
+    assert not sender_allowed("offers@brkenergy-deals.example", "oracle", host, toks)
