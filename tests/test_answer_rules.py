@@ -2485,3 +2485,13 @@ def test_a_careers_search_page_that_found_nothing_lets_the_park_stand():
     assert error_or_empty_page(snap)
     snap.errors = {}
     assert not error_or_empty_page(snap)
+
+
+
+def test_a_send_code_button_is_no_application_submit():
+    """Mathtech (ADP, 2026-10-22): the verification dialog's 'Send' was refused by click and by submit."""
+    from goat.agent.tools import VERIFY_BUTTON
+    for b in ("Send", "Send code", "Resend code", "Verify email", "Send verification code"):
+        assert VERIFY_BUTTON.match(b), b
+    for b in ("Submit", "Submit Application", "Send Application"):
+        assert not VERIFY_BUTTON.match(b), b

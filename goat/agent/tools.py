@@ -622,6 +622,10 @@ def disabled_submits(job_id: int, window_s: int = 1800) -> int:
         return 0
 
 
+VERIFY_BUTTON = re.compile(r"^(send|send (me )?(a |the )?(code|verification code|passcode|link|email|text)|resend( code)?|"
+                           r"get (a )?code|verify( (email|phone|me))?|send code to (email|phone))$", re.I)
+
+
 def never_tick(item: dict | None, val) -> str:
     """Why a checkbox must not be ticked ('' when it may): a talent community (his never-join rule) or a 'Select all' box
     that bundles optional consents with the required ones."""
@@ -2274,7 +2278,10 @@ class ToolDispatcher:
     async def t_click(self, ref: str, label: str):
         snap = self.ctx.last_snapshot
         item = snap.find(ref) if snap else None
-        if item and item.get("submitish") and not self._account_page():
+        # a button that sends a verification code is an account step, never the application's submit (Mathtech's ADP
+        # dialog 'Send' was refused by click as a submit control and by submit as an account button, 2026-10-22)
+        if item and item.get("submitish") and not self._account_page() \
+                and not VERIFY_BUTTON.match(str(item.get("label") or label or "").strip()):
             return {"error": "that is a submit control; call submit instead"}, None
         if re.search(r"\badd\b", label or "", re.I) and re.search(r"language", label or "", re.I) and db.connect().execute(
                 "SELECT 1 FROM events WHERE job_id=? AND kind='languages:no_english' LIMIT 1", (self.ctx.job_id,)).fetchone():
