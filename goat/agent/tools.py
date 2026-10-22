@@ -33,9 +33,9 @@ FUNCTION_TOOLS: list[dict] = [
      "description": "Set many plain fields at once (text, textarea, email, tel, number, native select, radio, checkbox). Each field names a ref and EITHER an answer_key from the ANSWERS list (preferred) OR a literal value with a source. Returns per-field set/failed with the value read back.",
      "parameters": {"type": "object", "properties": {"fields": {"type": "array", "items": {"type": "object", "properties": {
          "ref": {"type": "string"},
-         "answer_key": {"type": ["string", "null"], "description": "key from ANSWERS or from lookup_answer"},
-         "value": {"type": ["string", "null"], "description": "literal value when no key applies (true/false for checkboxes and radios)"},
-         "source": {"type": ["string", "null"], "description": "required with a literal: 'generated' for free-response text you wrote under the writing rules, 'resume' for a value copied verbatim from the résumé text, 'clear' with an empty value to blank a field holding a stale or wrong value, 'computer' (value null, WITH the answer_key) after you picked the option with the computer tool: it is kept only when the page shows that answer, 'as_is' (value null) to keep what the field already shows because Surya set it himself in the browser or told you it is done"},
+         "answer_key": {"type": ["string", "null"], "description": "key from ANSWERS or from lookup_answer. When one stored answer holds several parts (an address with line 1, city, county and ZIP), give that key AND the part for this field as value with source 'part'"},
+         "value": {"type": ["string", "null"], "description": "literal value when no key applies (true/false for checkboxes and radios), or with source 'part' the words of the stored answer that belong in this field"},
+         "source": {"type": ["string", "null"], "description": "'part' (WITH the answer_key) for one part of a stored answer, copied exactly from it; required with a literal: 'generated' for free-response text you wrote under the writing rules, 'resume' for a value copied verbatim from the résumé text, 'clear' with an empty value to blank a field holding a stale or wrong value, 'computer' (value null, WITH the answer_key) after you picked the option with the computer tool: it is kept only when the page shows that answer, 'as_is' (value null) to keep what the field already shows because Surya set it himself in the browser or told you it is done"},
          "label": {"type": "string", "description": "the field label as shown"}},
          "required": ["ref", "answer_key", "value", "source", "label"], "additionalProperties": False}}},
                     "required": ["fields"], "additionalProperties": False}},
@@ -1356,6 +1356,15 @@ class ToolDispatcher:
             tag = f"standing:{answer_key}" if not answer_key.startswith("bank.") else f"bank:{answer_key[5:]}"
             if why and not a.is_blank:
                 tag += f" ({why[:80]})"
+            if (source or "").lower() == "part":
+                # One stored answer can hold a whole address: Transcard's Paylocity form wanted line 1, city, county and
+                # ZIP for each employer, Surya's answer named all of them in one line, and the run parked because no single
+                # field could take it (2026-10-21). A part copied from the stored words keeps that answer as its source.
+                part = str(value or "").strip()
+                if not part or answers.norm(part) not in answers.norm(str(val)):
+                    return None, "", (f"'{part[:60]}' is not part of {answer_key}'s stored answer ('{str(val)[:160]}'): "
+                                      "copy the exact words it holds for this field")
+                return part, tag + " (part)", None
             return val, tag, None
         if value is None:
             return None, "", "neither answer_key nor value given"
@@ -1365,7 +1374,9 @@ class ToolDispatcher:
                 return None, "", "source 'clear' only takes an empty value (or false for a checkbox)"
             return str(value), "cleared", None
         if src not in ("generated", "resume"):
-            return None, "", "a literal value needs source 'generated' (free text you wrote) or 'resume' (a value copied from the résumé); everything else needs an answer_key"
+            return None, "", ("a literal value needs source 'generated' (free text you wrote) or 'resume' (a value copied from the résumé); "
+                                 "everything else needs an answer_key (one part of a stored answer, like the city of an address: that answer_key, "
+                                 "the part as value, source 'part')")
         if src == "resume":
             if not _in_resume(value):
                 return None, "", f"'{str(value)[:60]}' does not appear in the résumé text; use an answer_key or ask_user"
@@ -2851,7 +2862,7 @@ class ToolDispatcher:
         with db.tx() as con:
             con.execute("UPDATE jobs SET status=?, updated_at=? WHERE id=? AND status=?",
                         (states.FILLING, db.now(), self.ctx.job_id, states.AWAITING_ANSWER))
-        return {"answers": got, "note": "use these keys in fill_batch / choose"}, None
+        return {"answers": got, "note": "use these keys in fill_batch / choose; where an answer names several fields (an address), fill each field with the key, its part as value and source 'part'"}, None
 
     async def t_guardcheck(self, text: str):
         blocks, warns = guardrail_check(text)

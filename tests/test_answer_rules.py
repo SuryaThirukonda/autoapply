@@ -2236,3 +2236,18 @@ def test_a_bounced_park_lists_the_blockers_his_stored_answers_cover(store):
                                "empty_required: * What is your favourite colour? (text) ref=e130",
                                "not an application page: no submit control"])
     assert got == ["[e124] Are you 18 years or older? -> identity.age_18_plus = Yes"], got
+
+
+
+def test_a_part_of_a_stored_address_answer_fills_one_field(store):
+    """Transcard Payments (Paylocity, 2026-10-21): Surya's answer gave line 1, city, county, state and ZIP of a remote
+    employer in one line; the form has a field for each, and the run parked because none could take the whole answer."""
+    d, ctx = _dispatcher(_job())
+    answers.save_answer("q.remote_employer_address", "Remote role worked from home: address line 1 6611 Cadogan Court, city Sugar Land, "
+                        "county Fort Bend, state TX, ZIP 77479", answer_type="text", source="operator")
+    val, tag, err = d._resolve_value("q.remote_employer_address", "Fort Bend", "part", "County")
+    assert err is None and val == "Fort Bend" and tag.endswith("(part)")
+    assert d._resolve_value("q.remote_employer_address", "77479", "part", "Zip Code")[0] == "77479"
+    val, tag, err = d._resolve_value("q.remote_employer_address", "Harris", "part", "County")
+    assert val is None and "not part of" in err
+    assert d._resolve_value("q.remote_employer_address", "", "part", "County")[0] is None
