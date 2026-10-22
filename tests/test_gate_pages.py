@@ -1085,3 +1085,26 @@ async def test_a_dialogs_save_button_is_no_application_submit():
         assert btns.get("Save") is False and btns.get("Submit Application") is True, btns
     finally:
         await ex.close()
+
+
+
+ADP_SEND = """<html><body><form>
+<label>First<input value="Surya"></label><label>Last<input value="Thirukonda"></label><label>Email<input value="a@b.c"></label>
+<div role="dialog" aria-modal="true" style="position:fixed;top:100px;left:100px;width:400px;height:200px;background:#fff">
+ <p>Where should we send your code?</p><button id="send" type="button" style="width:120px;height:40px">Send</button></div>
+</form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_dialogs_send_button_is_clickable():
+    """Mathtech (ADP, 2026-10-22): the verification dialog's 'Send' was refused as a submit control by the executor."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(ADP_SEND)
+        box = await ex.page.locator("#send").bounding_box()
+        el = await ex.element_at(int(box["x"] + 10), int(box["y"] + 10))
+        assert el.submit is False, el
+    finally:
+        await ex.close()
