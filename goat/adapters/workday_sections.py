@@ -738,10 +738,12 @@ def review_gaps(page_text: str, company: str = "") -> list[str]:
         if _company_key(ent["company"]) not in text:
             gaps.append(f'work entry {ent["n"]} ({ent["company"]})')
     if re.search(r"\bWebsites\b", page_text):
-        for url in stored_websites(company):
-            host_path = re.sub(r"^https?://(www\.)?", "", url).rstrip("/").lower()
-            if host_path not in page_text.lower():
-                gaps.append(f"website {url}")
+        # One of his sites on Review is enough: Verizon refused GitHub as a duplicate of a URL it already held, and a gate
+        # that wanted every stored site held the run on a website the portal would never take (2026-10-22).
+        urls = stored_websites(company)
+        shown = [u for u in urls if re.sub(r"^https?://(www\.)?", "", u).rstrip("/").lower() in page_text.lower()]
+        if urls and not shown:
+            gaps.extend(f"website {url}" for url in urls)
     # A Languages section left empty (Cigna, DFW, Intel, 2026-10-20: "Languages No Response" on Review, caught only by the
     # judge after a full verification round).
     if re.search(r"(?m)^[ \t]*Languages[ \t]*\n+[ \t]*No Response\b", (page_text or "").replace("\u200b", "")):

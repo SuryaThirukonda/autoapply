@@ -402,3 +402,15 @@ async def test_relevant_websites_are_found_and_a_url_already_on_the_page_is_not_
         assert not [x for x in rep.failed if "website" in x], rep.summary()
     finally:
         await ex.close(close_browser=True)
+
+
+
+def test_one_stored_website_on_review_is_enough(monkeypatch):
+    """Verizon (2026-10-22): GitHub was refused as a duplicate; the gate held the run for it with LinkedIn on Review."""
+    from goat.adapters import workday_sections as ws
+    monkeypatch.setattr(ws, "stored_work_entries", lambda company="": [])
+    monkeypatch.setattr(ws, "stored_websites", lambda company="": ["https://github.com/SuryaThirukonda",
+                                                                    "https://www.linkedin.com/in/surya-thirukonda"])
+    page = "My Experience\nRelevant Websites\nhttps://www.linkedin.com/in/surya-thirukonda\nApplication Questions"
+    assert not [g for g in ws.review_gaps(page) if g.startswith("website")]
+    assert [g for g in ws.review_gaps("My Experience\nWebsites\nNo Response") if g.startswith("website")]
