@@ -1046,3 +1046,19 @@ def test_languages_no_response_passes_when_the_employer_lists_no_english(store):
     db.event(job["id"], "languages:no_english", {"ref": "e144"})
     ok = run_gate(job=job, snapshot=snap, page_text=text, expected_resume=None, free_text_answers=[], portal="workday", page_no=1)
     assert not any("Languages" in r for r in ok.reasons), ok.reasons
+
+
+
+def test_a_posting_link_that_opens_the_site_home_is_no_application(store):
+    """LufCo (Breezy, 2026-10-22): the posting redirected to lufco.breezy.hr/ and a submit control there passed the gate."""
+    from goat.gate import redirected_home
+    assert redirected_home("https://lufco.breezy.hr/p/3d3ec6639256-summer-intern-2027", "https://lufco.breezy.hr/?#positions")
+    assert not redirected_home("https://lufco.breezy.hr/p/3d3ec6639256-summer-intern-2027",
+                               "https://lufco.breezy.hr/p/3d3ec6639256-summer-intern-2027/apply")
+    assert not redirected_home("https://jobs.lever.co/acme/123", "https://jobs.lever.co/acme/123/apply")
+    job = {**_job(), "url": "https://lufco.breezy.hr/p/3d3ec6639256-summer-intern-2027"}
+    snap = _snap([{"ref": "e1", "tag": "button", "label": "Submit", "submitish": True}])
+    snap.url = "https://lufco.breezy.hr/?#positions"
+    g = run_gate(job=job, snapshot=snap, page_text="Our Openings\nSubmit", expected_resume=None, free_text_answers=[],
+                 portal="other", page_no=1)
+    assert g.result == "blocked" and "posting is gone" in g.reasons[-1], g.reasons

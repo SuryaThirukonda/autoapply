@@ -73,6 +73,20 @@ SUBMIT_LABEL = re.compile(r"\bsubmit\b|\bsend (my |your |the )?application\b|"
 ORACLE_ISSUES = re.compile(r"you have \d+ issues? that needs? to be fixed before you can submit( your application)?", re.I)
 
 
+def redirected_home(posting_url: str, page_url: str) -> bool:
+    """The posting's own address (a path naming the posting) now shows the same site's home page."""
+    from urllib.parse import urlparse
+    try:
+        a, b = urlparse(posting_url or ""), urlparse(page_url or "")
+    except ValueError:
+        return False
+    if not a.netloc or a.netloc.lower() != b.netloc.lower():
+        return False
+    deep = len([x for x in (a.path or "").split("/") if x]) >= 1
+    home = (b.path or "/").rstrip("/") in ("", "/en", "/us/en", "/en-us", "/careers", "/jobs")
+    return deep and home and not a.query
+
+
 def has_submit_control(snapshot: Snapshot) -> bool:
     """A submit control on the page: one the snapshot marked, or any button whose label reads like a submit
     (the model may name a final button the snapshot's exact list does not know)."""
@@ -601,7 +615,11 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
             return GateResult("guardrail_block", [f"guardrail {b}" for b in blocks])
 
     # 7. only a page that can be submitted passes: a maintenance notice or a mid-form page never does
-    if not has_submit_control(snapshot):
+    if redirected_home(job.get("url") or "", getattr(snapshot, "url", "") or ""):
+        # LufCo (Breezy, 2026-10-22): the posting link opened the site's openings list; a 'Submit' in its page passed the gate
+        reasons.append(f"{NOT_APPLICATION} the posting link now opens the site's home / openings page ({snapshot.url[:100]}): "
+                       "the posting is gone: park posting_closed")
+    elif not has_submit_control(snapshot):
         perr = portal_error(page_text)
         reasons.append(f"{NOT_APPLICATION} " + (f"the portal shows an error or maintenance notice ({perr[:120]}): park portal_error" if perr else
                        "no submit control on this page: fill it and continue to the final (Review) page; if the portal is broken, park portal_error"))

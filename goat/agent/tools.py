@@ -4001,7 +4001,8 @@ class ToolDispatcher:
                 pass   # past the budget and the gate blocks: the park stands
             elif gate.result == "blocked" and low.startswith("portal_error") and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons)                     and any("error or maintenance notice" in r for r in gate.reasons):
                 pass   # the page shows the portal's own error or maintenance notice: the park stands
-            elif gate.result == "blocked" and low.startswith(("portal_error", "posting_closed")) and error_or_empty_page(snap):
+            elif gate.result == "blocked" and low.startswith(("portal_error", "posting_closed")) and (
+                    error_or_empty_page(snap) or any("the posting link now opens the site's home" in r for r in gate.reasons)):
                 # Deloitte (2026-10-22): "An error has occurred / Page not found" with links only; four parks were refused.
                 # Truist (2026-10-22): the posting link landed on a careers search with "No result found" (an error text).
                 pass
