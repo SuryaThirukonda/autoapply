@@ -641,6 +641,10 @@ def combined_account_application(snap) -> bool:
     return len(filled) >= 6
 
 
+SELF_SATISFIED = re.compile(r"\b(this|that|it|the requirement|requirement) (is|was) (already )?(satisfied|met)\b|"
+                            r"\bso (this|it|that) is (satisfied|met|fine)\b|\b(he|surya) (meets|satisfies) (it|this|the requirement)\b", re.I)
+
+
 def never_tick(item: dict | None, val) -> str:
     """Why a checkbox must not be ticked ('' when it may): a talent community (his never-join rule) or a 'Select all' box
     that bundles optional consents with the required ones."""
@@ -3948,6 +3952,13 @@ class ToolDispatcher:
                              "is not needed to apply: he is a U.S. citizen who can obtain one, and the employer sponsors it once "
                              "he starts. An earlier attempt's note about it does not change that. "
                              + ("This page has the Submit button: call submit now." if done else "Continue the application.")}, None
+        # an eligibility park whose own words say the requirement is met (Sierra Space, 2026-10-22: "requires U.S. person
+        # status; Surya is a U.S. citizen, so this is satisfied") is refused whatever the park count
+        if low.startswith("eligibility") and SELF_SATISFIED.search(reason) and self.ctx.control_failures.get("park:self_satisfied", 0) < 3:
+            self.ctx.control_failures["park:self_satisfied"] = self.ctx.control_failures.get("park:self_satisfied", 0) + 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "says it is satisfied"})
+            return {"error": "not parked: this reason itself says the requirement is met, so it is no eligibility hold. Continue "
+                             "the application to Review and call submit."}, None
         if low.startswith("eligibility") and self.SATISFIED.search(reason) and not self.DISQUALIFIERS.search(non_grad) \
                 and not self.grad_window_excludes(reason) and self.ctx.park_attempts < 2:
             self.ctx.park_attempts += 1

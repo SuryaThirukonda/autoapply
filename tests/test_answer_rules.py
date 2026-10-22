@@ -2509,3 +2509,11 @@ def test_a_quick_apply_page_is_an_application_not_an_account_page():
     assert not combined_account_application(SimpleNamespace(items=fields[:3] + pw))      # a create-account form
     assert not combined_account_application(SimpleNamespace(items=fields))              # no password box
     assert FINAL_SUBMIT_LABEL.match("Apply") and not FINAL_SUBMIT_LABEL.match("Create Account")
+
+
+
+def test_an_eligibility_reason_that_says_it_is_satisfied_is_no_hold():
+    """Sierra Space (2026-10-22): 'requires U.S. person status; Surya is a U.S. citizen, so this is satisfied' was parked."""
+    from goat.agent.tools import SELF_SATISFIED
+    assert SELF_SATISFIED.search("requires U.S. person status; Surya is a U.S. citizen, so this is satisfied. Need inspect")
+    assert not SELF_SATISFIED.search("The role requires pursuing a graduate degree, which Surya is not pursuing.")
