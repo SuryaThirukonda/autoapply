@@ -81,7 +81,14 @@ FUTURE_ROLES = re.compile(
     r"(\bfor (other|future|additional|new|further) (job |career |employment )?(opportunit|openings?|positions?|roles?|vacanc)|"
     r"talent (pool|database)|kept on file for|future (job )?consideration|keep (my|your|his) (profile|information|data|resume|résumé|cv))",
     re.I)
-NEWSLETTER = re.compile(r"(newsletter|job alerts?|marketing|promotion|subscribe|text messag|\bsms\b|e-?mails? about)", re.I)
+# Job alerts by any wording: Berkshire Hathaway Energy's Oracle box "I agree to receive updates about new job projects." was
+# ticked as his keep-my-profile consent (the judge caught it, 2026-10-22).
+JOB_ALERTS = re.compile(
+    r"(job alerts?|\b(receive|get|send me)\b.{0,30}\b(updates|alerts|notifications|news)\b.{0,30}\b(new )?(jobs?|job projects?|positions?|"
+    r"roles?|opportunit\w*|openings?|vacanc\w*)|\bupdates about (new |future |similar )?(jobs?|job projects?|positions?|roles?|"
+    r"opportunit\w*|openings?))", re.I)
+NEWSLETTER = re.compile(r"(newsletter|job alerts?|marketing|promotion|subscribe|text messag|\bsms\b|e-?mails? about|"
+                        + JOB_ALERTS.pattern + ")", re.I)
 
 
 def future_roles_consent(label: str) -> bool:

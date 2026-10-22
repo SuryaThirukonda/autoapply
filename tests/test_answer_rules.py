@@ -2301,3 +2301,21 @@ async def test_back_onto_a_posted_form_reopens_the_application(store):
     ctx.ex = Ex()
     out, _ = await d.t_tabs("back")
     assert went == [ctx.job["apply_url"]] and "Confirm Form Resubmission" in out["note_back"]
+
+
+
+def test_a_job_updates_box_is_never_ticked_and_a_zip_extension_stays_blank(store):
+    """Berkshire Hathaway Energy (Oracle, 2026-10-22): 'I agree to receive updates about new job projects.' was ticked as his
+    keep-my-profile consent, and 'Postal Code Extension' got the five-digit ZIP; the judge caught both."""
+    from goat.adapters import future_roles_consent
+    from goat.agent.tools import never_tick
+    box = {"type": "checkbox", "label": "I agree to receive updates about new job projects."}
+    assert "job alerts" in never_tick(box, "true")
+    assert never_tick({"type": "checkbox", "label": "I consent to my data being kept on file for future job opportunities."}, "true") == ""
+    assert not future_roles_consent("I agree to receive updates about new job projects.")
+    assert future_roles_consent("Do you consent for your data to be further processed for other job opportunities?")
+    d, ctx = _dispatcher(_job())
+    val, tag, err = d._resolve_value("identity.zip", None, None, "Postal Code Extension")
+    assert val is None and "ZIP+4" in err
+    answers.save_answer("identity.zip", "77479", answer_type="text", source="questionnaire")
+    assert d._resolve_value("identity.zip", None, None, "Postal Code")[:1] == ("77479",)

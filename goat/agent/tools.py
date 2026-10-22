@@ -550,10 +550,13 @@ def dictated_by_form(value: str, text: str) -> bool:
     return bool(quoted.search(text or "") or bare.search(text or ""))
 
 
+ZIP_EXTENSION = re.compile(r"(postal|zip)\s*(code)?\s*(extension|ext\b|suffix)|zip\s*\+\s*4|\+\s*4\b|plus\s*4|zip\s*4\b", re.I)
+
+
 def never_tick(item: dict | None, val) -> str:
     """Why a checkbox must not be ticked ('' when it may): a talent community (his never-join rule) or a 'Select all' box
     that bundles optional consents with the required ones."""
-    from ..adapters import SELECT_ALL_BOX, TALENT_COMMUNITY
+    from ..adapters import JOB_ALERTS, SELECT_ALL_BOX, TALENT_COMMUNITY
     if not item or str(item.get("type") or "").lower() != "checkbox":
         return ""
     if str(val).strip().lower() not in ("true", "yes", "checked", "1", "y", "on", "i agree", "agree"):
@@ -565,6 +568,9 @@ def never_tick(item: dict | None, val) -> str:
     if SELECT_ALL_BOX.match(label):
         return ("a 'Select all' box ticks the optional boxes too (a talent community, marketing): tick each required box "
                 "on its own instead.")
+    if JOB_ALERTS.search(label):
+        return ("this box signs him up for job alerts / updates about other openings: his rule keeps newsletters, job alerts and "
+                "marketing unticked (keeping his profile on file is a different box).")
     return ""
 
 
@@ -1335,6 +1341,10 @@ class ToolDispatcher:
             return None, "", ("this 'Date Obtained' belongs to the citizenship / status block (Country N Name, Type of Status N): "
                               "it is the date he obtained that status, not a certification date. For a U.S. citizen by birth it is "
                               "his date of birth, which is not stored: ask_user for it.")
+        if answer_key == "identity.zip" and ZIP_EXTENSION.search(label or ""):
+            # Berkshire Hathaway Energy's Oracle address got 77479 in 'Postal Code Extension' too (the judge caught it, 2026-10-22)
+            return None, "", ("this box takes the 4-digit ZIP+4 extension, which is not stored: leave it blank (it is optional "
+                              "wherever the plain ZIP is asked for too)")
         if answer_key:
             a = answers.get(answer_key, self.ctx.job.get("company", ""), self.ctx.portal)
             if a is None:
