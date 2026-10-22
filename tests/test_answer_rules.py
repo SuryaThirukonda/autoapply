@@ -2425,3 +2425,17 @@ def test_an_error_page_with_only_links_is_no_form_page():
     posting = Snapshot(url="https://jobs.example.com/job/123", title="Software Intern", headings=["Software Intern"],
                        items=[{"ref": "e1", "tag": "button", "label": "Apply"}], groups=[], errors={}, challenge={})
     assert not error_or_empty_page(posting)      # a posting page before Apply is no error page
+
+
+
+def test_disabled_submits_are_counted_for_the_park(store):
+    """Newell Brands (2026-10-22): Apply stayed disabled; five verified submits found no enabled control and every park was
+    refused because the gate passed."""
+    from goat import db
+    from goat.agent.tools import disabled_submits
+    job = _job()
+    assert disabled_submits(job["id"]) == 0
+    for _ in range(2):
+        db.event(job["id"], "submit:blocked", {"why": ["no enabled submit control found (label=Apply; 46 candidates)"]})
+    db.event(job["id"], "submit:blocked", {"why": ["something else"]})
+    assert disabled_submits(job["id"]) == 2

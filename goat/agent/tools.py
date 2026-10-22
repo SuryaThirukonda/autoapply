@@ -604,6 +604,16 @@ def error_or_empty_page(snap) -> bool:
     return not fillable
 
 
+def disabled_submits(job_id: int, window_s: int = 1800) -> int:
+    """How many submit clicks found no enabled submit control for this job in the last half hour."""
+    try:
+        return int(db.connect().execute(
+            "SELECT COUNT(*) FROM events WHERE job_id=? AND kind='submit:blocked' AND ts>=? AND detail LIKE '%no enabled submit control%'",
+            (job_id, db.now() - window_s)).fetchone()[0])
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def never_tick(item: dict | None, val) -> str:
     """Why a checkbox must not be ticked ('' when it may): a talent community (his never-join rule) or a 'Select all' box
     that bundles optional consents with the required ones."""
@@ -3962,7 +3972,9 @@ class ToolDispatcher:
                             free_text_answers=[f["answer"] for f in self.ctx.free_text], portal=self.ctx.portal, page_no=self.ctx.page_no)
             db.event(self.ctx.job_id, "park:checked", {"reason": reason[:200], "gate": gate.as_dict(), "counted": not free})
             self.ctx.gate_result = gate.as_dict()
-            if gate.passed:
+            if gate.passed and disabled_submits(self.ctx.job_id) >= 2:
+                pass   # Newell Brands (2026-10-22): SuccessFactors kept Apply disabled; submit and park refused each other
+            elif gate.passed:
                 return {"error": "not parked: the code gate PASSES on this page. A problem an EARLIER attempt recorded is not on "
                                  "this page now: judge the page, not the history. Call submit now (the gate decides; the "
                                  "checks before submitting stop anything wrong)."}, None
