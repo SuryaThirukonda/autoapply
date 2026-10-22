@@ -1031,3 +1031,18 @@ async def test_an_employer_sponsorship_policy_note_is_no_error():
         assert not any("sponsoring" in (e.get("text") or "") for e in snap.errors.get("error_text", [])), snap.errors
     finally:
         await ex.close()
+
+
+def test_languages_no_response_passes_when_the_employer_lists_no_english(store):
+    """Ryan (Workday, 2026-10-22): the Language list had no English; the 'Languages: No Response' rule had the run add an
+    entry it could never fill, and it asked Surya twice."""
+    from goat import db
+    job = _job()
+    snap = _snap([{"ref": "e1", "tag": "button", "label": "Submit", "submitish": True}])
+    snap.headings = ["Review"]
+    text = "My Experience\nLanguages\nNo Response\nSubmit"
+    g = run_gate(job=job, snapshot=snap, page_text=text, expected_resume=None, free_text_answers=[], portal="workday", page_no=1)
+    assert any("Languages: No Response" in r for r in g.reasons), g.reasons
+    db.event(job["id"], "languages:no_english", {"ref": "e144"})
+    ok = run_gate(job=job, snapshot=snap, page_text=text, expected_resume=None, free_text_answers=[], portal="workday", page_no=1)
+    assert not any("Languages" in r for r in ok.reasons), ok.reasons

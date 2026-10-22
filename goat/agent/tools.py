@@ -553,6 +553,15 @@ def dictated_by_form(value: str, text: str) -> bool:
 ZIP_EXTENSION = re.compile(r"(postal|zip)\s*(code)?\s*(extension|ext\b|suffix)|zip\s*\+\s*4|\+\s*4\b|plus\s*4|zip\s*4\b", re.I)
 
 
+_OTHER_LANGUAGES = re.compile(r"\b(chinese|mandarin|spanish|french|german|hindi|japanese|korean|portuguese|dutch|arabic|italian|russian)\b", re.I)
+
+
+def no_english_offered(label: str, error: str) -> bool:
+    """A Language picker whose options (named in the failed choose's error) list other languages and no English."""
+    return bool(re.match(r"\s*language\b", label or "", re.I)) and bool(_OTHER_LANGUAGES.search(error or "")) \
+        and not re.search(r"\benglish\b", error or "", re.I)
+
+
 def never_tick(item: dict | None, val) -> str:
     """Why a checkbox must not be ticked ('' when it may): a talent community (his never-join rule) or a 'Select all' box
     that bundles optional consents with the required ones."""
@@ -1899,6 +1908,12 @@ class ToolDispatcher:
 
     async def t_choose(self, ref: str, answer_key: str | None, options: list[str], label: str, source: str | None):
         out, img = await self._t_choose(ref, answer_key, options, label, source)
+        if isinstance(out, dict) and out.get("status") == "failed" and no_english_offered(label, str(out.get("error") or "")):
+            # Ryan's Workday Language list holds Chinese ... Spanish and no English (2026-10-22): the gate's 'Languages: No
+            # Response' rule had the run add an entry it could never fill, and it asked Surya twice
+            db.event(self.ctx.job_id, "languages:no_english", {"ref": ref})
+            out["next"] = ("this employer's Language list has no English, his only language: Delete this Languages entry (its "
+                           "Delete button) and leave the section empty; the Review page may show Languages: No Response here.")
         if isinstance(out, dict) and (out.get("status") in ("set", "kept") or str(out.get("summary", "")).startswith("1 set")):
             # a picker set again fixes the read-back complaint recorded for it when its page was left; fill_batch already
             # drops those, choose did not, and American Express' verify kept failing on pickers that held the right values

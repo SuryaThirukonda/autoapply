@@ -2329,3 +2329,13 @@ def test_a_part_never_picks_one_entry_of_a_choice_chain(store):
     answers.save_answer("self_id.race_ethnicity", "Decline to self-identify; Asian", answer_type="choice_chain", source="questionnaire")
     val, tag, err = d._resolve_value("self_id.race_ethnicity", "Asian", "part", "Race")
     assert err is None and val.startswith("Decline"), val
+
+
+
+def test_a_language_list_without_english_is_recognised():
+    """Ryan (Workday, 2026-10-22): the Language picker offered Chinese ... Spanish and no English."""
+    from goat.agent.tools import no_english_offered
+    err = "the picker for this field did not open; the options on screen (['Select One', 'Chinese', 'Dutch', 'French', 'Spanish'])"
+    assert no_english_offered("Language", err)
+    assert not no_english_offered("Language", err.replace("'Chinese'", "'English'"))
+    assert not no_english_offered("Preferred location", err)
