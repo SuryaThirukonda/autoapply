@@ -29,15 +29,16 @@
     "\\buk\\b",
     "united kingdom",
     "london",
-    "india",
+    "\\bindia\\b",
     "germany",
     "ireland",
     "singapore",
-    "mexico"
+    "(?<!new )mexico"
   ],
   "blocked_companies": [
     "netic",
-    "cybernetic labs"
+    "cybernetic labs",
+    "ibm"
   ],
   "blocked_url_hosts": [
     "ziprecruiter.com"

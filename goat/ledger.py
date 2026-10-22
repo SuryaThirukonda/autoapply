@@ -72,6 +72,22 @@ def _host(key: str) -> str:
     return (key or "").split("/", 1)[0].split("?", 1)[0]
 
 
+def same_posting(title: str, url: str, other_title: str, other_url: str, *, same_key: bool = False) -> bool:
+    """Two postings of one company are one posting: a shared posting id, or the same title (or ledger key) unless both
+    name different posting ids or one portal gives them different links. The scraper matches postings two compilations
+    list by it too, so each becomes one job (2026-10-22)."""
+    ids, other_ids = posting_ids(url, title), posting_ids(other_url, other_title)
+    if ids & other_ids:
+        return True       # the same posting id
+    if ids and other_ids:
+        return False      # both name their posting and the ids differ (Motorola R69136 vs the tracker's R68679)
+    uk, other = url_key(url), url_key(other_url)
+    if uk and other and other != uk and _host(other) == _host(uk):
+        return False      # one portal names them by different links: different postings
+    lt = loose_title(title)
+    return same_key or (bool(lt) and loose_title(other_title) == lt)
+
+
 def already_applied(company: str, title: str, url: str) -> bool:
     """The same posting is in the ledger: its link, its posting id, or the same company and title unless both links
     carry posting ids that differ. Two postings of one company that share a title but name different ids are
@@ -84,21 +100,10 @@ def already_applied(company: str, title: str, url: str) -> bool:
     ck = norm(company)
     if not ck:
         return False
-    ids = posting_ids(url, title)
-    lt = loose_title(title)
     exact_c = f"c:{ck}|{norm(title)}" if norm(title) else None
     for row in con.execute("SELECT key, company, title, url FROM applied_keys"):
-        if norm(row["company"]) != ck:
-            continue
-        row_ids = posting_ids(row["url"] or "", row["title"] or "")
-        if ids & row_ids:
-            return True       # the same posting id
-        if ids and row_ids:
-            continue          # both name their posting and the ids differ (Motorola R69136 vs the tracker's R68679)
-        other = url_key(row["url"] or "")
-        if uk and other and other != uk and _host(other) == _host(uk):
-            continue          # one portal names them by different links: different postings
-        if (exact_c and row["key"] == exact_c) or (lt and loose_title(row["title"]) == lt):
+        if norm(row["company"]) == ck and same_posting(title, url, row["title"] or "", row["url"] or "",
+                                                       same_key=bool(exact_c) and row["key"] == exact_c):
             return True
     return False
 

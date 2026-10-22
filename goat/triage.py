@@ -103,7 +103,8 @@ def classify(listing: dict, r: dict | None = None) -> tuple[str, str, str, str]:
     host = urlparse(url).netloc.lower() if url else ""
     if any(b in host for b in r.get("blocked_url_hosts", [])):
         return SKIPPED, "blocked_host", ats, variant
-    if any(b in norm(company) for b in r.get("blocked_companies", [])):
+    # whole words: 'ibm' (Surya, 2026-10-22: "Don't add IBM roles to the queue") must not block 'Kibmo Labs'
+    if any(re.search(r"\b" + re.escape(norm(b)) + r"\b", norm(company)) for b in r.get("blocked_companies", [])):
         return SKIPPED, "do_not_reapply", ats, variant
     for name, pat in r.get("unsure_title_patterns", {}).items():
         if re.search(pat, low_title, re.I):

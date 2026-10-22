@@ -1,4 +1,4 @@
-"""SimplifyJobs listings.json -> listings -> jobs, plus best-effort posting liveness checks.
+"""SimplifyJobs listings.json (and two other compilations) -> listings -> jobs, plus best-effort posting liveness checks.
 
 The scraper is the only writer of `listings`. The first pass over the feed is a *baseline*: every
 row is recorded with the triage status it would have received (reason "would_be:<st>:<reason>")
@@ -8,15 +8,20 @@ promote recent baseline rows that would have been queued.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import os
 import re
+import time
+from datetime import datetime
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 
 from . import db, ledger, states, triage
+from .answers import norm
 from .config import SETTINGS
 
 log = logging.getLogger("goat.scraper")
@@ -114,6 +119,7 @@ def ingest(rows: list[dict], *, first_run: bool) -> dict:
               "rejected": 0, "skipped": 0, "already_applied": 0, "closed": 0, "jobs_closed": 0,
               "no_id": 0}
     ts = db.now()
+    held = None     # listings that would have a job, read when the first new one comes
     with db.tx() as con:
         for row in rows:
             lid = row.get("id")
@@ -161,6 +167,17 @@ def ingest(rows: list[dict], *, first_run: bool) -> dict:
                 if ledger.already_applied(company, title, url):
                     status, reason = triage.SKIPPED, "already_applied"
                     counts["already_applied"] += 1
+            if status in (triage.QUEUED, triage.MANUAL):
+                # one job per posting: Simplify listing a posting another compilation already gave goat adds nothing
+                if held is None:
+                    held = PostingIndex(con.execute(
+                        "SELECT id, company, title, url FROM listings WHERE triage_status IN ('queued', 'manual')"))
+                dup = held.find(company, title, url, other_than=feed_of(lid))
+                if dup:
+                    status, reason = triage.SKIPPED, f"duplicate:{dup}"
+                    counts["duplicate"] = counts.get("duplicate", 0) + 1
+                else:
+                    held.add(lid, company, title, url)
             con.execute(_INSERT_LISTING, _listing_values(
                 row, ats=ats, variant=variant, triage_status=status, triage_reason=reason, ts=ts))
             fit = triage.role_fit(title)
@@ -244,10 +261,241 @@ async def scrape_loop(stop: asyncio.Event) -> None:
             except Exception:  # noqa: BLE001
                 n = -1
             log.warning("scrape failed (%d consecutive): %s: %s", n, type(e).__name__, e)
+        if extra_feeds_on():
+            try:
+                extra = await asyncio.to_thread(poll_extra_once)
+                if any(isinstance(v, dict) and (v.get("new") or v.get("error")) for v in extra.values()):
+                    log.info("other compilations: %s", json.dumps(extra, sort_keys=True))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - Simplify's feed goes on whatever happens here
+                log.warning("other compilations failed: %s: %s", type(e).__name__, e)
         try:
             await asyncio.wait_for(stop.wait(), timeout=SETTINGS.scrape_interval_s)
         except asyncio.TimeoutError:
             continue
+
+
+# --------------------------------------------------------------------------- other compilations
+
+# Two compilations besides Simplify (Surya, 2026-10-22: "Find new listing sites and internship compilations to queue"):
+# zshah101's automated list scrapes company boards directly and gave goat 152 aligned roles Simplify never listed;
+# adminazhar's lists link each posting's own form and gave 35 more. vanshb03's list held nothing Simplify lacked, and
+# jobright's lists link only to jobright.ai, not to the employer's form. Only open internships in his aligned roles in
+# the US are taken from them, by the title rules the first hand-checked batch used, and a posting goat already holds
+# (ledger.same_posting: the same link, posting id or title) is left out. GOAT_EXTRA_FEEDS=0 turns them off.
+EXTRA_FEEDS = (
+    ("zshah101", "https://raw.githubusercontent.com/zshah101/Automated-List-Of-Summer-2027-and-Fall-2026-Tech-Internships/main/data/jobs.json"),
+    ("adminazhar", "https://raw.githubusercontent.com/adminazhar/Summer-2027-Internships/main/README.md"),
+    ("adminazhar", "https://raw.githubusercontent.com/adminazhar/Summer-2027-Internships/main/ENGINEERING_INTERNSHIPS.md"),
+)
+# which feed gave goat a listing, by its id ('manual:' rows come from the tracker sheet, the rest from Simplify)
+FEED_PREFIXES = {"zshah-": "zshah101", "adminazhar-": "adminazhar", "manual:": "manual"}
+_INTERNSHIP = re.compile(r"\b(intern|internship|co-?op|summer (analyst|associate)|apprentice(ship)?)\b", re.I)
+_US_STATES = ("AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|"
+              "OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC|PR")
+_US_STATE_NAMES = ("alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|"
+                   "illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|"
+                   "mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|"
+                   "north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|"
+                   "south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|"
+                   "district of columbia|puerto rico")
+# 'Austin, TX', 'Atlanta GA', 'US-IA-Cedar Rapids', 'Boston, Massachusetts', 'United States', 'Remote', 'Multiple'
+_US_PLACE = re.compile(r"(?<![A-Za-z])(%s)(?![A-Za-z])|\bUSA?\b|U\.S\.|(?i:\b(%s|united states|remote|multiple|nyc|"
+                       r"san francisco|bay area|silicon valley|seattle|chicago|boston|los angeles)\b)"
+                       % (_US_STATES, _US_STATE_NAMES))
+# another country (named or by its ISO code), a Canadian province, or a city abroad whose short form looks like a US
+# state ('Hyderabad, IN', 'Berlin, DE', 'Tel Aviv, IL')
+_ABROAD = re.compile(r"\b(canada|india|united kingdom|uk|england|scotland|ireland|germany|france|china|japan|singapore|"
+                     r"poland|brazil|israel|australia|netherlands|spain|taiwan|korea|philippines|costa rica|hungary|"
+                     r"romania|czech|vietnam|hong kong|switzerland|sweden|denmark|italy|portugal|argentina|chile|colombia|"
+                     r"egypt|uae|serbia|(?<!new )mexico|ind|chn|gbr|deu|ita|jpn|sgp|isr|pol|fra|esp|nld|irl|aus|bra|mex|kor|"
+                     r"twn|phl|rou|hun|cze|toronto|montreal|ottawa|vancouver(?!,?\s*(wa|washington)\b)|bengaluru|"
+                     r"bangalore|hyderabad|pune|chennai|mumbai|noida|gurgaon|gurugram|beijing|shanghai|shenzhen|tokyo|"
+                     r"seoul|taipei|berlin|munich|frankfurt|hamburg|krakow|tel aviv|haifa|herzliya|sydney|zurich|"
+                     r"amsterdam|prague|bucharest|budapest|manila|guadalajara|sao paulo|buenos aires|bogota)\b"
+                     r"|,\s*(ON|BC|QC|AB|MB|SK|NS|NB|NL|PE)\b", re.I)
+# titles the first hand-checked batch left out: other engineering fields, graduate-only roles, customer-facing chip
+# roles, epidemiology and strategy work, civil infrastructure design
+_NOT_HIS = re.compile(r"\b(mechanical|civil|electrical|chemical|manufacturing|hardware|structural|aerospace engineering|"
+                      r"materials|process engineer|mechatronics|graduate intern|ph\.?d|master'?s|mba|"
+                      r"field applications? engineer|applications engineer(ing)?|equipment engineer|yield technology|"
+                      r"physical systems|epidemiology|strategy and m&a|bridge design|roadway design|"
+                      r"transportation (planning|engineering)|water infrastructure)\b", re.I)
+# quant and trading firms are not his direction (Simplify files their roles under its Quant category, which triage
+# rejects; these lists file them under Software)
+_QUANT_FIRM = re.compile(r"\b(trading|traders|optiver|jane street|citadel|hudson river|two sigma|d\.? ?e\.? shaw|"
+                         r"susquehanna|sig(?! sauer)|imc|jump|five rings|tower research|akuna|drw|virtu|old mission|"
+                         r"belvedere|wolverine|peak6|radix|xtx|squarepoint|millennium management|balyasny|schonfeld|"
+                         r"point72|renaissance technologies|headlands|maven securities|da vinci|g-research|qube|"
+                         r"trexquant|aquatic capital|arrowstreet|voleon|cubist|engineers gate|bridgewater associates|"
+                         r"man group|capital fund management)\b", re.I)
+_DATA_TITLE = re.compile(r"\b(data|analytics?|analyst|machine learning|ml|ai|artificial intelligence|scien(ce|tist))\b", re.I)
+
+
+def extra_feeds_on() -> bool:
+    return os.environ.get("GOAT_EXTRA_FEEDS", "1") != "0"
+
+
+def feed_of(listing_id: str) -> str:
+    return next((name for prefix, name in FEED_PREFIXES.items() if str(listing_id).startswith(prefix)), "simplify")
+
+
+class PostingIndex:
+    """Listings matched the way the ledger matches an application: the same link, or one company's posting with the
+    same posting id or title (ledger.same_posting)."""
+
+    def __init__(self, rows=()):
+        self._links: dict[str, list[str]] = {}
+        self._companies: dict[str, list[tuple[str, str, str]]] = {}
+        self._roles: dict[tuple[str, str], str] = {}
+        for lid, company, title, url in rows:
+            self.add(lid, company, title, url)
+
+    def add(self, lid: str, company: str, title: str, url: str) -> None:
+        uk = ledger.url_key(url)
+        if uk:
+            self._links.setdefault(uk, []).append(lid)
+        if norm(company):
+            self._companies.setdefault(norm(company), []).append((lid, title or "", url or ""))
+            self._roles.setdefault((norm(company), ledger.loose_title(title)), lid)
+
+    def find(self, company: str, title: str, url: str, other_than: str | None = None) -> str | None:
+        """The id of a listing that is this posting (one another feed than `other_than` gave goat), else None."""
+        uk = ledger.url_key(url)
+        for lid in self._links.get(uk, []) if uk else []:
+            if other_than is None or feed_of(lid) != other_than:
+                return lid
+        for lid, t, u in self._companies.get(norm(company), []):
+            if (other_than is None or feed_of(lid) != other_than) and ledger.same_posting(title, url, t, u):
+                return lid
+        return None
+
+    def same_role(self, company: str, title: str) -> str | None:
+        """The id of a listing for this company's role of the same title, whatever its posting id or place."""
+        return self._roles.get((norm(company), ledger.loose_title(title))) if norm(company) else None
+
+
+def _iso_epoch(v: Any) -> int | None:
+    try:
+        return int(datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()) if v else None
+    except ValueError:
+        return None
+
+
+def _category(title: str) -> str:
+    return "AI/ML/Data" if _DATA_TITLE.search(title or "") else "Software"
+
+
+def zshah_rows(payload: Any) -> list[dict]:
+    """zshah101 data/jobs.json ({id: job} with company, title, url, location, posted_at, season(s), is_open) in
+    Simplify's row shape."""
+    items = payload.values() if isinstance(payload, dict) else (payload or [])
+    out = []
+    for r in items:
+        if not isinstance(r, dict) or not r.get("id"):
+            continue
+        title = r.get("title") or ""
+        out.append({"id": f"zshah-{r['id']}", "company_name": r.get("company") or "", "title": title, "url": r.get("url") or "",
+                    "category": _category(title), "locations": [x.strip() for x in (r.get("location") or "").split(";") if x.strip()],
+                    "terms": r.get("seasons") or ([r["season"]] if r.get("season") else []), "degrees": [],
+                    "sponsorship": r.get("sponsorship") or "", "source": "zshah101", "date_posted": _iso_epoch(r.get("posted_at")),
+                    "date_updated": _iso_epoch(r.get("last_seen_at")), "active": bool(r.get("is_open")), "is_visible": True})
+    return out
+
+
+def _md_plain(cell: str) -> str:
+    return re.sub(r"<[^>]+>|\*\*|\[|\]\([^)]*\)", "", cell).strip()
+
+
+def adminazhar_rows(md: str, now: int | None = None) -> list[dict]:
+    """adminazhar's table rows | Company | Role | Location | Pay | Age | Apply links | in Simplify's row shape; the apply
+    link is the employer's own (never the talentdpro mirror)."""
+    now = now or int(time.time())
+    out = []
+    for line in (md or "").splitlines():
+        if not line.startswith("|") or "href=" not in line:
+            continue
+        c = [x.strip() for x in line.strip().strip("|").split("|")]
+        if len(c) < 6:
+            continue
+        links = [u for u in re.findall(r'href="([^"]+)"', c[5]) if "talentdpro.com" not in u]
+        if not links:
+            continue
+        age = re.match(r"(\d+)\s*d", c[4] or "")
+        title = _md_plain(c[1])
+        locs = [x for x in (_md_plain(p) for p in re.split(r"<br\s*/?>|</br>|;", c[2])) if x]
+        out.append({"id": "adminazhar-" + hashlib.sha1(links[0].encode()).hexdigest()[:16], "company_name": _md_plain(c[0]),
+                    "title": title, "url": links[0], "category": _category(title), "locations": locs,
+                    "terms": [], "degrees": [], "sponsorship": "", "source": "adminazhar",
+                    "date_posted": now - int(age.group(1)) * 86400 if age else None, "date_updated": now,
+                    "active": True, "is_visible": True})
+    return out
+
+
+def us_place(location: str) -> bool:
+    """A US state ('Austin, TX'), the US named, Remote or Multiple, and no other country or city abroad."""
+    return bool(_US_PLACE.search(location or "")) and not _ABROAD.search(location or "")
+
+
+def keep_extra(row: dict) -> bool:
+    """An open internship in one of his aligned roles and fields, in the US, at no quant or trading firm."""
+    title = row.get("title") or ""
+    locs = [str(x) for x in (row.get("locations") or [])]
+    return (bool(row.get("active", True)) and bool(_INTERNSHIP.search(title)) and triage.role_fit(title) == triage.ALIGNED
+            and not _NOT_HIS.search(title) and not _QUANT_FIRM.search(row.get("company_name") or "")
+            and (not locs or any(us_place(x) for x in locs)))
+
+
+def _fetch_feed(label: str, url: str) -> str | None:
+    """The feed's text, or None when GitHub says it has not changed since the last read."""
+    key = f"extra_feed:{label}:etag"
+    headers = {"User-Agent": "goat-scraper/1.0"}
+    etag = db.meta_get(key)
+    if etag:
+        headers["If-None-Match"] = etag
+    with httpx.Client(timeout=90, follow_redirects=True) as client:
+        resp = client.get(url, headers=headers)
+    if resp.status_code == 304:
+        return None
+    resp.raise_for_status()
+    if resp.headers.get("etag"):
+        db.meta_set(key, resp.headers["etag"])
+    return resp.text
+
+
+def poll_extra_once(feeds=EXTRA_FEEDS, fetch=None) -> dict:
+    """Read each other compilation and ingest its new, kept rows. Rows goat already holds from that feed go through
+    too, so a row zshah101 marks closed closes its listing and job. A feed that cannot be read is skipped this time."""
+    fetch = fetch or _fetch_feed
+    out: dict = {}
+    con = db.connect()
+    held = PostingIndex(con.execute("SELECT id, company, title, url FROM listings"))
+    for name, url in feeds:
+        label = f"{name}:{url.rsplit('/', 1)[-1]}"
+        try:
+            text = fetch(label, url)
+            if text is None:
+                out[label] = {"status": 304}
+                continue
+            rows = zshah_rows(json.loads(text)) if name == "zshah101" else adminazhar_rows(text)
+        except Exception as e:  # noqa: BLE001 - a feed that cannot be read is skipped this time
+            out[label] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+            continue
+        known = {r[0] for r in con.execute("SELECT id FROM listings WHERE source=?", (name,))}
+        batch = []
+        for r in rows:
+            if r["id"] in known:
+                batch.append(r)
+            # one row per company and title: the per-site copies of one role (Lockheed Martin listed one 36 times)
+            # are left out, as in the first hand-checked batch
+            elif keep_extra(r) and not (held.find(r["company_name"], r["title"], r["url"])
+                                        or held.same_role(r["company_name"], r["title"])):
+                held.add(r["id"], r["company_name"], r["title"], r["url"])
+                batch.append(r)
+        out[label] = ingest(batch, first_run=False) if batch else {"new": 0}
+        db.meta_set(f"extra_feed:{label}:last_ok", db.now())
+    return out
 
 
 # --------------------------------------------------------------------------- liveness
