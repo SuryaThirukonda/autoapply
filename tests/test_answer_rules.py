@@ -2468,3 +2468,18 @@ async def test_another_sites_verification_mail_is_looked_past_before_parking(sto
         assert out["status"] == "not_received" and "not opened" in out["note"]
     with pytest.raises(Parked):
         await d.t_open_verification_link()
+
+
+
+def test_a_careers_search_page_that_found_nothing_lets_the_park_stand():
+    """Truist (2026-10-22): the posting link landed on the careers search page with 'No result found'."""
+    from goat.agent.tools import error_or_empty_page
+    from goat.browser.snapshot import Snapshot
+    snap = Snapshot(url="https://careers.truist.com/us/en/search-results?keywords=Technology%20and%20Operations%20Intern",
+                    title="Search results | Find available job openings at Truist Bank", headings=["Discover your next career"],
+                    items=[{"ref": "e2", "tag": "input", "type": "text", "label": "Search for Job Title"},
+                           {"ref": "e4", "tag": "button", "label": "Search"}],
+                    groups=[], errors={"error_text": [{"text": "No result found", "near": "Sort by"}]}, challenge={})
+    assert error_or_empty_page(snap)
+    snap.errors = {}
+    assert not error_or_empty_page(snap)

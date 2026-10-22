@@ -586,7 +586,9 @@ VAGUE_ELIGIBILITY = re.compile(r"(i |we |the run )?(cannot|can't|can not|unable 
 
 ERROR_PAGE = re.compile(r"an error (has )?occurred|page not found|\b404\b|something went wrong|no longer (available|accepting)|"
                         r"(job|posting|position|requisition) (is |has been )?(closed|expired|filled|no longer)|"
-                        r"this (job|position) is (not|no longer) available", re.I)
+                        r"this (job|position) is (not|no longer) available|no (results?|jobs?|matching jobs?|openings) (were |was )?found", re.I)
+# A posting link that lands on the careers site's search page found nothing (Truist, 2026-10-22: 'No result found')
+SEARCH_PAGE_URL = re.compile(r"search-results|/search(\b|/|\?)|[?&](keywords?|q|query)=", re.I)
 
 
 def error_or_empty_page(snap) -> bool:
@@ -596,11 +598,15 @@ def error_or_empty_page(snap) -> bool:
         return False
     head = " ".join([str(getattr(snap, "title", "") or ""), *[str(h) for h in (getattr(snap, "headings", None) or [])]])
     url = str(getattr(snap, "url", "") or "")
-    if not (ERROR_PAGE.search(head) or re.search(r"/(error|404|notfound|not-found)(\b|/|\?|$)", url, re.I)):
+    errs = getattr(snap, "errors", None) or {}
+    err_text = " ".join(str(e.get("text") or "") for k in ("error_text", "alerts") for e in (errs.get(k) or []) if isinstance(e, dict))
+    empty_search = bool(SEARCH_PAGE_URL.search(url)) and bool(ERROR_PAGE.search(err_text))
+    if not (ERROR_PAGE.search(head) or re.search(r"/(error|404|notfound|not-found)(\b|/|\?|$)", url, re.I) or empty_search):
         return False
     fillable = [i for i in (getattr(snap, "items", None) or [])
                 if (i.get("tag") in ("input", "select", "textarea", "dropdown", "toggle") or i.get("combo"))
-                and str(i.get("type") or "").lower() not in ("hidden", "search", "submit", "button")]
+                and str(i.get("type") or "").lower() not in ("hidden", "search", "submit", "button")
+                and not re.search(r"\bsearch\b|keyword|sort by|filter", str(i.get("label") or ""), re.I)]
     return not fillable
 
 
@@ -3993,9 +3999,10 @@ class ToolDispatcher:
                 pass   # past the budget and the gate blocks: the park stands
             elif gate.result == "blocked" and low.startswith("portal_error") and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons)                     and any("error or maintenance notice" in r for r in gate.reasons):
                 pass   # the page shows the portal's own error or maintenance notice: the park stands
-            elif gate.result == "blocked" and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons) \
-                    and (low.startswith(("portal_error", "posting_closed")) and error_or_empty_page(snap)):
-                pass   # Deloitte (2026-10-22): "An error has occurred / Page not found" with links only; four parks were refused
+            elif gate.result == "blocked" and low.startswith(("portal_error", "posting_closed")) and error_or_empty_page(snap):
+                # Deloitte (2026-10-22): "An error has occurred / Page not found" with links only; four parks were refused.
+                # Truist (2026-10-22): the posting link landed on a careers search with "No result found" (an error text).
+                pass
             elif gate.result == "blocked" and gate.reasons and all(r.startswith(NOT_APPLICATION) for r in gate.reasons):
                 # a mid-form page (no submit control) is no portal error: Northrop Grumman parked on My Information after
                 # Workday sent it back there with the last attempt's values (2026-10-19)
