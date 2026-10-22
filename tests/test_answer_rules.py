@@ -2252,3 +2252,16 @@ def test_a_part_of_a_stored_address_answer_fills_one_field(store):
     assert val is None and "not part of" in err
     # 'part' with no value takes the whole answer: DP World's run sent every field that way and all failed (2026-10-21)
     assert d._resolve_value("q.remote_employer_address", None, "part", "Address")[0].startswith("Remote role worked from home")
+
+
+
+def test_a_plain_bachelor_of_science_is_never_the_honours_one():
+    """Northrop Grumman (Workday, 2026-10-22): 'Bachelor of Science with Honours' came first in the list and was picked."""
+    from goat.browser.fill import best_option
+    wants = ["Bachelor of Science", "Bachelor's Degree", "Bachelor's", "Bachelors", "Bachelor", "Undergraduate"]
+    opts = [{"text": t} for t in ("Associate's Degree", "Bachelor of Science with Honours", "Bachelor of Science", "Bachelor of Arts")]
+    assert best_option(opts, wants)["text"] == "Bachelor of Science"
+    opts = [{"text": t} for t in ("Bachelor of Science with Honours", "Bachelor's Degree", "Master's Degree")]
+    assert best_option(opts, wants)["text"] == "Bachelor's Degree"
+    opts = [{"text": t} for t in ("Bachelor of Science (Honors)", "Bachelor of Science (BS)")]
+    assert best_option(opts, wants)["text"] == "Bachelor of Science (BS)"

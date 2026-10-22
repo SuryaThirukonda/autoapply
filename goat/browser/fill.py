@@ -773,6 +773,9 @@ def proficiency_option(options: list[dict], wants: list[str]) -> dict | None:
 _DEGREE_LEVEL_WANT = re.compile(r"^\s*(bachelor('?s)?( degree)?|undergraduate|bachelor'?s? of science( \(b\.?s\.?\))?|b\.?s\.?c?)\s*$", re.I)
 _SCIENCE_BACHELOR = re.compile(r"\bbachelor'?s?\s+(degree\s+)?(of|in)\s+science\b|^\s*b\.?\s?sc?\.?\s*(\(|$)|\(\s*b\.?\s?sc?\.?\s*\)", re.I)
 _OTHER_BACHELOR = re.compile(r"\bbachelor'?s?\s+(degree\s+)?(of|in)\s+(?!science\b)[a-z]", re.I)
+# an honours degree is another credential: Northrop Grumman's Workday list put "Bachelor of Science with Honours" first and it
+# was picked for his plain Bachelor of Science (the judge caught it, 2026-10-22)
+_HONOURS = re.compile(r"\bhono(u)?rs?\b|\bwith distinction\b|\bcum laude\b", re.I)
 
 
 def degree_option(options: list[dict], wants: list[str]) -> tuple[dict | None, list[dict]]:
@@ -781,9 +784,11 @@ def degree_option(options: list[dict], wants: list[str]) -> tuple[dict | None, l
     if not any(_DEGREE_LEVEL_WANT.match(w or "") for w in wants):
         return None, options
     exact = {_norm(w) for w in wants if w}
+    if not any(_HONOURS.search(w or "") for w in wants):
+        options = [o for o in options if _norm(o.get("text")) in exact or not _HONOURS.search(o.get("text") or "")]
     sci = [o for o in options if _SCIENCE_BACHELOR.search(o.get("text") or "")]
     if sci:
-        return sci[0], options
+        return next((o for o in sci if _norm(o.get("text")) in exact), sci[0]), options
     return None, [o for o in options if _norm(o.get("text")) in exact or not _OTHER_BACHELOR.search(o.get("text") or "")]
 
 
