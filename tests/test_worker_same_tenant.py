@@ -36,3 +36,21 @@ def test_a_posting_already_in_the_ledger_is_held_before_any_run(tmp_path):
             "url": "https://ryan.wd1.myworkdayjobs.com/Students-Graduates/job/Plano/Summer-2027-Intern--Application-Engineering_R0020808-1"}
     assert ledger_hold(twin).startswith("already_applied")
     assert ledger_hold({**twin, "url": twin["url"].replace("R0020808", "R0099999"), "title": "Data Intern"}) is None
+
+
+
+def test_a_portal_error_retry_never_queues_a_job_past_its_attempts(tmp_path):
+    """GM Financial (2026-10-22): requeued at 3 attempts (retry limit 4, claim limit 3) and never claimed."""
+    from goat import db, states, worker
+    from goat.config import SETTINGS
+    db.reset_for_tests(tmp_path / "t.db")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('L1','GM','Intern','https://x.oraclecloud.com/a','oracle')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,attempts,hold_reason,updated_at) VALUES(1,'L1',?,?,?,?,?)",
+                    (states.HOLD, "account", SETTINGS.budgets.max_attempts, "portal_error: tiles", 1))
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('L2','DP','Intern','https://y.oraclecloud.com/a','oracle')")
+        con.execute("INSERT INTO jobs(id,listing_id,status,lane,attempts,hold_reason,updated_at) VALUES(2,'L2',?,?,?,?,?)",
+                    (states.HOLD, "account", 1, "portal_error: tiles", 1))
+    assert worker.requeue_portal_errors(now=10 ** 9) == 1
+    st = {r["id"]: r["status"] for r in db.connect().execute("SELECT id, status FROM jobs")}
+    assert st == {1: states.HOLD, 2: states.QUEUED}

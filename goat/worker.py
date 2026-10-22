@@ -749,7 +749,9 @@ def requeue_portal_errors(now: int | None = None) -> int:
     n = 0
     with db.tx() as con:
         rows = con.execute("SELECT id FROM jobs WHERE status=? AND hold_reason LIKE 'portal_error:%' AND updated_at < ? AND attempts < ?",
-                           (states.HOLD, now - PORTAL_RETRY_AFTER_S, PORTAL_RETRY_MAX_ATTEMPTS)).fetchall()
+                           # never past the claim limit: a job at max_attempts sat 'queued' and was never claimed (GM
+                           # Financial, 2026-10-22: PORTAL_RETRY_MAX_ATTEMPTS 4 against max_attempts 3)
+                           (states.HOLD, now - PORTAL_RETRY_AFTER_S, min(PORTAL_RETRY_MAX_ATTEMPTS, SETTINGS.budgets.max_attempts))).fetchall()
         for r in rows:
             con.execute("UPDATE jobs SET status=?, hold_reason=NULL, tab_target_id=NULL, updated_at=? WHERE id=?",
                         (states.QUEUED, now, r["id"]))
