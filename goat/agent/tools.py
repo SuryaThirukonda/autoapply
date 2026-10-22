@@ -689,6 +689,24 @@ def stored_for_blockers(reasons: list[str], company: str = "", portal: str = "")
     return out
 
 
+# An Oracle file box read from the page itself, every step included (Oracle keeps all steps of its form in the DOM):
+# whether it is the 'Import your profile' box, whether its step is on screen, whether the résumé is already attached
+# anywhere (Supporting Documents on step 1 lists it by name) and whether a real résumé box exists anywhere.
+JS_ORACLE_FILE_SLOT = r"""
+([ref, name]) => {
+  const el = document.querySelector('[data-goat-ref="' + ref + '"]');
+  if (!el) return JSON.stringify({ found: false });
+  const vis = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const lab = ((el.getAttribute('aria-label') || '') + ' ' + ((el.labels && el.labels[0] && el.labels[0].textContent) || '')).trim();
+  const inImport = !!el.closest('.apply-flow-block--profile-import') || /import your profile/i.test(lab);
+  const step = el.closest('ul.apply-flow-page-list > li') || el.closest('.apply-flow-block');
+  const slots = Array.from(document.querySelectorAll('input[type="file"]')).filter(i => i !== el && !i.closest('.apply-flow-block--profile-import'));
+  return JSON.stringify({ found: true, inImport, label: lab.slice(0, 80), visible: vis(step),
+    attached: !!name && (document.body.textContent || '').toLowerCase().includes(name.toLowerCase()), otherSlot: slots.length > 0 });
+}
+"""
+
+
 def other_resume_slot(snap, ref: str, portal: str) -> dict | None:
     """A résumé file box on the page other than this one and other than an Oracle profile import box."""
     from ..adapters import is_profile_import_upload
@@ -2628,6 +2646,32 @@ class ToolDispatcher:
                 return {"error": "this is SmartRecruiters' 'autocomplete your application' box: it rewrites Experience and "
                                  "Education from the résumé, wrongly. Never upload there: upload into the Resume box lower on "
                                  "the page."}, None
+        if self.ctx.portal == "oracle":
+            # Oracle keeps every step of its form in the page: on step 4 the model uploaded into step 1's hidden 'Import your
+            # profile' box (its ref was in no snapshot of that step, so the guard below never saw its label) and Oracle parsed
+            # the résumé into the broken Work History entries again (GM Financial, 2026-10-22).
+            p0 = _resume_path(self.ctx, document)
+            try:
+                slot = await self.ctx.ex.eval(JS_ORACLE_FILE_SLOT, [ref, p0.name if p0 is not None else ""])
+                slot = slot if isinstance(slot, dict) else json.loads(slot or "{}")
+            except Exception:
+                slot = {}
+            if slot.get("inImport"):
+                if document == "resume" and p0 is not None and slot.get("attached"):
+                    self.ctx.resume_file = p0.name
+                    records.record_decision(self.ctx.job_id, self.ctx.page_no, f"{document} upload", p0.name, "resume", ref)
+                    return {"ref": ref, "status": "set", "readback": p0.name,
+                            "note": "the résumé is already attached under Supporting Documents (an earlier step of this form): "
+                                    "never upload into the 'Import your profile' box, it rewrites Work History wrongly"}, None
+                if slot.get("otherSlot"):
+                    return {"error": "this is Oracle's 'Import your profile' box: it parses the résumé into broken Work and "
+                                     "Education History entries. Upload into the résumé box under Supporting Documents instead "
+                                     "(go back to its step if it is behind you)."}, None
+                if not slot.get("visible"):
+                    return {"error": "that 'Import your profile' box is on another step of the form: never upload into it from "
+                                     "here"}, None
+                if not item_now.get("label"):
+                    item_now = {**item_now, "label": slot.get("label") or "Import your profile from resume"}
         from ..adapters import is_job_match_upload, is_profile_import_upload
         import_note = ""
         if is_profile_import_upload(" ".join([str(item_now.get("label") or ""), str(item_now.get("placeholder") or "")]), self.ctx.portal):

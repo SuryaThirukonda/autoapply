@@ -316,3 +316,39 @@ async def test_required_country_and_city_are_filled_from_his_own_places(stored):
         assert "standing:experience.work.1.location" in srcs and "standing:education.school" in srcs
     finally:
         await ex.close()
+
+
+GM_STEP4 = """<html><body><ul class="apply-flow-page-list">
+<li style="display:none"><div class="apply-flow-block apply-flow-block--profile-import"><h3>Import your profile</h3>
+  <input type="file" data-goat-ref="e3" aria-label="Import your profile from resume"><button>RESUME</button></div>
+  <div class="apply-flow-block"><h3>Supporting Documents and URLs</h3>%s</div></li>
+<li><div class="apply-flow-block"><h3>More About You</h3><label>Full Name <input id="sig"></label></div></li>
+</ul></body></html>"""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attached", [True, False])
+async def test_an_upload_into_step_ones_hidden_import_box_is_refused(stored, attached):
+    """GM Financial (2026-10-22): on step 4 the model uploaded the résumé into step 1's hidden 'Import your profile' box (its
+    ref was in no snapshot of that step) and Oracle rewrote his Work History with the import's broken entries again."""
+    from goat.agent.tools import RunContext, ToolDispatcher
+    from goat.budget import Budget
+    slot = ('<button>Surya_Thirukonda_Resume_SWE.pdf</button><button>REMOVE RESUME</button>' if attached
+            else '<input type="file" data-goat-ref="e9" aria-label="Upload Resume">')
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(GM_STEP4 % slot)
+        job = {"id": 1, "listing_id": "l1", "company": "Acme", "title": "Intern", "ats": "oracle", "url": "https://acme.fa.oraclecloud.com/job/1",
+               "resume_file": None}
+        ctx = RunContext(job=job, ex=ex, budget=Budget(1, "oracle"), classifier=None)
+        out, _ = await ToolDispatcher(ctx).t_upload_resume(ref="e3", document="resume")
+        if attached:
+            assert out["status"] == "set" and "already attached" in out["note"], out
+            assert ctx.resume_file == "Surya_Thirukonda_Resume_SWE.pdf"
+        else:
+            assert "Supporting Documents" in out["error"], out
+        assert await ex.page.evaluate("() => document.querySelector('[data-goat-ref=e3]').files.length") == 0
+    finally:
+        await ex.close()
