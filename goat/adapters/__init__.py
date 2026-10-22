@@ -88,8 +88,16 @@ def future_roles_consent(label: str) -> bool:
     return bool(FUTURE_ROLES.search(label or "")) and not NEWSLETTER.search(label or "")
 
 
+# Joining a community or network is his never-join rule, whatever else the box says: LLNL's "...agree to be part of
+# communities for future career opportunities" was ticked as a future-roles consent (2026-10-21).
+TALENT_COMMUNITY = re.compile(r"\b((talent|career|candidate)s?\s+(communit(y|ies)|network|club)|communit(y|ies)\s+for\s+(future|other)|"
+                              r"part of (our |the )?communit(y|ies)|join (our |the )?(talent|career|candidate))\b", re.I)
+
+
 def consent_key(label: str) -> str | None:
     """The standing answer key that authorizes ticking this consent, or None to leave it alone."""
+    if TALENT_COMMUNITY.search(label or ""):
+        return "policy.may_join_talent_community"
     if SMS.search(label):
         return "consent.sms"
     if future_roles_consent(label):
@@ -495,9 +503,10 @@ async def _consents_impl(self, ex, snap: Snapshot, job: dict, page_no: int, res:
     mk = answers.get("consent.marketing_email", company, self.portal)
     if mk and mk.has_value and answers.norm(str(mk.answer)).split(" ")[0] in ("no", "false", "decline"):
         unticks = [i for i in snap.items if i.get("type") == "checkbox" and i.get("checked") and not i.get("disabled")
-                   and MARKETING.search(i.get("label") or "") and not PROCESSING.search(i.get("label") or "")
-                   and not future_roles_consent(i.get("label") or "")
-                   and not SMS.search(i.get("label") or "")]
+                   and ((MARKETING.search(i.get("label") or "") and not PROCESSING.search(i.get("label") or "")
+                         and not future_roles_consent(i.get("label") or "")
+                         and not SMS.search(i.get("label") or ""))
+                        or TALENT_COMMUNITY.search(i.get("label") or ""))]
         if unticks:
             out = await fill.fill_batch(ex, [{"ref": i["ref"], "value": "false"} for i in unticks])
             for i, r in zip(unticks, out):

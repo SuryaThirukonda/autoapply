@@ -787,7 +787,8 @@ def test_bundled_processing_consent_is_ticked_but_pure_marketing_is_not():
     assert consent_key("I agree to creating this account to apply for positions with T-Mobile") == "consent.privacy_notice"
     assert consent_key("I consent to the processing of my personal information and to receive information about future opportunities") == "consent.privacy_notice"
     assert consent_key("Send me job alerts and marketing emails") is None
-    assert consent_key("Join our talent community") is None
+    # his never-join rule: the key whose answer is No, so the box is never ticked (LLNL, 2026-10-21)
+    assert consent_key("Join our talent community") == "policy.may_join_talent_community"
 
 
 @pytest.mark.asyncio
@@ -2182,3 +2183,14 @@ def test_a_select_all_consent_box_is_never_ticked_by_the_consent_pass():
     assert SELECT_ALL_BOX.match("Check all that apply")
     assert not SELECT_ALL_BOX.match("You declare that you have read and understand the privacy notice of LLNL. *")
     assert not SELECT_ALL_BOX.match("I agree to the terms")
+
+
+
+def test_a_community_consent_is_his_never_join_rule():
+    """LLNL (SmartRecruiters, 2026-10-21): '... agree to be part of communities for future career opportunities' was ticked
+    as a future-roles consent."""
+    from goat.adapters import consent_key
+    assert consent_key("You declare that you have read and understand the privacy notice of LLNL and agree to be part of "
+                       "communities for future career opportunities") == "policy.may_join_talent_community"
+    assert consent_key("Join our Talent Community") == "policy.may_join_talent_community"
+    assert consent_key("Do you consent for your data to be further processed for other job opportunities?") == "consent.keep_profile_future_roles"
