@@ -2380,9 +2380,23 @@ class ToolDispatcher:
                 return {"error": "give the tab index (from action 'list')"}, None
             out = await ex.close_tab(int(index))
         elif action == "back":
-            await ex.page.go_back(wait_until="domcontentloaded", timeout=20000)
-            await ex.settle(quiet_ms=400)
-            out = {"url": ex.url}
+            try:
+                await ex.page.go_back(wait_until="domcontentloaded", timeout=20000)
+                await ex.settle(quiet_ms=400)
+                out = {"url": ex.url}
+            except Exception as e:  # noqa: BLE001
+                # Back onto a page a form posted lands on Chrome's 'Confirm Form Resubmission' (net::ERR_CACHE_MISS):
+                # Paccar's SuccessFactors run was stranded there after its password-reset request (2026-10-22). Open the
+                # application again from an address that carries no session instead of re-posting the form.
+                if "ERR_CACHE_MISS" not in str(e):
+                    raise
+                again = way_back_url(getattr(self.ctx, "creds_page_url", "") or "", str(self.ctx.job.get("apply_url") or ""),
+                                     str(self.ctx.job.get("url") or ""))
+                if not again:
+                    raise
+                out = {"url": await ex.goto(again),
+                       "note_back": "Back would have re-sent a form (Chrome's 'Confirm Form Resubmission'), so the application "
+                                    "was opened again from its start address instead."}
         elif action == "reload":
             await ex.page.reload(wait_until="domcontentloaded", timeout=30000)
             await ex.settle(quiet_ms=400)

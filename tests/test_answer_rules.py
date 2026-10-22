@@ -2265,3 +2265,39 @@ def test_a_plain_bachelor_of_science_is_never_the_honours_one():
     assert best_option(opts, wants)["text"] == "Bachelor's Degree"
     opts = [{"text": t} for t in ("Bachelor of Science (Honors)", "Bachelor of Science (BS)")]
     assert best_option(opts, wants)["text"] == "Bachelor of Science (BS)"
+
+
+
+def test_a_successfactors_eu_tenant_is_an_allowed_host():
+    """Paccar (2026-10-22): career5.successfactors.eu was refused as 'host not on allowlist', so the run could not reopen it."""
+    from goat.browser.executor import HostPolicy
+    p = HostPolicy(["https://jobs.paccar.com/x"])
+    assert p.allowed("https://career5.successfactors.eu/career?company=paccarinc")
+    assert not p.allowed("https://successfactors.eu.example.net/x")
+
+
+@pytest.mark.asyncio
+async def test_back_onto_a_posted_form_reopens_the_application(store):
+    """Paccar (2026-10-22): Back after the password-reset request hit net::ERR_CACHE_MISS twice and the run parked."""
+    d, ctx = _dispatcher(_job())
+    ctx.job["apply_url"] = "https://career5.successfactors.eu/career?company=paccarinc&career_job_req_id=1"
+    went = []
+
+    class Page:
+        async def go_back(self, **kw):
+            raise Exception("Page.go_back: net::ERR_CACHE_MISS")
+
+    class Ex:
+        page = Page()
+        url = "chrome-error://chromewebdata/"
+
+        async def goto(self, url):
+            went.append(url)
+            return url
+
+        async def settle(self, **kw):
+            pass
+
+    ctx.ex = Ex()
+    out, _ = await d.t_tabs("back")
+    assert went == [ctx.job["apply_url"]] and "Confirm Form Resubmission" in out["note_back"]

@@ -76,7 +76,7 @@ class HostPolicy:
     ATS_SUFFIXES = (
         "greenhouse.io", "ashbyhq.com", "lever.co", "myworkdayjobs.com", "myworkdaysite.com",
         "workday.com", "icims.com", "oraclecloud.com", "smartrecruiters.com", "successfactors.com",
-        "sapsf.com", "eightfold.ai", "google.com", "gstatic.com", "recaptcha.net", "hcaptcha.com",
+        "successfactors.eu", "sapsf.com", "sapsf.eu", "eightfold.ai", "google.com", "gstatic.com", "recaptcha.net", "hcaptcha.com",
         "cloudflare.com",
     )
 
