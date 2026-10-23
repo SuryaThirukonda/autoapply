@@ -35,3 +35,18 @@ def test_two_options_one_letter_off_are_ambiguous():
 
 def test_a_correct_spelling_still_wins_outright():
     assert fill.best_option(_opts("Freshman", "Sophomore", "Junior"), CHAIN)["text"] == "Sophomore"
+
+
+SCHOOL = ["Texas A&M University", "Texas A & M University", "Texas A&M University - College Station",
+          "Texas A&M University-College Station", "TX-Texas A&M University", "Texas A&M University College Station", "Other"]
+
+
+def test_the_lists_shorter_name_for_his_school_beats_other():
+    """L3Harris (2026-10-23): the list offered 'Texas A&M'; the chain fell through to 'Other' and it went in that way."""
+    hit = fill.best_option(_opts("Other", "Texas A&M", "Texas Tech University", "University of Texas at Austin"), SCHOOL)
+    assert hit["text"] == "Texas A&M"
+
+
+def test_a_one_word_or_other_school_prefix_is_never_his_school():
+    assert fill.best_option(_opts("Texas", "Other"), SCHOOL)["text"] == "Other"
+    assert fill.best_option(_opts("Texas A&M University - Commerce", "Other"), SCHOOL)["text"] == "Other"

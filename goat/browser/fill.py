@@ -911,6 +911,13 @@ def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
         sq = [o for o in options if _squash(o["text"]) == _squash(want)]
         if len(sq) == 1:
             return sq[0]
+        # The list's shorter name for the same school: L3Harris offered 'Texas A&M' for his 'Texas A&M University', no
+        # wording matched, and the chain fell through to its last entry 'Other' (2026-10-23). An option of two or more
+        # words that the wanted school's name starts with is that school.
+        if institution:
+            short = [o for o in near if len(_norm(o["text"]).split()) >= 2 and (w + " ").startswith(_norm(o["text"]) + " ")]
+            if len(short) == 1:
+                return short[0]
         # The portal's own misspelling: Allstate's Workday list offered 'Sophmore', no wording matched it, and the chain
         # fell through to his credit-hours fallback 'Junior' (2026-10-23). One letter off a long word is the same answer,
         # never on a school's name or a number.
