@@ -1297,6 +1297,36 @@ OTHER_STATE_KEY = "location.other_state_not_applicable"
 OTHER_STATE_ANSWER = "Not applicable; N/A; Does not apply; Not applicable to me; No"
 
 
+# "Are you aware of anything that may prevent you from obtaining a government security clearance?" (L3Harris, 2026-10-23)
+# matched compliance.clearance_willing's ["obtain", "clearance"] rule and took its Yes. A question about what would PREVENT
+# or DELAY a clearance takes No: he is a U.S. citizen, eligible and willing, with no criminal history, and Surya answered
+# No to "Do any of the listed security clearance delays apply?".
+CLEARANCE_OBSTACLE = re.compile(r"\b(prevent\w*|preclud\w*|disqualif\w*|keep you from|stop you from|bar you from|barriers?|"
+                                r"obstacles?|impediments?|delay\w*)\b[^?]{0,120}\bclearances?\b|"
+                                r"\bclearances?\b[^?]{0,80}\b(delay\w*|denied|revoked|disqualif\w*|prevent\w*)\b", re.I)
+CLEARANCE_WILLING = re.compile(r"\b(willing|able to obtain|eligible to obtain|agree to)\b", re.I)
+CLEARANCE_OBSTACLE_KEY = "compliance.clearance_obstacles"
+POSITIVE_CLEARANCE_KEYS = {"compliance.clearance_willing", "work_authorization.eligible_for_clearance",
+                           "work_authorization.willing_to_obtain_clearance", "bank.clearance-willingness"}
+
+
+def clearance_obstacle_question(text: str) -> bool:
+    return bool(CLEARANCE_OBSTACLE.search(text or "")) and not CLEARANCE_WILLING.search(text or "")
+
+
+def clearance_obstacle_answer():
+    """His No to 'anything that would prevent or delay a clearance', created on first use ('derived': the fact check
+    reads its note)."""
+    a = answers.get(CLEARANCE_OBSTACLE_KEY)
+    if a is None or not a.has_value:
+        answers.save_answer(CLEARANCE_OBSTACLE_KEY, "No", answer_type="choice", source="derived",
+                            note="Is he aware of anything that would prevent or delay a security clearance? No: U.S. citizen, "
+                                 "eligible and willing to obtain one, no criminal history, and Surya answered No to 'Do any "
+                                 "of the listed security clearance delays apply?' (2026-10-23)")
+        a = answers.get(CLEARANCE_OBSTACLE_KEY)
+    return a
+
+
 def other_state_only(question: str, home_state: str) -> str:
     """The state a question is limited to when that is not his home state ('California'), else ''."""
     m = OTHER_STATE_ONLY.search(question or "")
@@ -1649,6 +1679,10 @@ class ToolDispatcher:
         snap = self.ctx.last_snapshot
         for f in fields:
             item = snap.find(f.get("ref", "")) if snap else None
+            if f.get("answer_key") in POSITIVE_CLEARANCE_KEYS:
+                swapped = self._clearance_key_swap(f.get("ref", ""), f.get("answer_key"), str(f.get("label") or ""))
+                if swapped != f.get("answer_key"):
+                    f = {**f, "answer_key": swapped, "value": None if (f.get("source") or "") not in ("clear",) else f.get("value")}
             # A radio / checkbox option is logged as "question / option", so the log says WHICH option was ticked
             # ('Were you previously employed at ABA?' = checked could be Yes or No; the judge read it as Yes, 2026-10-18).
             if item and item.get("type") in ("radio", "checkbox") and item.get("group"):
@@ -2164,7 +2198,21 @@ class ToolDispatcher:
 
     SENSITIVE_KEYS = re.compile(r"^(self_id\.|compliance\.(date_of_birth|criminal|disciplined|debarment)|bank\.(gender|race|ethnic|veteran|disab|transgender|sexual))", re.I)
 
+    def _clearance_key_swap(self, ref: str, answer_key: str | None, label: str) -> str | None:
+        """A willing-to-obtain clearance key named for a question about what would PREVENT a clearance: his No instead."""
+        if answer_key not in POSITIVE_CLEARANCE_KEYS:
+            return answer_key
+        snap = self.ctx.last_snapshot
+        item = snap.find(ref) if snap and ref else None
+        text = f"{label or ''} {(item or {}).get('label') or ''} {(item or {}).get('group') or ''}"
+        if not clearance_obstacle_question(text):
+            return answer_key
+        clearance_obstacle_answer()
+        db.event(self.ctx.job_id, "answer:clearance_obstacle", {"ref": ref, "from": answer_key, "question": text[:160]})
+        return CLEARANCE_OBSTACLE_KEY
+
     async def t_choose(self, ref: str, answer_key: str | None, options: list[str], label: str, source: str | None):
+        answer_key = self._clearance_key_swap(ref, answer_key, label)
         out, img = await self._t_choose(ref, answer_key, options, label, source)
         if isinstance(out, dict) and out.get("status") == "failed" and no_english_offered(label, str(out.get("error") or "")):
             # Ryan's Workday Language list holds Chinese ... Spanish and no English (2026-10-22): the gate's 'Languages: No
@@ -3163,6 +3211,14 @@ class ToolDispatcher:
                 out["note"] = ("his skills list: tick EVERY option in `tick` (fill_batch, one entry per box, answer_key "
                                "experience.skills_list) and leave the others unticked")
                 db.event(self.ctx.job_id, "answer:skills_rule", {"question": question[:160], "tick": out["tick"][:20]})
+                return out, None
+        if clearance_obstacle_question(question):
+            a_co = clearance_obstacle_answer()
+            if a_co is not None and a_co.has_value:
+                out = self._present(a_co, via="clearance_rule")
+                out["note"] = ("this asks whether anything would PREVENT or DELAY a security clearance: his answer is No "
+                               "(never the Yes of willing-to-obtain)")
+                db.event(self.ctx.job_id, "answer:clearance_obstacle", {"question": question[:160]})
                 return out, None
         home = answers.get("identity.state", self.ctx.job.get("company", ""), self.ctx.portal)
         st = other_state_only(question, str(home.answer) if home is not None and home.has_value else "")
