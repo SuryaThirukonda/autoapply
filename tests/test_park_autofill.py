@@ -103,3 +103,17 @@ async def test_values_an_earlier_attempt_left_are_recorded_when_they_are_his_ans
         assert srcs.get("Home Phone #") == "standing:identity.phone"
     finally:
         await ex.close(close_browser=True)
+
+
+def test_ways_of_saying_the_form_is_unfinished():
+    from goat.agent.tools import ToolDispatcher
+    pat = ToolDispatcher.RFY_INCOMPLETE
+    for reason in ("needs_you: prior SuccessFactors form has required compliance, clearance, demographic and signature fields "
+                   "remaining; continue filling required fields before submission.",
+                   "ready_for_you: SuccessFactors form remains incomplete; required security-clearance questions need to be finished",
+                   "needs_you: several required questions remain unanswered",
+                   "needs_you: remaining required fields: clearance and signature"):
+        assert pat.search(reason), reason
+    for reason in ("ready_for_you: hCaptcha then Submit", "eligibility: requires an active security clearance",
+                   "needs_you: requires three professional references"):
+        assert not pat.search(reason), reason

@@ -4015,7 +4015,11 @@ class ToolDispatcher:
     # need to be finished before Apply" (L3Harris, 2026-10-23): an unfinished form, whatever stopper word it names
     RFY_INCOMPLETE = re.compile(r"\b(incomplete|unfinished|not (yet )?(complete|completed|finished|filled)|"
                                 r"remain(s|ing)? (empty|unanswered|blank|unfilled)|still (empty|unanswered|blank|need)|"
-                                r"need(s)? to be (completed|finished|filled|answered))\b", re.I)
+                                r"need(s)? to be (completed|finished|filled|answered)|"
+                                # "... and signature fields remaining; continue filling required fields" (L3Harris, 2026-10-23)
+                                r"continue (filling|completing|answering)|"
+                                r"(fields?|questions?|sections?)\b[^.;]{0,40}\b(remain\w*|left|outstanding|pending|unanswered)|"
+                                r"(remain\w*|left|outstanding|unanswered)\b[^.;]{0,30}\b(fields?|questions?))\b", re.I)
     # Surya 2026-10-18: a car requirement is fine (he arranges one); "local / within N miles" is fine when the posting is
     # paid; a straight hardware role is not.
     DISQUALIFIERS = re.compile(r"(master'?s|ph\.?d|doctoral|graduate program|active (secret|top secret|ts/sci|clearance)|returning intern|co-?op|fall 2027|spring 2028|quant|"
