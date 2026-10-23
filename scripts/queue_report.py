@@ -70,9 +70,8 @@ def build(now: int | None = None) -> str:
              f"{len(queued)} queued, {len(flight)} in flight, {len(held)} on hold, {len(rfy)} ready for you.",
              "",
              "Role fit: **aligned** = SWE, SDE, application development, programming, technology, data science / engineering / "
-             f"analytics. Aligned postings from the last {worker.ALIGNED_DAYS} days are claimed first, then the rest of the last "
-             f"{worker.FRESH_DAYS} days, then the newest posting first. Priority 1000 and above is an explicit choice "
-             "(release, pin, drag order, answered question) and goes ahead of all of that.",
+             "analytics. The newest posting is claimed first; within one posting day an aligned title goes first. Priority "
+             "1000 and above is an explicit choice (release, pin, drag order, answered question) and goes ahead of all of that.",
              ""]
     if flight:
         lines += ["## In flight", "", "| Job | Company | Title | Portal | Posted | Status |", "|---|---|---|---|---|---|"]

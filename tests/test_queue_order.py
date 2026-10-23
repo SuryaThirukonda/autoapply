@@ -96,17 +96,31 @@ async def test_a_fresh_successfactors_job_starts_signed_out():
         await ex.close()
 
 
-def test_a_recent_posting_in_his_roles_leads_the_queue(store, monkeypatch):
-    """Surya (2026-10-21): recent SWE / SDE / application development / data postings go first, so they finish first."""
+def test_the_posting_date_alone_orders_the_queue_across_days(store, monkeypatch):
+    """Surya (2026-10-23): "the most recent postings are first, so those are completed before the older listings". His
+    roles used to lead for a week (2026-10-21); a newer posting now goes first whatever its title."""
     monkeypatch.setattr(SETTINGS, "lanes_enabled", ["no_account"])
-    now = int(time.time())
+    noon = int(time.mktime(time.strptime("2026-10-22 12:00", "%Y-%m-%d %H:%M")))
     with db.tx() as con:
-        _job(con, 1, now - 3600)                                   # fresh, neutral title
-        _job(con, 2, now - 4 * DAY)                                # four days old, aligned
-        _job(con, 3, now - 20 * DAY)                               # old, aligned: no lead
-        _job(con, 4, now - 1 * DAY)                                # yesterday, aligned
+        _job(con, 1, noon)                                         # newest day, neutral title
+        _job(con, 2, noon - 4 * DAY)                               # four days older, aligned
+        _job(con, 3, noon - 20 * DAY)                              # old, aligned
+        _job(con, 4, noon - 1 * DAY)                               # a day older, aligned
         con.execute("UPDATE listings SET title='Software Engineer Intern' WHERE id='L2'")
         con.execute("UPDATE listings SET title='Data Engineer Intern' WHERE id='L3'")
         con.execute("UPDATE listings SET title='Data Analytics Intern' WHERE id='L4'")
         con.execute("UPDATE listings SET title='Business Analyst Intern' WHERE id='L1'")
-    assert _claims(4) == [4, 2, 1, 3]
+    assert _claims(4) == [1, 4, 2, 3]
+
+
+def test_within_one_posting_day_his_roles_go_first(store, monkeypatch):
+    monkeypatch.setattr(SETTINGS, "lanes_enabled", ["no_account"])
+    noon = int(time.mktime(time.strptime("2026-10-22 12:00", "%Y-%m-%d %H:%M")))
+    with db.tx() as con:
+        _job(con, 1, noon + 3600)                                  # later the same day, neutral title
+        _job(con, 2, noon)                                         # same day, aligned
+        _job(con, 3, noon - DAY)                                   # the day before, aligned
+        con.execute("UPDATE listings SET title='Business Analyst Intern' WHERE id='L1'")
+        con.execute("UPDATE listings SET title='Software Engineer Intern' WHERE id='L2'")
+        con.execute("UPDATE listings SET title='Software Engineer Intern' WHERE id='L3'")
+    assert _claims(3) == [2, 1, 3]
