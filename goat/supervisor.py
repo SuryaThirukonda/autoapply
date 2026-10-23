@@ -110,25 +110,51 @@ async def send_digest() -> None:
     await telegram_bot.notify_owner(digest_text())
 
 
+RECONCILE_FIRST_DELAY_S = 300     # after a start, let the worker's sign-in codes and reset links go first
+RECONCILE_PAUSE_S = 1.0           # between applications: ~10 Gmail reads each, under the per-user rate limit
+
+
+async def reconcile_mail_once(pause_s: float = RECONCILE_PAUSE_S) -> int:
+    """One pass: match submitted applications against confirmation emails. Returns how many were confirmed. Each
+    application is read on its own, paced, and a failed read skips only that one: the unpaced pass right after every
+    restart hit Gmail's 'rateLimitExceeded' (2026-10-23) and one error ended the whole pass."""
+    from pathlib import Path
+    if not Path(SETTINGS.mail.token_json).exists():
+        return 0
+    from .mail import gmail
+    confirmed = 0
+    for i, app in enumerate(ledger.unconfirmed_older_than(60)):
+        if i:
+            await asyncio.sleep(pause_s)
+        try:
+            mid = await asyncio.to_thread(gmail.find_confirmation_email, app["company"], int(app["submitted_at"]) - 300, None)
+        except Exception as e:  # noqa: BLE001 - the next pass tries this one again
+            log.info("mail reconciler: %s for %s; next pass", e, app["company"])
+            continue
+        if mid:
+            ledger.mark_confirmed(int(app["id"]), mid)
+            with db.tx() as con:
+                rows = con.execute("SELECT id FROM jobs WHERE listing_id=? AND status=?",
+                                   (app["listing_id"], states.SUBMITTED)).fetchall()
+                con.execute("UPDATE jobs SET status=?, updated_at=? WHERE listing_id=? AND status=?",
+                            (states.CONFIRMED, db.now(), app["listing_id"], states.SUBMITTED))
+            for r in rows:
+                db.event(r["id"], "job:confirmed", {"email_id": mid})
+            log.info("confirmed %s — %s via email %s", app["company"], app["title"], mid)
+            confirmed += 1
+    return confirmed
+
+
 async def mail_reconciler(stop: asyncio.Event) -> None:
-    """Hourly: match submitted applications against confirmation emails."""
+    """Hourly (the first pass a few minutes after start): match submitted applications against confirmation emails."""
+    try:
+        await asyncio.wait_for(stop.wait(), RECONCILE_FIRST_DELAY_S)
+        return
+    except asyncio.TimeoutError:
+        pass
     while not stop.is_set():
         try:
-            from pathlib import Path
-            if Path(SETTINGS.mail.token_json).exists():
-                from .mail import gmail
-                for app in ledger.unconfirmed_older_than(60):
-                    mid = await asyncio.to_thread(gmail.find_confirmation_email, app["company"], int(app["submitted_at"]) - 300, None)
-                    if mid:
-                        ledger.mark_confirmed(int(app["id"]), mid)
-                        with db.tx() as con:
-                            rows = con.execute("SELECT id FROM jobs WHERE listing_id=? AND status=?",
-                                               (app["listing_id"], states.SUBMITTED)).fetchall()
-                            con.execute("UPDATE jobs SET status=?, updated_at=? WHERE listing_id=? AND status=?",
-                                        (states.CONFIRMED, db.now(), app["listing_id"], states.SUBMITTED))
-                        for r in rows:
-                            db.event(r["id"], "job:confirmed", {"email_id": mid})
-                        log.info("confirmed %s — %s via email %s", app["company"], app["title"], mid)
+            await reconcile_mail_once()
         except Exception as e:
             log.warning("mail reconciler: %s", e)
         try:
