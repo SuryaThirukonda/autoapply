@@ -77,3 +77,39 @@ async def test_a_page_that_cannot_be_read_never_blocks_the_poll(store):
     ctx.mail = SimpleNamespace(fetch_password_reset_link=lambda portal, host, after, **k: SimpleNamespace(status="not_received", url=None))
     out, _ = await d.t_open_password_reset_link()
     assert out["status"] == "not_received" and not ctx.reset_form_nudged
+
+
+@pytest.mark.asyncio
+async def test_an_account_pages_submit_is_outlined_as_a_click_and_submit_points_to_it(store):
+    """PACCAR (2026-10-23): the Password Help 'Submit' was outlined 'only submit() may click'; the run called submit three
+    times, the gate refused the account page each time, and no reset email was requested."""
+    ex = await _open("password_help.html")
+    try:
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        out, _ = await d.t_snapshot()
+        assert "ACCOUNT-BUTTON(press it with click)" in out["outline"] and "SUBMIT-CONTROL" not in out["outline"]
+        ref = next(i["ref"] for i in ctx.last_snapshot.items if i.get("submitish"))
+        out, _ = await d.t_submit("Submit")
+        assert f"click` (ref {ref})" in out["error"] and "open_password_reset_link" in out["error"], out
+        kinds = [r[0] for r in db.connect().execute("SELECT kind FROM events WHERE job_id=?", (ctx.job_id,))]
+        assert "submit:account_button" in kinds and not any(k.startswith("gate:") for k in kinds)
+        out, _ = await d.t_click(ref, "Submit")                    # click takes it on an account page
+        assert out.get("clicked") == "Submit", out
+    finally:
+        await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_an_application_pages_submit_keeps_its_submit_marker(store):
+    url = (Path(__file__).parent / "fixtures" / "form.html").resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        out, _ = await d.t_snapshot()
+        assert "SUBMIT-CONTROL(only submit() may click)" in out["outline"] and "ACCOUNT-BUTTON" not in out["outline"]
+    finally:
+        await ex.close(close_browser=True)

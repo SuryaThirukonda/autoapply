@@ -1549,7 +1549,13 @@ class ToolDispatcher:
                 self.ctx.control_failures["sections:auto"] = self.ctx.control_failures.get("sections:auto", 0) + 1
                 db.event(self.ctx.job_id, "adapter:sections:error", {"error": f"{type(e).__name__}: {e}"[:300]})
         self.ctx.last_snapshot = snap
-        text = sf_account_note(snap) + sections_note + snapmod.render(snap)
+        rendered = snapmod.render(snap)
+        if self._account_page() and not combined_account_application(snap):
+            # an account page's own 'Submit' sends the reset email or signs in: PACCAR's Password Help 'Submit' was outlined
+            # as 'only submit() may click', the run (and its advisor) called submit three times, the gate refused the
+            # account page each time, and no reset email was ever requested (2026-10-23)
+            rendered = rendered.replace(" SUBMIT-CONTROL(only submit() may click)", " ACCOUNT-BUTTON(press it with click)")
+        text = sf_account_note(snap) + sections_note + rendered
         if with_text and snap.text:
             text += "\n\nPAGE TEXT:\n" + snap.text[:6000]
         return {"outline": text}, None
@@ -3650,6 +3656,18 @@ class ToolDispatcher:
         if any(i.get("type") == "password" for i in snap.items) and not combined_account_application(snap):
             return {"error": "this page has a password field: it is a sign-in or account page, not the application. Use `credentials` "
                              "for the email and password, then `click` Sign In / Create Account, and fill the application that follows."}, None
+        if self._account_page() and not combined_account_application(snap):
+            btns = [i for i in snap.items if i.get("submitish") and i.get("ref")]
+            btn = next((i for i in btns if button_label and answers.norm(i.get("label") or "") == answers.norm(button_label)),
+                       btns[0] if btns else None)
+            if btn is not None:
+                heads = " | ".join([snap.title or ""] + list(snap.headings or [])[:4])
+                then = ("then call open_password_reset_link" if re.search(r"password help|forgot|reset", heads, re.I)
+                        else "then take a snapshot")
+                db.event(ctx.job_id, "submit:account_button", {"label": str(btn.get("label") or "")[:60], "ref": btn["ref"]})
+                return {"error": f"this is an account page ({heads[:80]!r}), not the application: its "
+                                 f"'{str(btn.get('label') or '')[:40]}' [{btn['ref']}] is an account step. Press it with `click` "
+                                 f"(ref {btn['ref']}), {then}. `submit` is only for the finished application."}, None
         page_text = await ctx.ex.page_text(30000)
         gate = run_gate(job=ctx.job, snapshot=snap, page_text=page_text, expected_resume=ctx.resume_file,
                         free_text_answers=[f["answer"] for f in ctx.free_text], portal=ctx.portal, page_no=ctx.page_no)
