@@ -81,3 +81,29 @@ def test_chip_matching_accepts_an_issuer_suffix_but_not_an_issuer_acronym():
     assert not _chip_matches("AWS Business Professional - Amazon Web Services (AWS)", ["AWS"])
     assert not _chip_matches("AWS Business Professional - Amazon Web Services (AWS)", ["AWS Certified Cloud Practitioner"])
     assert not _chip_matches("Python IDLE", ["Python"])
+
+
+def test_a_category_prefixed_source_counts_as_that_source():
+    """KLA (Workday, 2026-10-23): searching 'LinkedIn' found 'Job Board: LinkedIn', which was refused as no match."""
+    from goat.browser.fill import _chip_matches
+    assert _chip_matches("Job Board: LinkedIn", ["LinkedIn"])
+    assert _chip_matches("Job Board - LinkedIn", ["LinkedIn"])
+    assert not _chip_matches("Job Board: LinkedIn", ["Indeed"])
+    assert not _chip_matches("Previously employed: No", ["No"])
+
+
+def test_a_category_with_another_named_source_is_not_his_fallback():
+    """KLA (Workday, 2026-10-23): with 'Job Board: LinkedIn' out of view, 'Job Board: Facebook' was taken for the fallback
+    'Job Board' and the application went out saying he heard of KLA on Facebook."""
+    from goat.browser.fill import _chip_matches, best_option
+    wants = ["LinkedIn", "Job Board", "Agency / Search Firm", "Other"]
+    shown = [{"text": t} for t in ["Agency / Search Firm", "Job Board: Facebook", "Job Board: Indeed", "Other"]]
+    assert best_option(shown, wants)["text"] == "Agency / Search Firm"
+    assert best_option([{"text": "Job Board: Facebook"}], wants) is None
+    assert not _chip_matches("Job Board: Facebook", ["Job Board"])
+    full = shown + [{"text": "Job Board: LinkedIn"}]
+    assert best_option(full, wants)["text"] == "Job Board: LinkedIn"
+    # a category with a generic leaf is still the category
+    assert best_option([{"text": "Job Board: Other"}], wants)["text"] == "Job Board: Other"
+    # an issuer after a dash is still the credential
+    assert _chip_matches("AWS Certified Cloud Practitioner - Amazon Web Services (AWS)", ["AWS Certified Cloud Practitioner"])

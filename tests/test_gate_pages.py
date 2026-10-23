@@ -1178,3 +1178,32 @@ async def test_submit_lets_a_standing_note_under_an_answered_question_through():
         assert r.status == "submitted", r
     finally:
         await ex.close()
+
+
+EPIC_DEEP_SELECT = """<html><body><form>
+<div class="field"><div><label for="First Name"><span>First Name⁠*⁠:</span></label></div>
+ <div><div><input name="questions.first_name" type="text" value="Surya"></div></div></div>
+<div class="field"><div><label for="How did you hear about this job posting?"><span>How did you hear about this job posting?⁠*⁠:</span></label></div>
+ <div><div><div class="select__control"><div><div><div><div><div class="select__placeholder">Select</div><div><div>
+ <input id="react-select-4-input" type="text" aria-autocomplete="list" value="" class="select__input"><div></div></div></div>
+ </div><div><span></span><div aria-hidden="true"><svg width="8" height="8"></svg></div></div></div></div></div></div></div></div><div></div></div>
+</form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_starred_select_nested_deep_under_its_label_is_required():
+    """Epic Games (2026-10-23): nine required 'Select' pickers sat nine boxes below their '...*:' labels; the scan never
+    saw them, the gate passed with all of them blank, and only the judge caught it."""
+    from goat.browser.errors import scan_errors
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(EPIC_DEEP_SELECT)
+        await snapshot.take(ex)
+        scan = await scan_errors(ex)
+        labels = [e.get("label") or "" for e in scan.get("empty_required") or []]
+        assert any("How did you hear" in l for l in labels), scan
+        assert not any("First Name" in l for l in labels), scan
+    finally:
+        await ex.close()

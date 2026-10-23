@@ -49,7 +49,7 @@ _COMMON = r"""
   function boxHead(el) {
     const choice = el.type === 'radio' || el.type === 'checkbox';
     let p = el.parentElement;
-    for (let i = 0; i < 7 && p && p !== document.body; i++, p = p.parentElement) {
+    for (let i = 0; i < 12 && p && p !== document.body; i++, p = p.parentElement) {
       const others = Array.from(p.querySelectorAll('input:not([type="hidden"]), select, textarea'))
         .filter(f => f !== el && !(choice && f.name && f.name === el.name));
       if (others.some(f => { const r = f.getBoundingClientRect(); return r.width > 0 && r.height > 0; })) return null;
@@ -317,6 +317,10 @@ JS_SNAPSHOT = r"""
         else {
           item.value = (el.value || '').slice(0, 300); if ((el.value || '').length > 300) item.value_len = (el.value || '').length;
           if (!item.value && tag === 'input') { const hv = hostPickedValue(el); if (hv) item.shown = hv.slice(0, 200); }
+          // the entry a box belongs to, when its name says so: Epic Games' 'Start Date (Year)' (educations[0].start_date.year)
+          // took his internship start date from the label alone (2026-10-23)
+          const nm = el.getAttribute('name') || '';
+          if (/educ|employ|experience|work_?history/i.test(nm)) item.name = nm.slice(0, 80);
         }
         {
           // A Workday prompt's selected chips are its value, even when its search box still holds typed text
@@ -726,7 +730,7 @@ JS_PAGE_ERRORS = r"""
   function boxHead(el) {
     const choice = el.type === 'radio' || el.type === 'checkbox';
     let p = el.parentElement;
-    for (let i = 0; i < 7 && p && p !== document.body; i++, p = p.parentElement) {
+    for (let i = 0; i < 12 && p && p !== document.body; i++, p = p.parentElement) {
       const others = Array.from(p.querySelectorAll('input:not([type="hidden"]), select, textarea'))
         .filter(f => f !== el && !(choice && f.name && f.name === el.name));
       if (others.some(f => { const r = f.getBoundingClientRect(); return r.width > 0 && r.height > 0; })) return null;
@@ -941,7 +945,9 @@ JS_PAGE_ERRORS = r"""
       const byIds = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
         .map(i => { const n = (rn && rn.getElementById ? rn.getElementById(i) : null) || document.getElementById(i); return n ? txt(n) : ''; })
         .filter(Boolean).join(' ');
-      const lab = byIds || nearestLabel(el) || el.getAttribute('aria-label') || el.name || el.id || '(unlabelled)';
+      // ... or the starred label nine boxes up (Epic Games' react-selects were reported as 'react-select-14-input', 2026-10-23)
+      const bh = boxHead(el);
+      const lab = byIds || nearestLabel(el) || (bh ? txt(bh) : '') || el.getAttribute('aria-label') || el.name || el.id || '(unlabelled)';
       push(emptyRequired, { label: lab, type: el.type || el.tagName.toLowerCase(), name: el.name || el.id || '', ref: el.getAttribute('data-goat-ref') || '' }, 'r:' + lab + ':' + (el.name || el.id || ''));
     }
     // a required ARIA radio group with nothing checked (SAP SuccessFactors' radioGroup: the question label carries the '*')

@@ -483,14 +483,37 @@ def lang_safe(s: str) -> str:
     return re.sub(r"\b([cf])\s*#", r"\1sharp", t)
 
 
+# Named places a posting is heard of. A category option naming one ("Job Board: Facebook") is that place, not the bare
+# category: KLA's Workday list (2026-10-23) had 'Job Board: LinkedIn' out of view, and 'Job Board: Facebook' was taken
+# for his fallback 'Job Board'.
+SOURCE_LEAF = re.compile(
+    r"^(facebook|meta|instagram|twitter|x|tiktok|youtube|reddit|snapchat|indeed|glassdoor|monster|career ?builder|"
+    r"zip ?recruiter|simply ?hired|dice|handshake|linked ?in|google( jobs)?|wayup|way up|built ?in|angel ?list|"
+    r"wellfound|jobright|simplify|idealist|hired|ladders|the muse|college recruiter|joinhandshake)$", re.I)
+_CATEGORY_LEAF = re.compile(r"^(.+?)\s*(?::|\s[-–—])\s+(.+)$")
+
+
+def _leaf_source(text: str) -> str:
+    """The named place in a category option ('Job Board: Facebook' -> 'Facebook'), else ''."""
+    m = _CATEGORY_LEAF.match((text or "").strip())
+    return m.group(2).strip() if m and SOURCE_LEAF.match(m.group(2).strip()) else ""
+
+
 def _chip_matches(chip: str, wants: list[str]) -> bool:
     """A selected chip equals one of the wanted wordings, or is one of them plus a parenthetical qualifier
     ("Python (Programming Language)" for "Python")."""
     chip = ENUM_PREFIX.sub("", chip or "", count=1) if re.match(r"^\s*\d{1,2}[.)]\s+\D", chip or "") else chip
     c = _norm(lang_safe(chip))
+    leaf = _leaf_source(chip)
     for w in wants:
         if not w:
             continue
+        if leaf:
+            # 'Job Board: LinkedIn' is LinkedIn; 'Job Board: Facebook' is not 'Job Board'
+            if _squash(leaf) == _squash(w):
+                return True
+            if c != _norm(lang_safe(w)):
+                continue
         if c == _norm(lang_safe(w)) or _squash(lang_safe(chip)) == _squash(lang_safe(w)):
             return True
         if re.fullmatch(re.escape(w.strip().lower()) + r"\s*(\(.*\))?", (chip or "").strip().lower()):
@@ -652,6 +675,12 @@ def _foreign_qualifier(text: str, wants: list[str]) -> bool:
 ENUM_PREFIX = re.compile(r"^\s*(\d{1,2}|[a-zA-Z])[.)]\s+")
 
 
+# An option that states a fact ("Not Applicable, Graduated") is no plain No; a negated one ("I have never been employed
+# by the U.S. Federal Government.") is.
+_STATED_FACT = re.compile(r"\b(graduat\w*|completed|retired|employed|enrolled)\b", re.I)
+_NEGATED_FACT = re.compile(r"\b(never|not)\s+(?:been\s+|ever\s+)*(graduat\w*|completed|retired|employed|enrolled)\b", re.I)
+
+
 def best_option(options: list[dict], wants: list[str]) -> dict | None:
     """best_option_core, then once more with each option's leading numbering ("2. ") set aside; the option returned
     is always the one the page listed. A list's own empty entry ('No Selection', 'Select One') is never an answer: L3Harris'
@@ -660,6 +689,13 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
         real = [o for o in options if not PLACEHOLDER.match(str(o.get("text") or "").strip())]
         if real and len(real) < len(options):
             options = real
+    # a category option naming a place he did not hear of it from is never his answer ('Job Board: Facebook')
+    wanted = {_squash(w) for w in wants if w}
+    named = [o for o in options if (lambda lf: lf and _squash(lf) not in wanted)(_leaf_source(str(o.get("text") or "")))]
+    if named:
+        options = [o for o in options if o not in named]
+        if not options:
+            return None
     hit = _best_option_core(options, wants)
     if hit is not None or not any(ENUM_PREFIX.match(str(o.get("text") or "")) for o in options):
         return hit
@@ -961,7 +997,7 @@ def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
             # an option that also states a fact is no plain No: Nintendo's 'Not Applicable, Graduated' was picked for his
             # co-op answer No and said he had graduated (2026-10-23)
             neg = [o for o in options if NEG_OPT.match((o["text"] or "").strip())
-                   and not re.search(r"\b(graduat\w*|completed|retired|employed|enrolled)\b", o["text"] or "", re.I)]
+                   and not _STATED_FACT.search(_NEGATED_FACT.sub(" ", o["text"] or ""))]
             if len(neg) == 1:
                 return neg[0]
     return None

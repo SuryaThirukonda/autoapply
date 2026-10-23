@@ -604,6 +604,8 @@ def citizenship_block(snap) -> bool:
 
 
 CITIZENSHIP_DATE_KEY = "compliance.citizenship_obtained_date"
+# his internship start date's keys (redirected to his school start inside an education entry)
+INTERNSHIP_START_KEY = re.compile(r"^(bank\.start-date|availability\.earliest_start_date|availability\.start_date)$")
 NEEDS_HOUSING = re.compile(r"\b(require|need|requesting|request)\w*\b.{0,40}\bhousing\b|\bhousing (accommodation|assistance)s?\b.{0,40}\?",
                            re.I)
 
@@ -836,6 +838,26 @@ def stored_for_blockers(reasons: list[str], company: str = "", portal: str = "")
         if len(out) >= 12:
             break
     return out
+
+
+# The question a file box answers: the nearest label or question text above it inside its own field (a field holding
+# another file box ends the search), button captions left out.
+JS_FILE_QUESTION = r"""
+(ref) => {
+  const el = document.querySelector('[data-goat-ref="' + ref + '"]');
+  if (!el) return '';
+  const t = (n) => (n.innerText || n.textContent || '').replace(/\s+/g, ' ').trim();
+  const CAPTION = /^(select files?|upload( file)?|attach|browse|choose file|drop files? here|or drop files? here|remove|delete)$/i;
+  let p = el.parentElement;
+  for (let i = 0; i < 8 && p && p !== document.body; i++, p = p.parentElement) {
+    if (p.querySelectorAll('input[type="file"]').length > 1) break;
+    const qs = Array.from(p.querySelectorAll('label, legend, [data-automation-id*="formLabel" i], [class*="label" i], [class*="question" i], h3, h4, p'))
+      .map(t).filter(s => s && !CAPTION.test(s));
+    if (qs.length) return qs.join(' | ').slice(0, 300);
+  }
+  return '';
+}
+"""
 
 
 # An Oracle file box read from the page itself, every step included (Oracle keeps all steps of its form in the DOM):
@@ -1760,6 +1782,16 @@ class ToolDispatcher:
             a_cd = citizenship_date_answer()
             if a_cd is not None and a_cd.has_value:
                 return str(a_cd.answer), f"standing:{CITIZENSHIP_DATE_KEY}", None
+        if answer_key and INTERNSHIP_START_KEY.match(answer_key) and ref and self.ctx.last_snapshot is not None:
+            # a start date inside an education entry is when he started school: Epic Games' 'Start Date (Year)'
+            # (educations[0].start_date.year) got 2027 from bank.start-date (2026-10-23)
+            item = self.ctx.last_snapshot.find(ref) or {}
+            if re.search(r"educ", str(item.get("name") or ""), re.I):
+                k_edu = "education.start_year" if re.search(r"\byear\b", f"{item.get('label') or ''} {item.get('name') or ''}", re.I) \
+                    else "education.start"
+                a_edu = answers.get(k_edu)
+                if a_edu is not None and a_edu.has_value:
+                    return str(a_edu.answer), f"standing:{k_edu}", None
         if answer_key == "identity.zip" and ZIP_EXTENSION.search(label or ""):
             # Berkshire Hathaway Energy's Oracle address got 77479 in 'Postal Code Extension' too (the judge caught it, 2026-10-22)
             return None, "", ("this box takes the 4-digit ZIP+4 extension, which is not stored: leave it blank (it is optional "
@@ -3063,6 +3095,16 @@ class ToolDispatcher:
         return None
 
     async def t_upload_resume(self, ref: str, document: str):
+        if document == "resume":
+            # the box's own question, read from the page: Auto-Owners' Workday transcript box had no label in the snapshot
+            # and got the résumé (2026-10-23)
+            try:
+                asked = str(await self.ctx.ex.eval(JS_FILE_QUESTION, ref) or "")
+            except Exception:
+                asked = ""
+            if re.search(r"transcript", asked, re.I) and not re.search(r"\b(resume|résumé|cv|curriculum)\b", asked, re.I):
+                return {"error": f"this box asks for his transcript ('{asked[:90]}'): upload document 'transcript' here, and the "
+                                 "résumé into the Resume/CV box"}, None
         if document == "transcript":
             item = self.ctx.last_snapshot.find(ref) if self.ctx.last_snapshot else None
             lab = str((item or {}).get("label") or "")
