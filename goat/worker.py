@@ -113,6 +113,13 @@ def claim_next() -> dict | None:
         return job
 
 
+def prefill_navigation_error(e: Exception) -> bool:
+    """A page that navigated (or closed its frame) under the prefill: nothing the run cannot recover from."""
+    text = str(e).lower()
+    return any(s in text for s in ("execution context was destroyed", "most likely because of a navigation",
+                                   "frame was detached", "target closed", "navigating frame"))
+
+
 async def stale_sign_in_tab(ex) -> bool:
     """The held tab shows an account page (sign-in, password help, create account) at an address with a one-time session
     crumb: nothing on it is worth keeping, and the crumb no longer works."""
@@ -593,7 +600,18 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
         # Deterministic prefill of mechanical fields before the model sees the page.
         snap = await snapmod.take(ex)
         ctx.last_snapshot = snap
-        pre = await adapter.prefill(ex, snap, client_job, ctx.page_no)
+        try:
+            pre = await adapter.prefill(ex, snap, client_job, ctx.page_no)
+        except Exception as e:  # noqa: BLE001
+            # The prefill is a head start, not the run: Westinghouse's page navigated while it picked a dropdown
+            # ('Execution context was destroyed') and the whole run was held as an error (2026-10-23). The model goes on.
+            if not prefill_navigation_error(e):
+                raise
+            db.event(job_id, "adapter:prefill:interrupted", {"error": f"{type(e).__name__}: {e}"[:200]})
+            await ex.settle()
+            from .adapters import PrefillResult
+            pre = PrefillResult(details=[])
+            ctx.last_snapshot = None
         if client_job.get("resume_file"):
             ctx.resume_file = client_job["resume_file"]
         db.event(job_id, "adapter:prefill", {"set": pre.set, "failed": pre.failed, "skipped_self_id": pre.skipped_self_id, "details": pre.details})

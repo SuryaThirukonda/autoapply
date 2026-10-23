@@ -59,3 +59,11 @@ async def test_a_late_sign_in_failure_is_still_read_as_failed(store, tmp_path):
         assert "creds:sign_in_failed" in kinds
     finally:
         await ex.close(close_browser=True)
+
+
+def test_a_navigation_under_the_prefill_is_no_run_error():
+    """Westinghouse (2026-10-23): the page navigated while the prefill picked a dropdown and the run was held as an error."""
+    from goat.worker import prefill_navigation_error
+    assert prefill_navigation_error(Exception("Page.evaluate: Execution context was destroyed, most likely because of a navigation"))
+    assert prefill_navigation_error(Exception("Frame was detached"))
+    assert not prefill_navigation_error(Exception("KeyError: 'ref'"))
