@@ -216,6 +216,7 @@ def _in_resume(value: str) -> bool:
 # "No, I do not require sponsorship" is a No option: "no" is a whole word here, whatever punctuation follows (Harvey, 2026-10-18)
 NEGATED = re.compile(r"^(not\b|no\b|none\b|i do not|i don['\u2019]t|i am not|i['\u2019]m not|unwilling|unable|never|decline|prefer not)", re.I)
 AFFIRMATIVE = {"yes", "true", "checked", "on", "y"}
+UNTICK_VALUES = {"false", "unchecked", "off", "untick", "uncheck", "clear"}
 # an option label that says yes in its own words ("Yes, I am authorized", "I agree", "I am a U.S. citizen")
 AFFIRM_LABEL = re.compile(r"^(yes\b|i (agree|consent|accept|acknowledge|certify|confirm|understand)\b|i am (authori[sz]ed|eligible|a )|i have\b|i will\b|agree\b|accept\b)", re.I)
 
@@ -1827,7 +1828,14 @@ class ToolDispatcher:
                 if a_chain is not None and a_chain.answer_type == "choice_chain" and answers.norm(parts0[0]) not in SELECT_ALL \
                         and f["answer_key"] not in SET_VALUED_KEYS:
                     chosen = await self._chain_pick(f["ref"], parts0)
-                    if chosen is not None and chosen.get("ref") != f["ref"]:
+                    untick = item.get("type") == "checkbox" and ((f.get("source") or "").lower() == "clear"
+                                                                 or str(f.get("value") or "").strip().lower() in UNTICK_VALUES)
+                    if untick and (chosen is None or chosen.get("ref") != f["ref"]):
+                        # clearing an option his chain does not pick is his answer too: Cisco's 'Other Diploma/Degree/
+                        # Certification', ticked by the consent pass, was refused here as a tick, stayed ticked, and the
+                        # judge failed the draft (2026-10-23)
+                        val = "false"
+                    elif chosen is not None and chosen.get("ref") != f["ref"]:
                         results.append({"ref": f["ref"], "status": "failed",
                                         "error": f"the stored answer is an ordered preference: in this question it picks "
                                                  f"'{str(chosen.get('label') or '')[:60]}' [{chosen.get('ref')}]; tick only that option"})
