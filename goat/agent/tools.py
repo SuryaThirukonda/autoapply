@@ -3757,6 +3757,30 @@ class ToolDispatcher:
                 except Exception:  # noqa: BLE001
                     info = {}
                 val = str(info.get("value") or info.get("shown") or "")
+                if (item.get("tag") == "toggle" or val in ("pressed", "checked")) and item.get("group"):
+                    # a pressed option an earlier attempt left ('Male' under Gender, Westinghouse 2026-10-23): recorded under
+                    # its question's answer when it is the option that answer picks (a self-ID decline wherever offered)
+                    q = str(item.get("group") or "")
+                    res_q, _ = await self.t_lookup_answer(q, [], None, ref)
+                    key_q = res_q.get("key") if isinstance(res_q, dict) and not res_q.get("miss") else None
+                    a_q = answers.get(key_q, self.ctx.job.get("company", ""), self.ctx.portal) if key_q else None
+                    if a_q is not None and a_q.has_value:
+                        parts = [x.strip() for x in str(a_q.answer).split(";") if x.strip()]
+                        chosen = await self._chain_pick(ref, parts) if len(parts) > 1 else None
+                        mine = (chosen.get("ref") == ref) if chosen is not None else \
+                            bool(fill._chip_matches(label, parts) or fill.best_option([{"text": label}], parts))
+                        if mine and chosen is None and str(key_q).startswith("self_id.") and parts and fill.DECLINE_OPT.search(parts[0]):
+                            # toggles have no radio group for the chain rule: a decline among this question's toggles wins
+                            sibs = [i for i in snap.items if i.get("tag") == "toggle" and (i.get("group") or "") == q]
+                            dec = next((i for i in sibs if fill.DECLINE_OPT.search(str(i.get("label") or ""))), None)
+                            mine = dec is None or dec.get("ref") == ref
+                        if mine:
+                            records.record_decision(self.ctx.job_id, self.ctx.page_no, f"{q[:80]} / {label[:40]}", val or "pressed",
+                                                    f"standing:{key_q}", ref)
+                            done.append(f"{q[:40]} / {label[:30]} kept ({key_q})")
+                            if len(done) >= 12:
+                                break
+                            continue
                 k_val = standing_key_for_value(val, label) if val else None
                 if k_val:
                     records.record_decision(self.ctx.job_id, self.ctx.page_no, label, val[:300], f"standing:{k_val}", ref)

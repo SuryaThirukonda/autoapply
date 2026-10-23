@@ -117,3 +117,41 @@ def test_ways_of_saying_the_form_is_unfinished():
     for reason in ("ready_for_you: hCaptcha then Submit", "eligibility: requires an active security clearance",
                    "needs_you: requires three professional references"):
         assert not pat.search(reason), reason
+
+
+SF_LEFT = """<!doctype html><html><body style="margin:20px">
+<form onsubmit="event.preventDefault();">
+  <div class="RCMFormField"><label for="381:_input">Graduation Year, if applicable</label>
+    <div class="paginatedPicklistContainer fd-input-group fd-input-group--control">
+      <div class="sr-only"><div role="status" aria-live="polite">One or more results available. Press Up or Down Arrow Keys to navigate the selection list.</div></div>
+      <input id="381:_input" type="text" role="combobox" aria-label="Graduation Year, if applicable" placeholder="No Selection" value="">
+    </div></div>
+  <div role="radiogroup" aria-labelledby="g1"><span id="g1">Gender</span>
+    <span role="radio" aria-checked="true" tabindex="0">Male</span><span role="radio" aria-checked="false" tabindex="-1">Female</span></div>
+  <button type="submit">Submit Application</button>
+</form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_picklists_status_line_is_no_value_and_a_pressed_gender_is_recorded(store, tmp_path):
+    """Westinghouse (SuccessFactors, 2026-10-23): the empty Graduation Year read as its screen-reader status line, and a
+    pressed 'Male' under Gender was left unsourced; the gate blocked on both and the run held."""
+    answers.save_answer("self_id.gender", "Male; Man", answer_type="choice", source="seed:delegation.yaml", aliases=["Gender"])
+    page = tmp_path / "sfleft.html"
+    page.write_text(SF_LEFT, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        snap = await snapshot.take(ex)
+        year = next(i for i in snap.items if "Graduation Year" in (i.get("label") or ""))
+        assert not (year.get("shown") or "").startswith("One or more results"), year
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = snap
+        out, _ = await d.t_park("needs_you: two fields are present without sourced decisions")
+        srcs = {r[0]: r[1] for r in db.connect().execute("SELECT field_label, source FROM decisions WHERE job_id=?", (ctx.job_id,))}
+        assert any(lab.startswith("Gender / Male") and s == "standing:self_id.gender" for lab, s in srcs.items()), (out, srcs)
+    finally:
+        await ex.close(close_browser=True)

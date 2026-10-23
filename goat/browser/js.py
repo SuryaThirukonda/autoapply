@@ -336,6 +336,9 @@ JS_SNAPSHOT = r"""
           // the walk up can reach the field's own box (L3Harris, 2026-10-21: an empty SuccessFactors dropdown read
           // '* Gender' once its icon glyph was gone): its label texts are not a pick, however long the question
           if (c && shown) { for (const l of c.querySelectorAll('label, legend')) { const lt = txt(l); if (lt) shown = shown.replace(lt, ''); } }
+          // a screen-reader status line is no pick: SuccessFactors' paginated picklist keeps 'One or more results available.
+          // Press Up or Down Arrow Keys ...' in its box, and Westinghouse's empty Graduation Year read as that (2026-10-23)
+          if (c && shown) { for (const s of c.querySelectorAll('[role="status"], [aria-live], .sr-only, .visually-hidden')) { const st = txt(s); if (st) shown = shown.replace(st, ''); } }
           // the label is taken off only where it leads the text: 'Degree' is also inside "Bachelor's Degree", and DriveWealth's
           // pick read back as "Bachelor's" through five submits (2026-10-21)
           if (shown && item.label && shown.trim().startsWith(item.label)) shown = shown.trim().slice(item.label.length);
@@ -923,6 +926,7 @@ JS_PAGE_ERRORS = r"""
             if (!c || !txt(c)) { c = null; let p = el.parentElement; for (let i = 0; i < 5 && p; i++, p = p.parentElement) { const t = txt(p); if (t && t.length < 240) { c = p; break; } } }
             let shown = c ? txt(c) : '';
             if (c && shown) { for (const l of c.querySelectorAll('label, legend')) { const lt = txt(l); if (lt) shown = shown.replace(lt, ''); } }
+            if (c && shown) { for (const s of c.querySelectorAll('[role="status"], [aria-live], .sr-only, .visually-hidden')) { const st = txt(s); if (st) shown = shown.replace(st, ''); } }
             const own = nearestLabel(el) || '';
             if (shown && own && shown.trim().startsWith(own)) shown = shown.trim().slice(own.length);
             shown = shown.replace(/^[\s*:]+|[\s*:]+$/g, '').trim();
@@ -1190,7 +1194,11 @@ JS_READ_REF = r"""
   else value = txt(el).slice(0, 300);
   let shown = '';
   const c = /cx-select-input/.test(String(el.className || '')) ? null : el.closest('[class*="__control"], [class*="control"], [class*="Control"], [data-automation-id^="formField"], .field, .form-group');
-  if (c) shown = txt(c).slice(0, 300);
+  if (c) {
+    shown = txt(c);
+    for (const s of c.querySelectorAll('[role="status"], [aria-live], .sr-only, .visually-hidden')) { const st = txt(s); if (st) shown = shown.replace(st, ''); }
+    shown = shown.replace(/\s+/g, ' ').trim().slice(0, 300);
+  }
   if (!value && tag === 'input') { const hv = hostPickedValue(el); if (hv) shown = hv.slice(0, 300); }
   el.scrollIntoView({ block: 'center', inline: 'nearest' });
   let r2 = el.getBoundingClientRect();
