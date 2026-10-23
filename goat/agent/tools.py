@@ -1876,7 +1876,11 @@ class ToolDispatcher:
                 if item.get("type") == "radio":
                     # one choice only: "All offered locations" cannot be picked, so the ranking that follows decides
                     parts0 = [x for x in parts0 if answers.norm(x) not in SELECT_ALL] or parts0
-                if a_chain is not None and a_chain.answer_type == "choice_chain" and answers.norm(parts0[0]) not in SELECT_ALL \
+                # His self-identification answers are ordered the same way though stored as 'choice' (delegation.yaml):
+                # Micron's disability boxes got 'I do not want to answer', his last fallback, beside 'No, I do not have a
+                # disability ...', and the run's own fix ticked the decline again in the same batch (2026-10-23)
+                ordered = a_chain is not None and (a_chain.answer_type == "choice_chain" or str(f["answer_key"]).startswith("self_id."))
+                if ordered and answers.norm(parts0[0]) not in SELECT_ALL \
                         and f["answer_key"] not in SET_VALUED_KEYS:
                     chosen = await self._chain_pick(f["ref"], parts0)
                     untick = item.get("type") == "checkbox" and ((f.get("source") or "").lower() == "clear"

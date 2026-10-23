@@ -64,3 +64,44 @@ async def test_ticking_an_option_his_chain_does_not_pick_is_still_refused(store,
         assert await _checked(ex, "as") is False
     finally:
         await ex.close(close_browser=True)
+
+
+DISABILITY = """<!doctype html><html><body style="margin:20px">
+<h2>Voluntary Self-Identification of Disability</h2>
+<div><input type="checkbox" id="y"><label for="y">Yes, I have a disability, or have had one in the past</label></div>
+<div><input type="checkbox" id="n"><label for="n">No, I do not have a disability and have not had one in the past</label></div>
+<div><input type="checkbox" id="d"><label for="d">I do not want to answer</label></div>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_his_disability_answer_ticks_no_and_never_the_decline_fallback(store, tmp_path):
+    """Micron (Workday, 2026-10-23): self_id.disability is stored as 'choice' (delegation.yaml), so the ordered-preference
+    rule never ran; 'I do not want to answer' was ticked beside 'No, I do not have a disability ...' and the decline went in."""
+    answers.save_answer("self_id.disability", "No, I do not have a disability; No, I do not have a disability and have not had "
+                        "one in the past; No; I do not want to answer; I do not wish to answer", answer_type="choice",
+                        source="seed:delegation.yaml")
+    page = tmp_path / "disability.html"
+    page.write_text(DISABILITY, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = await snapshot.take(ex)
+        refs = {i["label"].strip()[:3]: i["ref"] for i in ctx.last_snapshot.items if i.get("type") == "checkbox"}
+        key = "self_id.disability"
+        out, _ = await d.t_fill_batch([{"ref": refs[r], "answer_key": key, "value": None, "source": None, "label": r}
+                                       for r in ("Yes", "No,", "I d")])
+        st = {r["ref"]: r for r in out["results"]}
+        assert st[refs["No,"]]["status"] == "set", out
+        assert st[refs["I d"]]["status"] == "failed" and "No, I do not have a disability" in st[refs["I d"]]["error"], out
+        assert await _checked(ex, "n") is True and await _checked(ex, "d") is False and await _checked(ex, "y") is False
+        # the choose tool hands a box to fill_batch: the decline is refused there too
+        out, _ = await d.t_choose(refs["I d"], key, ["I do not want to answer"], "Disability", "answer_key")
+        assert out["results"][0]["status"] == "failed", out
+        assert await _checked(ex, "d") is False
+    finally:
+        await ex.close(close_browser=True)
