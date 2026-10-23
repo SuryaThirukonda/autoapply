@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
-from .. import answers, records
+from .. import answers, fit, phone, records
 from ..browser import fill
 from ..browser.snapshot import Snapshot
 
@@ -366,6 +366,8 @@ class Adapter:
                     break
             if key is None:
                 key = store.get(nv)
+            if key and fit.misfit(label, val, key, phone.follows_area_code(snap.items, item.get("ref"))):
+                key = None      # his whole number in an area-code box, a city alone for 'name, city, and state' (2026-10-23)
             if key:
                 records.record_decision(job["id"], page_no, label, val, f"standing:{key}", item["ref"])
                 res.set += 1

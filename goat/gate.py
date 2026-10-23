@@ -567,6 +567,7 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     except Exception:
         standing = {}
     from . import answers as _answers
+    from . import fit as _fit, phone as _phone
     for it in snapshot.items:
         if it.get("tag") not in ("input", "textarea", "select", "dropdown", "richtext", "toggle") or it.get("type") in ("file", "password", "hidden", "submit", "button"):
             continue
@@ -604,6 +605,8 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
                 key = _stored_answer_matching(it, str(val), job.get("company", ""), portal)
             if not key and any(readback.dial_code_matches(cv, str(val)) for cv, ck in standing.items() if ck == "identity.country"):
                 key = "identity.country"      # a phone country picker showing "+1" for his United States (Epic Games)
+            if key and _fit.misfit(it.get("label") or "", str(val), key, _phone.follows_area_code(snapshot.items, it.get("ref"))):
+                key = None      # his whole number in an area-code box, a city alone for 'name, city, and state' (2026-10-23)
             if key and it.get("type") not in ("checkbox", "radio") and it.get("tag") != "toggle":
                 records.record_decision(job["id"], page_no, it.get("label") or "", str(val)[:300], f"standing:{key}", it.get("ref", ""))
                 dec_refs.add(it.get("ref", ""))

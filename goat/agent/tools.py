@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .. import answers, db, profile, records, states
+from .. import answers, db, fit, phone, profile, records, states
 from ..budget import Budget, BudgetExceeded, Parked
 from ..browser import fill, js, snapshot as snapmod
 from ..browser.captcha import detect_challenge
@@ -736,20 +736,24 @@ _EMPTY_REQ = re.compile(r"^empty_required: (?P<label>.+?) \((?P<type>[a-z-]+)\) 
 _UNSOURCED = re.compile(r"^value on page with no sourced decision this attempt: \[(?P<ref>e\d+)\] (?P<label>.*?) = ['\"]")
 
 
-def standing_key_for_value(value: str, label: str = "") -> str | None:
+def standing_key_for_value(value: str, label: str = "", local: bool = False) -> str | None:
     """The stored answer a value already on the page IS (a previous attempt left it): his work-entry description word for
-    word, or cut to the box's length; another distinctive stored value; the local part of his phone number."""
+    word, or cut to the box's length; another distinctive stored value; the local part of his phone number. `local`: the
+    box follows an area-code box."""
     from ..adapters import _standing_values
     nv = answers.norm(value)
-    if len(nv) < 4:
+    if len(nv) < 4 or phone.misfit(label, value, local):
         return None
     if re.search(r"\bphone\b|\bnumber\b", label or "", re.I):
         digits = re.sub(r"\D", "", value or "")
         a = answers.get("identity.phone")
         if a is not None and a.has_value and len(digits) >= 7 and re.sub(r"\D", "", str(a.answer)).endswith(digits):
+            if local and len(digits) == 7:
+                lp = phone.part_answer("local")
+                return lp.key if lp is not None else "identity.phone"
             return "identity.phone"
     key = _standing_values().get(nv)
-    if key and not key.startswith("self_id."):
+    if key and not key.startswith("self_id.") and not fit.misfit(label, value, key):
         return key
     # the stored descriptions separate their bullets with a literal backslash-n, which becomes a real line break when typed
     # (Westinghouse's boxes held his text with four characters fewer, 2026-10-23)
@@ -1358,6 +1362,35 @@ def clearance_obstacle_answer():
                                  "of the listed security clearance delays apply?' (2026-10-23)")
         a = answers.get(CLEARANCE_OBSTACLE_KEY)
     return a
+
+
+HIGH_SCHOOL_WORDS = re.compile(r"\bhigh school\b|\bdiploma\b|\bged\b", re.I)
+PLACE_ASKED = re.compile(r"\b(city|state|location|located)\b", re.I)
+NAME_ASKED = re.compile(r"\b(name|institution)\b", re.I)
+HIGH_SCHOOL_FULL_KEY = "education.high_school_name_city_state"
+
+
+def high_school_place(question: str) -> str:
+    """'full' for a question about his high school that asks its name with its city / state, 'place' for one asking only
+    where it is, else ''. SWBC's 'List the educational institution name, city, and state' for his high-school diploma
+    took the university's 'College Station, TX' (a rule for 'school' + 'city and state'), then only 'Sugar Land, TX'
+    (2026-10-23)."""
+    if not HIGH_SCHOOL_WORDS.search(question or "") or not PLACE_ASKED.search(question or ""):
+        return ""
+    return "full" if NAME_ASKED.search(question or "") else "place"
+
+
+def high_school_full_answer():
+    """'Clements High School, Sugar Land, TX' from his questionnaire answers, stored on first use ('derived')."""
+    a = answers.get(HIGH_SCHOOL_FULL_KEY)
+    if a is not None and a.has_value:
+        return a
+    name, city = answers.get("education.high_school"), answers.get("education.high_school_city")
+    if name is None or city is None or not name.has_value or not city.has_value:
+        return None
+    answers.save_answer(HIGH_SCHOOL_FULL_KEY, f"{name.answer}, {city.answer}", answer_type="text", source="derived",
+                        note=f"his high school and where it is, from his answers: {name.answer} / {city.answer}")
+    return answers.get(HIGH_SCHOOL_FULL_KEY)
 
 
 def other_state_only(question: str, home_state: str) -> str:
@@ -3172,6 +3205,19 @@ class ToolDispatcher:
 
     async def t_lookup_answer(self, question: str, options: list[str], meaning: str | None = None, ref: str | None = None):
         text = " ".join([question or "", meaning or "", " ".join(options or [])])
+        snap_items = self.ctx.last_snapshot.items if self.ctx.last_snapshot is not None else []
+        if not ref:
+            ref = next((i.get("ref") for i in snap_items if answers.norm(i.get("label") or "") == answers.norm(question)), None)
+        part = "area" if phone.part_of(question) == "area" else "local" if phone.follows_area_code(snap_items, ref) else ""
+        if part and not options:
+            # his phone asked in parts (SuccessFactors' Home/Area Code then Home Phone #): Westinghouse's area-code box held
+            # his whole number (2026-10-23)
+            a_ph = phone.part_answer(part)
+            if a_ph is not None and a_ph.has_value:
+                out = self._present(a_ph, via="phone_parts")
+                out["note"] = ("this box takes only the area code of his phone number" if part == "area" else
+                               "the box before this one takes his area code: this one takes the rest of his number")
+                return out, None
         if self.GOV_PUBLIC.search(text) and self.GOV_TOPIC.search(text):
             k = answers.key_from_question(question)
             mine = answers.get(k, self.ctx.job.get("company", ""), self.ctx.portal)
@@ -3279,6 +3325,14 @@ class ToolDispatcher:
                 out["note"] = ("this asks whether anything would PREVENT or DELAY a security clearance: his answer is No "
                                "(never the Yes of willing-to-obtain)")
                 db.event(self.ctx.job_id, "answer:clearance_obstacle", {"question": question[:160]})
+                return out, None
+        hs = high_school_place(question) if not options else ""
+        if hs:
+            a_hs = high_school_full_answer() if hs == "full" else answers.get("education.high_school_city")
+            if a_hs is not None and a_hs.has_value:
+                out = self._present(a_hs, via="high_school_rule")
+                out["note"] = ("his high school, with its city and state, in one box" if hs == "full" else
+                               "where his high school is (not his university)")
                 return out, None
         home = answers.get("identity.state", self.ctx.job.get("company", ""), self.ctx.portal)
         st = other_state_only(question, str(home.answer) if home is not None and home.has_value else "")
@@ -3781,7 +3835,20 @@ class ToolDispatcher:
                             if len(done) >= 12:
                                 break
                             continue
-                k_val = standing_key_for_value(val, label) if val else None
+                        # not his option: press the one his answer picks among this question's toggles ('None' was left
+                        # pressed under years of experience; his answer '0-1 year', Westinghouse 2026-10-23)
+                        sibs = [i for i in snap.items if i.get("tag") == "toggle" and (i.get("group") or "") == q and i.get("ref") != ref]
+                        pick = fill.best_option([{"text": str(i.get("label") or ""), "ref": i["ref"]} for i in sibs], parts) if sibs else None
+                        if pick is not None:
+                            out_p, _ = await self.t_fill_batch([{"ref": pick["ref"], "answer_key": key_q, "value": None, "source": None,
+                                                                 "label": f"{q[:80]} / {pick['text'][:40]}"}])
+                            r0 = ((out_p or {}).get("results") or [{}])[0] if isinstance(out_p, dict) else {}
+                            if r0.get("status") in ("set", "kept"):
+                                done.append(f"{q[:40]} = {pick['text'][:30]} ({key_q})")
+                                if len(done) >= 12:
+                                    break
+                                continue
+                k_val = standing_key_for_value(val, label, phone.follows_area_code(snap.items if snap else [], ref)) if val else None
                 if k_val:
                     records.record_decision(self.ctx.job_id, self.ctx.page_no, label, val[:300], f"standing:{k_val}", ref)
                     done.append(f"{label[:50]} kept ({k_val})")
@@ -3797,7 +3864,7 @@ class ToolDispatcher:
                 or answers.norm(str(a.answer)).split(" ")[0] in ("yes", "no")
             tag = str(item.get("tag") or "")
             shown = ""
-            if tag in ("dropdown", "select") or item.get("combo") or (choice and (item.get("type") or "text") == "text"):
+            if tag in ("dropdown", "select") or item.get("combo") or (choice and tag != "toggle" and (item.get("type") or "text") == "text"):
                 out, _ = await self.t_choose(ref, key, [], label, "answer_key")
                 if isinstance(out, dict) and out.get("status") in ("set", "kept"):
                     shown = str(out.get("readback") or "")

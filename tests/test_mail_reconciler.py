@@ -15,6 +15,8 @@ def apps(tmp_path, monkeypatch):
     token = tmp_path / "token.json"
     token.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(SETTINGS.mail, "token_json", str(token))
+    # an earlier test's code wait can leave Gmail marked busy for 45 s; with sleep faked, the pass would never go on
+    monkeypatch.setattr(gmail, "_URGENT_UNTIL", 0.0)
     old = int(time.time()) - 7200
     ids = [ledger.record_application(None, co, "Intern", f"https://jobs.example.com/{co}", "agent", submitted_at=old)
            for co in ("Alpha", "Bravo", "Charlie")]

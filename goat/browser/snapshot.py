@@ -47,12 +47,13 @@ class Snapshot:
         return [i for i in self.items if i.get("submitish")]
 
 
-def _fmt_item(i: dict) -> str:
+def _fmt_item(i: dict, short: bool = False) -> str:
+    """One outline line. `short` (a page too long for the full outline) leaves out the position and the offscreen flag."""
     tag = i.get("tag")
     typ = i.get("type") or ""
     role = i.get("role") or ""
     label = (i.get("label") or "").replace('"', "'")
-    pos = f"@({i['bbox'][0]},{i['bbox'][1]})" if i.get("bbox") else ""
+    pos = f"@({i['bbox'][0]},{i['bbox'][1]})" if i.get("bbox") and not short else ""
     flags = []
     if i.get("required"):
         flags.append("required")
@@ -60,7 +61,7 @@ def _fmt_item(i: dict) -> str:
         flags.append("INVALID")
     if i.get("disabled"):
         flags.append("disabled")
-    if not i.get("inview", True):
+    if not i.get("inview", True) and not short:
         flags.append("offscreen")
     if i.get("max_chars"):
         flags.append(f"max {i['max_chars']} chars")
@@ -128,14 +129,59 @@ def render(s: Snapshot, max_chars: int = MAX_CHARS) -> str:
         lines.append(f"ENTRY TILE ({t.get('section') or 'section'}){where}: '{t.get('title', '')}' / '{t.get('sub', '')}'"
                      f"{' FIELDS TO FIX' if t.get('invalid') else ''} [Edit {t.get('edit') or '?'} | Delete {t.get('del') or '?'}]")
     lines.append(f"VIEWPORT scrollY={s.scroll_y} pageHeight={s.page_height} ({s.total_items} interactive elements, {len(s.items)} listed)")
-    for g in s.groups:
-        lines.append(_fmt_group(g))
-    for i in s.items:
-        lines.append(_fmt_item(i))
-    out = "\n".join(lines)
+    out = "\n".join(lines + [_fmt_group(g) for g in s.groups] + [_fmt_item(i) for i in s.items])
+    if len(out) > max_chars:
+        # A page too long for the outline is written short before anything is cut: SuccessFactors puts the whole
+        # application on one page, and Westinghouse's start-date box, its work-entry dates and the Apply button fell
+        # past the cut, where neither the model nor the judge could see them (2026-10-23).
+        out = "\n".join(lines + _short_body(s))
     if len(out) > max_chars:
         out = out[: max_chars - 40] + "\n...[outline truncated; scroll or zoom for more]"
     return out
+
+
+_FIELD_TAGS = ("input", "textarea", "richtext", "select", "dropdown", "toggle")
+
+
+def _norm_label(i: dict) -> str:
+    return (i.get("label") or "").strip().lstrip("*").strip().rstrip(":").strip().lower()
+
+
+def _short_body(s: Snapshot) -> list[str]:
+    """The outline's body for a long page: a question's toggles on one line, a picker's button on its field's line
+    (SuccessFactors puts one after every picklist, under the field's own label), and positions only where a label
+    repeats (the Start Date of each work entry) so the item can be told from the others."""
+    count: dict[tuple, int] = {}
+    for i in s.items:
+        k = (i.get("tag") in _FIELD_TAGS, _norm_label(i))
+        count[k] = count.get(k, 0) + 1
+    body = [_fmt_group(g) for g in s.groups]
+    items, j = s.items, 0
+    while j < len(items):
+        i = items[j]
+        if i.get("tag") == "toggle":
+            q = i.get("group") or ""
+            run = [i]
+            while j + len(run) < len(items) and items[j + len(run)].get("tag") == "toggle" \
+                    and (items[j + len(run)].get("group") or "") == q:
+                run.append(items[j + len(run)])
+            if len(run) > 1:
+                opts = " ".join(f'[{t["ref"]}] "{(t.get("label") or "").replace(chr(34), chr(39))}" [{"x" if t.get("pressed") else " "}]'
+                                for t in run)
+                body.append(f'toggles for question "{q.replace(chr(34), chr(39))[:120]}": {opts} (set with fill_batch + answer_key)')
+                j += len(run)
+                continue
+        prev = items[j - 1] if j else None
+        if i.get("tag") == "button" and not i.get("submitish") and prev is not None and body \
+                and prev.get("tag") in _FIELD_TAGS and prev.get("tag") != "toggle" and _norm_label(i) \
+                and _norm_label(i) == _norm_label(prev):
+            body[-1] += f" (picker button [{i['ref']}]{' disabled' if i.get('disabled') else ''})"
+            j += 1
+            continue
+        unique = count.get((i.get("tag") in _FIELD_TAGS, _norm_label(i)), 0) == 1
+        body.append(_fmt_item(i, short=unique).rstrip())
+        j += 1
+    return body
 
 
 async def keep_session_alive(ex: Executor) -> bool:

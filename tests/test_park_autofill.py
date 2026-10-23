@@ -155,3 +155,62 @@ async def test_a_picklists_status_line_is_no_value_and_a_pressed_gender_is_recor
         assert any(lab.startswith("Gender / Male") and s == "standing:self_id.gender" for lab, s in srcs.items()), (out, srcs)
     finally:
         await ex.close(close_browser=True)
+
+
+YEARS = """<!doctype html><html><body style="margin:20px">
+<form onsubmit="event.preventDefault();">
+  <div role="radiogroup" aria-labelledby="y1"><span id="y1">How many years of related work experience do you have?</span>
+    <span role="radio" id="o0" aria-checked="true" tabindex="0" onclick="for (const s of this.parentElement.querySelectorAll('[role=radio]')) s.setAttribute('aria-checked', s === this ? 'true' : 'false')">None</span>
+    <span role="radio" id="o1" aria-checked="false" tabindex="-1" onclick="for (const s of this.parentElement.querySelectorAll('[role=radio]')) s.setAttribute('aria-checked', s === this ? 'true' : 'false')">0-1 year</span>
+    <span role="radio" id="o2" aria-checked="false" tabindex="-1" onclick="for (const s of this.parentElement.querySelectorAll('[role=radio]')) s.setAttribute('aria-checked', s === this ? 'true' : 'false')">1-3 years</span></div>
+  <button type="submit">Submit Application</button>
+</form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_pressed_option_that_is_not_his_answer_gives_way_to_the_one_that_is(store, tmp_path):
+    """Westinghouse (2026-10-23): 'None' was left pressed under years of experience; his answer is '0-1 year'."""
+    answers.save_answer("experience.years_professional", "0-1 year; 1", answer_type="choice", source="questionnaire",
+                        aliases=["How many years of related work experience do you have?"])
+    page = tmp_path / "years.html"
+    page.write_text(YEARS, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = await snapshot.take(ex)
+        out, _ = await d.t_park("needs_you: one field is present without a sourced decision")
+        assert "0-1 year" in out["error"], out
+        states = await ex.page.evaluate("() => ['o0','o1','o2'].map(i => document.getElementById(i).getAttribute('aria-checked'))")
+        assert states == ["false", "true", "false"], states
+    finally:
+        await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_park_presses_the_empty_yes_no_questions_his_answers_cover(store, tmp_path):
+    """Walrus (Ashby, 2026-10-23): a required Yes / No pair with neither pressed is filled from his stored answer, the
+    No of the sponsorship pair included (the empty-field scan names the pair by its first button, Yes)."""
+    from tests.test_ashby_yesno import WALRUS
+    answers.save_answer("work_authorization.authorized_to_work_in_us", "Yes", answer_type="choice", source="questionnaire",
+                        aliases=["Are you authorized to work in the United States?"])
+    answers.save_answer("work_authorization.requires_sponsorship_future", "No", answer_type="choice", source="questionnaire",
+                        aliases=["Will you now or in the future require employment visa sponsorship?"])
+    page = tmp_path / "walrus.html"
+    page.write_text(WALRUS, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = await snapshot.take(ex)
+        out, _ = await d.t_park("needs_you: two required questions are unanswered")
+        pressed = await ex.page.evaluate("() => [...document.querySelectorAll('button[aria-pressed]')].map(b => b.getAttribute('aria-pressed'))")
+        assert pressed == ["true", "false", "false", "true"], (pressed, out)
+    finally:
+        await ex.close(close_browser=True)

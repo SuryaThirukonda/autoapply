@@ -18,6 +18,9 @@ SKIP_SOURCES = ("cleared", "judgment")
 # 2026-10-21: the model recorded '+1', the read-back saw '' and blocked Next; the number itself carries the code).
 PHONE_COUNTRY = re.compile(r"^\s*(country( calling)? code|phone country( code)?|dial(l?ing)? code|country/region code)\s*\*?\s*:?\s*$", re.I)
 SKIP_VALUES = ("(set)", "No results were found.", "No results found", "No results", "No matches found", "No options")
+# every credentials call records one decision with this source: what was typed before it on that page was the sign-in,
+# sign-up or forgot-password form, not the application
+ACCOUNT_SOURCE = "policy:may_create_accounts"
 _DATE_PARTS = re.compile(r"month=(\d{1,2})(?:\s+day=\d{1,2})?\s+year=(\d{4})", re.I)
 _DATEISH_LABEL = re.compile(r"\b(date|month|year|day)\b", re.I)
 
@@ -226,6 +229,13 @@ def _match_by_label(decision: dict, snap: Snapshot) -> dict | None:
 def diff(decisions: list[dict], snap: Snapshot, page_no: int = 0) -> list[str]:
     """Mismatch messages, one per control whose NEWEST decision differs from what it shows now (decisions
     come oldest first; a control re-set later in the run is judged by its last decision)."""
+    # The account forms come before the application on the same page number: SWBC's forgot-password 'Email Address' paired
+    # by its words with the referrer box 'What's their name or email address?', and the run typed his own email there to
+    # match it (2026-10-23). Decisions made before the last credentials call on its page are left out.
+    last_acct = max((k for k, d in enumerate(decisions) if str(d.get("source") or "") == ACCOUNT_SOURCE), default=-1)
+    if last_acct >= 0:
+        acct_page = int(decisions[last_acct].get("page") or 0)
+        decisions = [d for k, d in enumerate(decisions) if k > last_acct or int(d.get("page") or 0) != acct_page]
     latest: dict[str, dict] = {}
     # In a radio group only the newest pick counts: ticking No supersedes an earlier Yes on the sibling option
     # (American Family, 2026-10-18), so older decisions on other options of the same group are not compared.
@@ -245,7 +255,10 @@ def diff(decisions: list[dict], snap: Snapshot, page_no: int = 0) -> list[str]:
         if not same_page:
             continue
         item = snap.refs.get(ref) if ref else None
-        if item is not None and not _same_field(str(d.get("field_label") or ""), str(item.get("label") or item.get("group") or "")):
+        # a toggle or radio is named by its option ('Yes') and its question (the group): a decision labelled with the
+        # question is the same field (Walrus' 'Authorized to work' on the 'Yes' button was never compared, 2026-10-23)
+        if item is not None and not _same_field(str(d.get("field_label") or ""), str(item.get("label") or item.get("group") or "")) \
+                and not (item.get("group") and _same_field(str(d.get("field_label") or ""), str(item.get("group")))):
             # Workday re-renders a block after a prompt pick and the ref lands on another control (Moderna, 2026-10-19:
             # e189 was the GPA box, then the School prompt, and the GPA decision blocked the page): pair by label instead.
             item = _match_by_label(d, snap) if page_no else None

@@ -334,3 +334,22 @@ def test_a_pressed_no_button_matches_the_decision_no():
     yes = {"ref": "e15", "tag": "toggle", "label": "Yes", "pressed": False}
     assert not values_equal(_expect_checked("No", yes), "pressed", "toggle")
     assert values_equal(_expect_checked("No", yes), "", "toggle")
+
+
+def test_what_was_typed_on_an_account_page_is_not_read_back_on_the_application():
+    """SWBC (Workday, 2026-10-23): the forgot-password form's 'Email Address' (page 1) paired by its words with the
+    application's 'What's their name or email address?' (also page 1), and the run typed his own email into the referrer
+    box to clear the mismatch."""
+    from goat import readback
+    items = [{"ref": "e34", "tag": "input", "type": "text", "label": "What's their name or email address?*", "value": ""},
+             {"ref": "e10", "tag": "input", "type": "text", "label": "First Name*", "value": ""}]
+    s = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    s.refs = {i["ref"]: i for i in items}
+    decs = [{"ref": "e17", "field_label": "account login_universal (swbc.wd1.myworkdayjobs.com)", "value": "(set)",
+             "source": "policy:may_create_accounts", "page": 1},
+            {"ref": "e16", "field_label": "Email Address", "value": "thirukondas@gmail.com", "source": "standing:identity.email", "page": 1},
+            {"ref": "e17", "field_label": "account create (swbc.wd1.myworkdayjobs.com)", "value": "(set)",
+             "source": "policy:may_create_accounts", "page": 1},
+            {"ref": "e10", "field_label": "First Name", "value": "Surya", "source": "standing:identity.first_name", "page": 1}]
+    out = readback.diff(decs, s, page_no=1)
+    assert out == ["field First Name* [e10] shows '' but decision was 'Surya'"], out

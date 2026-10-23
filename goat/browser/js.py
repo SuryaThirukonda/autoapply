@@ -963,6 +963,20 @@ JS_PAGE_ERRORS = r"""
       if (!opts.length || opts.some(o => o.getAttribute('aria-checked') === 'true')) continue;
       push(emptyRequired, { label: q.replace(/^\s*\*\s*/, '').slice(0, 160) || '(radio group)', type: 'radiogroup', name: g.id || '', ref: opts[0].getAttribute('data-goat-ref') || '' }, 'r:' + q + ':radiogroup');
     }
+    // a required Yes / No pair of toggle buttons with neither pressed (Ashby: Walrus' 'Are you authorized to work in the
+    // United States?' lost its Yes before the submit and the gate passed, 2026-10-23)
+    let yns = []; try { yns = root.querySelectorAll('.ashby-application-form-input-yesno, [class*="_yesno_"]'); } catch (e) { yns = []; }
+    for (const g of yns) {
+      if (!vis(g)) continue;
+      const btns = Array.from(g.querySelectorAll('button[aria-pressed], [role="button"][aria-pressed]'));
+      if (btns.length < 2 || btns.some(b => b.getAttribute('aria-pressed') === 'true')) continue;
+      const entry = g.closest('.ashby-application-form-field-entry, [class*="fieldEntry"], fieldset') || g.parentElement;
+      const lab = entry ? entry.querySelector('label, legend') : null;
+      const q = lab ? txt(lab) : '';
+      const req = g.getAttribute('aria-required') === 'true' || !!(lab && (/required/i.test(String(lab.className || '')) || /^\s*\*|\*\s*$/.test(q)));
+      if (!req) continue;
+      push(emptyRequired, { label: q.replace(/^\s*\*\s*|\s*\*\s*$/g, '').slice(0, 160) || '(yes / no)', type: 'yesno', name: '', ref: btns[0].getAttribute('data-goat-ref') || '' }, 'r:' + q + ':yesno');
+    }
     let dd = []; try { dd = root.querySelectorAll('[data-automation-id="selectWidget"], button[aria-haspopup="listbox"], [role="combobox"]:not(input):not(textarea), [role="button"][aria-haspopup]'); } catch (e) { dd = []; }
     for (const el of dd) {
       if (!vis(el)) continue;
