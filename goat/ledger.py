@@ -37,6 +37,37 @@ def url_key(url: str) -> str:
     return (f"{host}{path}" + ("?" + "&".join(ids) if ids else "")) if host else ""
 
 
+_GREENHOUSE_HOST = re.compile(r"^(?:job-)?boards(?:\.eu)?\.greenhouse\.io$")
+
+
+def posting_key(url: str) -> str:
+    """One key for the links one posting has on its own portal. Greenhouse job ids are global: boards.greenhouse.io/
+    <board>/jobs/<id>?gh_jid=<id>, job-boards.greenhouse.io/<board>/jobs/<id> and the embed link's token are one posting.
+    Anduril's '2027 Finance Data Analyst Intern' was applied to through one link and queued again through the other, and
+    only the judge stopped a second application (2026-10-23)."""
+    uk = url_key(url)
+    host, _, rest = uk.partition("/")
+    if _GREENHOUSE_HOST.match(host):
+        m = re.search(r"/jobs/(\d+)", "/" + rest) or re.search(r"(?:token|gh_jid)=(\d+)", rest)
+        if m:
+            return f"greenhouse:{m.group(1)}"
+    return uk
+
+
+# Legal and generic words a company's name carries in one list and not in another
+_COMPANY_SUFFIX = {"inc", "incorporated", "corp", "corporation", "co", "company", "llc", "ltd", "limited", "plc", "lp", "llp",
+                   "group", "holdings", "the", "technologies", "technology", "tech", "systems", "solutions", "labs",
+                   "laboratory", "laboratories", "services", "industries", "industry"}
+
+
+def company_key(name: str) -> str:
+    """One key per employer: 'Palantir Technologies' and 'Palantir', 'Qorvo, Inc.' and 'Qorvo', 'JPMorgan Chase' and
+    'JP Morgan Chase', 'Anduril Industries' and 'Anduril' (parentheses, punctuation, spaces and legal or generic suffixes
+    set aside). The ledger's duplicate check and the per-company cap both use it."""
+    text = re.sub(r"\(.*?\)", " ", (name or "").lower())
+    return "".join(t for t in re.findall(r"[a-z0-9]+", text) if t not in _COMPANY_SUFFIX)
+
+
 def applied_keys(company: str, title: str, url: str) -> list[str]:
     keys = []
     uk = url_key(url)
@@ -97,29 +128,33 @@ def already_applied(company: str, title: str, url: str) -> bool:
     uk = url_key(url)
     if uk and con.execute("SELECT 1 FROM applied_keys WHERE key=?", ("u:" + uk,)).fetchone():
         return True
-    ck = norm(company)
+    pk = posting_key(url) if uk else ""
+    rows = con.execute("SELECT key, company, title, url FROM applied_keys").fetchall()
+    if pk and pk != uk and any(posting_key(row["url"] or "") == pk for row in rows):
+        return True
+    ck = company_key(company)
     if not ck:
         return False
-    exact_c = f"c:{ck}|{norm(title)}" if norm(title) else None
-    for row in con.execute("SELECT key, company, title, url FROM applied_keys"):
-        if norm(row["company"]) == ck and same_posting(title, url, row["title"] or "", row["url"] or "",
-                                                       same_key=bool(exact_c) and row["key"] == exact_c):
+    exact_c = f"c:{norm(company)}|{norm(title)}" if norm(title) else None
+    for row in rows:
+        if company_key(row["company"]) == ck and same_posting(title, url, row["title"] or "", row["url"] or "",
+                                                              same_key=bool(exact_c) and row["key"] == exact_c):
             return True
     return False
 
 
 def company_application_count(company: str, exclude_listing: str | None = None) -> int:
     """Earlier applications to this company (goat's own plus the imported Hermes ledger)."""
-    ck = norm(company)
+    ck = company_key(company)
     if not ck:
         return 0
     con = db.connect()
     ids = set()
     for row in con.execute("SELECT id, company, listing_id FROM applications"):
-        if norm(row["company"]) == ck and not (exclude_listing and row["listing_id"] == exclude_listing):
+        if company_key(row["company"]) == ck and not (exclude_listing and row["listing_id"] == exclude_listing):
             ids.add(row["id"])
     for row in con.execute("SELECT application_id, company FROM applied_keys"):
-        if norm(row["company"]) == ck and row["application_id"] not in ids:
+        if company_key(row["company"]) == ck and row["application_id"] not in ids:
             app = con.execute("SELECT listing_id FROM applications WHERE id=?", (row["application_id"],)).fetchone()
             if not (exclude_listing and app and app["listing_id"] == exclude_listing):
                 ids.add(row["application_id"])

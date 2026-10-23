@@ -55,3 +55,24 @@ def test_posting_ids_in_links_and_titles_tell_postings_apart(tmp_path):
     url = "https://motorolasolutions.wd5.myworkdayjobs.com/Careers/job/Plantation-FL/Software-Engineering-Intern---Summer-2027_R69136"
     assert not ledger.already_applied("Motorola Solutions", "Software Engineer Intern - Summer 2027", url)
     assert ledger.already_applied("Motorola Solutions", "Software Engineer Intern", "https://x.example/careers?job=R68679")
+
+
+def test_one_greenhouse_posting_under_both_its_links_and_a_shorter_company_name(tmp_path):
+    """Anduril (2026-10-23): applied to through job-boards.greenhouse.io/andurilindustries/jobs/5269977007 as 'Anduril
+    Industries', then queued from another list as 'Anduril' with boards.greenhouse.io/...?gh_jid=5269977007; the run reached
+    the judge, which alone kept a second application from going out."""
+    from goat import db
+    db.reset_for_tests(tmp_path / "t.db")
+    ledger.record_application(None, "Anduril Industries", "2027 Finance Data Analyst Intern",
+                              "https://job-boards.greenhouse.io/andurilindustries/jobs/5269977007", "goat")
+    assert ledger.posting_key("https://boards.greenhouse.io/andurilindustries/jobs/5269977007?gh_jid=5269977007") == \
+        ledger.posting_key("https://job-boards.greenhouse.io/andurilindustries/jobs/5269977007") == "greenhouse:5269977007"
+    assert ledger.already_applied("Anduril", "2027 Finance Data Analyst Intern",
+                                  "https://boards.greenhouse.io/andurilindustries/jobs/5269977007?gh_jid=5269977007")
+    assert ledger.already_applied("Anduril", "2027 Finance Data Analyst Intern", "https://boards.greenhouse.io/embed/job_app?token=5269977007")
+    # another posting of the same board stays its own application
+    assert not ledger.already_applied("Anduril", "2027 Software Engineer Intern",
+                                      "https://boards.greenhouse.io/andurilindustries/jobs/5148079999?gh_jid=5148079999")
+    assert ledger.company_key("Anduril Industries") == ledger.company_key("Anduril") == "anduril"
+    assert ledger.company_key("The Aerospace Corporation") == "aerospace"
+    assert ledger.company_key("Texas Instruments") != ledger.company_key("Texas")

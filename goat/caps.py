@@ -8,7 +8,7 @@ import time
 
 from . import db, states
 from .answers import norm
-from .ledger import loose_title
+from .ledger import company_key, loose_title
 
 PREFIX = "application_cap"
 
@@ -62,19 +62,6 @@ def check(company: str, title: str, listing_id: str | None = None, now: int | No
 LESS_ALIGNED_PER_COMPANY = 6
 # positions under way or waiting on him; applications sent come from the ledger (goat records no rejections, so each counts)
 UNDER_WAY = ("filling", "gated", "submitting", "awaiting_answer", "awaiting_code", states.READY_FOR_YOU)
-_COMPANY_SUFFIX = {"inc", "incorporated", "corp", "corporation", "co", "company", "llc", "ltd", "plc", "lp", "group",
-                   "holdings", "the", "technologies", "technology", "tech", "systems", "solutions", "labs", "laboratory",
-                   "laboratories", "services"}
-
-
-def company_key(name: str) -> str:
-    """One key per employer: 'Palantir Technologies' and 'Palantir', 'Qorvo, Inc.' and 'Qorvo', 'JPMorgan Chase' and
-    'JP Morgan Chase' (parentheses, punctuation, spaces and legal or generic suffixes set aside)."""
-    import re
-    text = re.sub(r"\(.*?\)", " ", (name or "").lower())
-    return "".join(t for t in re.findall(r"[a-z0-9]+", text) if t not in _COMPANY_SUFFIX)
-
-
 def company_positions(company: str, *, with_queued: bool, exclude_listing: str | None = None) -> int:
     """Active, non-rejected positions at this employer: applications sent, jobs under way or waiting on Surya, and
     (with_queued) jobs in the queue. One per posting."""
