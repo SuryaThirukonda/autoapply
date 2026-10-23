@@ -732,7 +732,7 @@ def never_tick(item: dict | None, val) -> str:
     return ""
 
 
-_EMPTY_REQ = re.compile(r"^empty_required: (?P<label>.+?) \((?P<type>[a-z]+)\) ref=(?P<ref>e\d+)")
+_EMPTY_REQ = re.compile(r"^empty_required: (?P<label>.+?) \((?P<type>[a-z-]+)\) ref=(?P<ref>e\d+)")   # 'select-one' too
 
 
 def stored_for_blockers(reasons: list[str], company: str = "", portal: str = "") -> list[str]:
@@ -3686,6 +3686,43 @@ class ToolDispatcher:
     SAVE_PASSWORD_LABEL = re.compile(r"^\s*(submit|save|save password|reset password|set password|change password|update password|"
                                      r"continue|confirm|done)\s*$", re.I)
 
+    async def _fill_stored_blockers(self, reasons: list[str]) -> list[str]:
+        """Fill the empty required fields the gate names whose questions his stored answers cover (lookup_answer's rules
+        first), each through choose or fill_batch. Returns 'label = value' for each one set."""
+        done: list[str] = []
+        snap = self.ctx.last_snapshot
+        for r in reasons or []:
+            m = _EMPTY_REQ.match(str(r))
+            if not m:
+                continue
+            ref, label = m.group("ref"), m.group("label").strip(" *:")
+            item = snap.find(ref) if snap else None
+            if item is None or (item.get("type") or "").lower() in ("file", "password"):
+                continue
+            res, _ = await self.t_lookup_answer(label, [], None, ref)
+            key = (res or {}).get("key") if isinstance(res, dict) and not res.get("miss") else None
+            a = answers.get(key, self.ctx.job.get("company", ""), self.ctx.portal) if key else None
+            if a is None or not a.has_value or a.is_blank:
+                continue
+            choice = str(a.answer_type or "").startswith(("choice", "bool", "multi", "conditional")) \
+                or answers.norm(str(a.answer)).split(" ")[0] in ("yes", "no")
+            tag = str(item.get("tag") or "")
+            shown = ""
+            if tag in ("dropdown", "select") or item.get("combo") or (choice and (item.get("type") or "text") == "text"):
+                out, _ = await self.t_choose(ref, key, [], label, "answer_key")
+                if isinstance(out, dict) and out.get("status") in ("set", "kept"):
+                    shown = str(out.get("readback") or "")
+            if not shown and tag not in ("dropdown", "select"):
+                out, _ = await self.t_fill_batch([{"ref": ref, "answer_key": key, "value": None, "source": None, "label": label}])
+                r0 = ((out or {}).get("results") or [{}])[0] if isinstance(out, dict) else {}
+                if r0.get("status") in ("set", "kept"):
+                    shown = str(r0.get("readback") or "")
+            if shown:
+                done.append(f"{label[:50]} = {shown[:40]}")
+            if len(done) >= 12:
+                break
+        return done
+
     async def _send_reset_form(self) -> str:
         """A forgot-password form still waiting on screen: type his email into it (when empty) and press its send button.
         Returns the button's label, or '' when there is no such form or it could not be sent."""
@@ -4482,6 +4519,16 @@ class ToolDispatcher:
                 # the blockers his stored answers already cover, with their keys: Westinghouse's run parked 'no_standing_answer'
                 # five times in two minutes over 'Are you 18 years or older?' and the like (2026-10-21)
                 known = stored_for_blockers(gate.reasons, self.ctx.job.get("company", ""), self.ctx.portal)
+                if known and self.ctx.control_failures.get("park:autofill", 0) < 3:
+                    # L3Harris (2026-10-23): the run filled one or two such fields between parks and gave up on a long
+                    # SuccessFactors form with ten covered blockers left. The harness fills them itself, with the tools the
+                    # model would use; the gate and the checks before submit still judge the result.
+                    self.ctx.control_failures["park:autofill"] = self.ctx.control_failures.get("park:autofill", 0) + 1
+                    filled = await self._fill_stored_blockers(gate.reasons)
+                    if filled:
+                        db.event(self.ctx.job_id, "park:autofill", {"filled": filled[:12]})
+                        return {"error": f"not parked: the harness filled {len(filled)} required field(s) from his stored answers "
+                                         f"({'; '.join(filled)[:500]}). Take a snapshot, fill what is still empty, then call submit."}, None
                 if known:
                     out["stored_answers"] = known
                     out["error"] += " These blockers have stored answers: fill them now with fill_batch / choose and the answer_key shown."
