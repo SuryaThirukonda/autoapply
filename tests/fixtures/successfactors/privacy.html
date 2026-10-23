@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>SuccessFactors Create Account (fixture)</title></head>
+<body>
+<!-- SuccessFactors' Create Account page as Westinghouse drew it on 2026-10-22: the data privacy statement is a link that
+     opens a dialog to accept (aria-haspopup="dialog"), beside a real dropdown (aria-haspopup="listbox"). -->
+<form>
+  <label for="email">Email*</label><input id="email" type="email">
+  <span><a aria-label="Terms of Use Read and accept the data privacy acknowledgment statement. Required" id="dataPrivacyId"
+     aria-haspopup="dialog" role="button" tabindex="0" style="cursor:pointer;"
+     onclick="document.getElementById('dpcs').hidden = false; return false;">Read and accept the data privacy acknowledgment statement.</a></span>
+  <div><label id="country-label">Country*</label>
+    <button type="button" id="country" aria-haspopup="listbox" aria-labelledby="country-label">Select One</button></div>
+  <div id="dpcs" role="dialog" hidden><p>Data privacy statement.</p><button type="button" id="accept">Accept</button></div>
+</form>
+</body></html>

@@ -356,7 +356,12 @@ JS_SNAPSHOT = r"""
         item.label = ('Entry: ' + tt + (dr ? ' (' + dr + ')' : '')).slice(0, 160);
       } else if (tag === 'button' || role === 'button' || el.hasAttribute('aria-haspopup') || el.getAttribute('data-automation-id') === 'selectWidget') {
         const shown = txt(el).slice(0, 120);
-        const isDropdown = el.hasAttribute('aria-haspopup') || el.getAttribute('data-automation-id') === 'selectWidget' || role === 'combobox';
+        // aria-haspopup="dialog" opens a dialog, not a list: SuccessFactors' 'Read and accept the data privacy acknowledgment
+        // statement' was a dropdown here, click refused it as a choice control, and account creation parked (Westinghouse,
+        // 2026-10-22)
+        const popup = (el.getAttribute('aria-haspopup') || '').toLowerCase();
+        const isDropdown = (el.hasAttribute('aria-haspopup') && popup !== 'dialog' && popup !== 'false')
+          || el.getAttribute('data-automation-id') === 'selectWidget' || role === 'combobox';
         if (isDropdown) {
           item.tag = 'dropdown';
           const aria = el.getAttribute('aria-label') || '';
