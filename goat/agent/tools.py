@@ -2470,6 +2470,16 @@ class ToolDispatcher:
                 return {"ref": ref, "status": "failed",
                         "error": f"this list offers {dec[:60]!r}: his self-identification answer is the decline option wherever one "
                                  f"is offered. Pick {dec[:60]!r} (choose with answer_key {key} does it), then record it."}
+        if wants and fill.DECLINE_OPT.search(wants[0]) and not fill.DECLINE_OPT.search(shown) and typ in ("checkbox", "radio"):
+            # Badger Meter's race boxes (2026-10-23): the run ticked 'Asian' with the computer tool and this check skipped
+            # boxes, so whether the question offered a decline option was never looked at
+            chosen = await self._chain_pick(ref, wants)
+            dec = str((chosen or {}).get("label") or "")
+            if chosen is not None and chosen.get("ref") != ref and fill.DECLINE_OPT.search(dec):
+                return {"ref": ref, "status": "failed",
+                        "error": f"this question offers {dec[:60]!r} [{chosen.get('ref')}]: his self-identification answer is the "
+                                 f"decline option wherever one is offered. Untick '{shown[:40]}', tick {dec[:60]!r} (fill_batch with "
+                                 f"answer_key {key}), then record it."}
         records.record_decision(self.ctx.job_id, self.ctx.page_no, f.get("label") or (item or {}).get("label", ""), shown[:300],
                                 f"standing:{key}", ref)
         return {"ref": ref, "status": "kept", "readback": shown[:120]}
