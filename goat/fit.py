@@ -12,7 +12,7 @@ _ASKS_NAME = re.compile(r"\bname\b", re.I)
 _ASKS_PLACE = re.compile(r"\b(city|state|location)\b", re.I)
 _PLACE_KEY = re.compile(r"(city|location|state)(_variants)?$|city_state_zip$", re.I)
 # a question about another person: whoever referred him, an emergency contact, a reference
-_OTHER_PERSON = re.compile(r"\b(their|referr(?:er|ing)|referred by|who referred|employee'?s? (?:name|email)|"
+OTHER_PERSON = re.compile(r"\b(their|referr(?:er|ing)|referred by|who referred|employee'?s? (?:name|email)|"
                            r"emergency contact|reference \d|references?'? (?:name|email|phone)|supervisor'?s? (?:name|email|phone))\b", re.I)
 
 
@@ -21,7 +21,7 @@ def misfit(label: str, value: str, key: str | None = None, local: bool = False) 
     area-code box."""
     if phone.misfit(label, value, local):
         return True
-    if key and key.startswith("identity.") and _OTHER_PERSON.search(label or ""):
+    if key and key.startswith("identity.") and OTHER_PERSON.search(label or ""):
         return True
     return bool(key and "name" not in key and _PLACE_KEY.search(key) and _ASKS_NAME.search(label or "")
                 and _ASKS_PLACE.search(label or ""))

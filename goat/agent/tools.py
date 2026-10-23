@@ -1701,6 +1701,14 @@ class ToolDispatcher:
     def _resolve_value(self, answer_key: str | None, value: str | None, source: str | None, label: str,
                        ref: str | None = None) -> tuple[str | None, str, str | None]:
         """-> (value, source_tag, error)"""
+        if answer_key and answer_key.startswith("identity."):
+            # his own details never answer a question about someone else: SWBC's run typed his email into 'What's their name
+            # or email address?' (the referrer box) twice, the second time from its answer_key (2026-10-23)
+            own = str(((self.ctx.last_snapshot.find(ref) if ref and self.ctx.last_snapshot is not None else None) or {}).get("label") or "")
+            if fit.OTHER_PERSON.search(own) or fit.OTHER_PERSON.search(label or ""):
+                return None, "", ("this field asks about someone else (a referrer, contact or reference), so none of his own details "
+                                  "go here. Look it up as its own question (lookup_answer); if nothing is stored, ask_user, or "
+                                  "follow his instruction for it.")
         if answer_key == "identity.phone" and ref and self.ctx.last_snapshot is not None:
             # his number asked in parts: Westinghouse's 'Home Phone' after its 'Home/Area Code' box was filled with the whole
             # number from identity.phone (2026-10-23)
@@ -4386,6 +4394,16 @@ class ToolDispatcher:
                              "created yet." + target + " " + CREATE_STEPS}, None
         state = "ready_for_you" if reason.lower().startswith("ready_for_you") else "hold"
         low = reason.lower()
+        # answer_timeout is the harness's hold after Surya leaves a question unanswered. SWBC's run (2026-10-23) parked it
+        # itself with nothing asked, right after drafting and guardchecking its availability answer instead of filling it.
+        if low.startswith("answer_timeout") and self.ctx.control_failures.get("park:answer_timeout", 0) < 2 \
+                and not db.connect().execute("SELECT 1 FROM pending_questions WHERE job_id=? AND answered_at IS NULL LIMIT 1",
+                                             (self.ctx.job_id,)).fetchone():
+            self.ctx.control_failures["park:answer_timeout"] = self.ctx.control_failures.get("park:answer_timeout", 0) + 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "answer_timeout": "nothing asked"})
+            return {"error": "not parked: no question is waiting on Surya (answer_timeout is the harness's own hold when he leaves "
+                             "one unanswered). Fill what is left: a question ask_user returned under draft_yourself is drafted from "
+                             "the PROFILE, guardchecked and filled with source 'generated'. Then continue and call submit."}, None
         # A park that names no hold reason ("incomplete", "run_incomplete", "not completed", "ready"): Highmark Health's
         # run used park to ask what was left, spent its four checked parks in 20 seconds, and its fifth park went
         # through with a dropdown still empty (2026-10-20; Rogue Fitness and Cigna did the same). Such a park never
