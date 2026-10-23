@@ -368,3 +368,10 @@ def test_a_clear_of_a_sibling_control_is_not_the_answer():
     # a clear of the very control that held the value is a correction, and stays
     log[1]["ref"] = "e31"
     assert "source cleared" in Judge._log_text(log)
+
+
+def test_the_judge_knows_his_next_year_classification_is_junior():
+    """Nissan (2026-10-23): the judge asked for Senior because 2027-28 is his last year; his rule is Junior by years."""
+    from goat.judge import JUDGE_INSTRUCTIONS
+    assert "NEXT academic year" in JUDGE_INSTRUCTIONS and "class_standing_next" in JUDGE_INSTRUCTIONS
+    assert "never ask for Senior there" in JUDGE_INSTRUCTIONS
