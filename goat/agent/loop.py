@@ -113,6 +113,7 @@ class AgentLoop:
         self.retried_step = False
         self.plain_text_questions = 0
         self.idle_steps = 0          # consecutive model steps without a tool call
+        self.last_message = ""       # the model's last prose, named in a 'stuck' hold
 
     # ------------------------------------------------------------------ prefix
     def _prefix(self, attempt_history: list[str]) -> list[dict]:
@@ -315,6 +316,7 @@ class AgentLoop:
                     if not text.strip():
                         continue
                     db.event(ctx.job_id, "model:message", {"text": text[:1200]})
+                    self.last_message = " ".join(text.split())
                     reply = policy.answer_model_question(text)
                     if reply is None:
                         self.plain_text_questions += 1
@@ -334,7 +336,10 @@ class AgentLoop:
                     waiting = open_question_keys(ctx)
                     if waiting:
                         raise Parked(f"needs_you: waiting for Surya's answer to {', '.join(waiting)[:160]}", "hold", blocked_on=waiting)
-                    raise Parked("stuck: the model returned no tool call six times in a row", "hold")
+                    # Newell Brands (2026-10-22): the hold said only 'stuck' while the model had said why ('the
+                    # SuccessFactors Apply control is disabled'); its words go into the hold
+                    said = f"; it said: {self.last_message[:220]}" if self.last_message else ""
+                    raise Parked("stuck: the model returned no tool call six times in a row" + said, "hold")
             if not produced_tool and resp.output and all(getattr(o, "type", "") == "reasoning" for o in resp.output):
                 waiting = open_question_keys(ctx)
                 nudge = ("Questions are with Surya (" + ", ".join(waiting)[:200] + "): call await_answers with those keys to wait for "

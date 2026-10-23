@@ -144,3 +144,28 @@ async def test_literal_without_source_is_refused(seeded):
     out2, _ = await d.dispatch("fill_batch", json.dumps({"fields": [{"ref": first["ref"], "answer_key": None, "value": "I published a paper on this.", "source": "generated", "label": "Why Acme"}]}))
     assert "guardrail" in json.loads(out2)["results"][0]["error"]
     await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_silent_model_parks_with_what_it_last_said(seeded):
+    """Newell Brands (2026-10-22): the model wrote why it could not go on, then went quiet; the hold said only 'stuck'."""
+    ex = Executor(policy=HostPolicy([FIXTURE]))
+    await ex.start_launched(headless=True)
+    await ex.new_page()
+    ex.policy.hosts.add("")
+    await ex.page.goto(FIXTURE)
+    await ex.settle(quiet_ms=100)
+    job = {**seeded, "resume_file": None}
+    ctx = RunContext(job=job, ex=ex, budget=Budget(job["id"], "greenhouse"))
+    said = [_item(type="message", content=[SimpleNamespace(
+        type="output_text", text="I can't proceed: the SuccessFactors Apply control is disabled.")])]
+    quiet = [_item(type="reasoning", summary=[])]
+    loop = AgentLoop(ctx, client=FakeClient([said] + [quiet] * 5))
+    try:
+        with pytest.raises(Parked) as pi:
+            await loop.run_page([])
+        assert pi.value.state == "hold"
+        assert pi.value.reason == ("stuck: the model returned no tool call six times in a row; it said: "
+                                   "I can't proceed: the SuccessFactors Apply control is disabled.")
+    finally:
+        await ex.close(close_browser=True)
