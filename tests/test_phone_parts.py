@@ -95,3 +95,27 @@ async def test_lookup_answers_each_part(store, tmp_path):
         assert cell.get("key") != "identity.phone_local"
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_his_phone_named_for_a_part_box_types_only_that_part(store, tmp_path):
+    """Westinghouse (2026-10-23): the model filled 'Home Phone' after the area-code box from identity.phone, whole."""
+    _phone()
+    page = tmp_path / "ph3.html"
+    page.write_text(PAGE.replace('value="281-832-1205"', 'value=""'), encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = snap = await snapshot.take(ex)
+        refs = {i["label"]: i["ref"] for i in snap.items if i.get("tag") == "input"}
+        out, _ = await d.t_fill_batch([{"ref": refs[lab], "answer_key": "identity.phone", "value": None, "source": None, "label": lab}
+                                       for lab in ("* Home/Area Code", "* Home Phone #", "Cell Phone #")])
+        assert [r["status"] for r in out["results"]] == ["set", "set", "set"], out
+        vals = await ex.page.evaluate("() => ['ac','hp','cp'].map(i => document.getElementById(i).value)")
+        assert vals == ["281", "832-1205", "281-832-1205"], vals
+    finally:
+        await ex.close(close_browser=True)

@@ -1698,8 +1698,18 @@ class ToolDispatcher:
             text += "\n\nPAGE TEXT:\n" + snap.text[:6000]
         return {"outline": text}, None
 
-    def _resolve_value(self, answer_key: str | None, value: str | None, source: str | None, label: str) -> tuple[str | None, str, str | None]:
+    def _resolve_value(self, answer_key: str | None, value: str | None, source: str | None, label: str,
+                       ref: str | None = None) -> tuple[str | None, str, str | None]:
         """-> (value, source_tag, error)"""
+        if answer_key == "identity.phone" and ref and self.ctx.last_snapshot is not None:
+            # his number asked in parts: Westinghouse's 'Home Phone' after its 'Home/Area Code' box was filled with the whole
+            # number from identity.phone (2026-10-23)
+            item = self.ctx.last_snapshot.find(ref) or {}
+            part = "area" if phone.part_of(str(item.get("label") or label)) == "area" else \
+                "local" if phone.follows_area_code(self.ctx.last_snapshot.items, ref) else ""
+            a_ph = phone.part_answer(part) if part else None
+            if a_ph is not None and a_ph.has_value:
+                return str(a_ph.answer), f"standing:{a_ph.key}", None
         if answer_key and answer_key.startswith("background.certification") and OBTAINED_DATE.search(label or "") \
                 and citizenship_block(self.ctx.last_snapshot):
             # Westinghouse's export-control block ('Country 1 Name', 'Type of Status 1', 'Date Obtained 1') got his AWS
@@ -1938,7 +1948,8 @@ class ToolDispatcher:
                 val, src, err = "N/A", ("generated (an 'If yes' box whose question was answered No)" if followup_na
                                         else "generated (the field asks for N/A when it does not apply)"), None
             else:
-                val, src, err = self._resolve_value(f.get("answer_key"), f.get("value"), f.get("source"), f.get("label", ""))
+                val, src, err = self._resolve_value(f.get("answer_key"), f.get("value"), f.get("source"), f.get("label", ""),
+                                                    ref=f.get("ref"))
             if err:
                 results.append({"ref": f["ref"], "status": "failed", "error": err})
                 continue

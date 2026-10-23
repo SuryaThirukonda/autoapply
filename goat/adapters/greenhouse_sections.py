@@ -163,14 +163,18 @@ class GreenhouseSections(WorkdaySections):
         return self.report
 
 
+# a work entry's company box: Greenhouse 'Company name*', SuccessFactors '* Company Name' (stars and colons set aside)
+COMPANY_BOX = re.compile(r"^[\s*]*(company name|employer)[\s*:]*$", re.I)
+
+
 def is_employment_page(snap) -> bool:
-    return any(re.match(r"^(company name|employer)\*?$", (i.get("label") or "").strip(), re.I) for i in snap.items)
+    return any(COMPANY_BOX.match(i.get("label") or "") for i in snap.items)
 
 
 def review_gaps_from_snapshot(snap, company: str = "") -> list[str]:
     """Every stored work entry's company must be the value of some company box on the page."""
     from .workday_sections import _same_company, stored_work_entries
-    boxes = [str(i.get("value") or i.get("shown") or "") for i in snap.items if re.match(r"^(company name|employer)\*?$", (i.get("label") or "").strip(), re.I)]
+    boxes = [str(i.get("value") or i.get("shown") or "") for i in snap.items if COMPANY_BOX.match(i.get("label") or "")]
     if not boxes:
         return []
     return [f'work entry {e["n"]} ({e["company"]})' for e in stored_work_entries(company)

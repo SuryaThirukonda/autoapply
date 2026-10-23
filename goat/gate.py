@@ -480,12 +480,18 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
             "field from the stored answers (education.* / experience.work.N.*), then save the tile; a tile that matches none of "
             "his stored entries (Oracle's résumé import adds such tiles) is removed with its Delete button instead"
             for t, n in tiles[:4]])
-    # Greenhouse's single page: when it has an Employment section, every stored work entry must be in it.
-    if (portal or "").lower() == "greenhouse":
+    # Greenhouse's single page: when it has an Employment section, every stored work entry must be in it. So does
+    # SuccessFactors' Previous Employment: Westinghouse went in with four of his five entries after a blank row for his
+    # Rathinam Group entry was removed instead of filled (2026-10-23).
+    if (portal or "").lower() in ("greenhouse", "successfactors"):
         from .adapters.greenhouse_sections import review_gaps_from_snapshot
         missing = review_gaps_from_snapshot(snapshot, job.get("company", ""))
-        if missing:
+        if missing and (portal or "").lower() == "greenhouse":
             return GateResult("blocked", [f"the Employment section does not show {m}: call fill_sections, then submit again" for m in missing[:4]])
+        if missing:
+            return GateResult("blocked", [f"the Previous Employment section does not show {m}: click the section's Add button and "
+                                          "fill the new row from that stored entry (answer keys experience.work.N.company, .title, "
+                                          ".start, .end, .location, .description), then submit again" for m in missing[:4]])
     why = why_blocked(drop_stale_required(snapshot.errors, snapshot))
     reasons += why
 
