@@ -2450,6 +2450,16 @@ def test_a_judgment_on_a_ledger_answer_shows_the_resolved_value(store):
     assert unconf and "'No'" in ev and "ledger" in ev, ev
 
 
+def test_a_judgment_shows_the_question_his_stored_answer_answers(store):
+    """Cisco (2026-10-23): 'Office days per week' = '5 days in a week' was failed as unsupported against a bare 'Yes', whose
+    question reads '...including 5 days a week?'."""
+    from goat import answers
+    answers.save_answer("availability.in_office_schedule", "Yes", answer_type="choice", source="questionnaire",
+                        note="Can work in the office at the specified times, including 5 days a week?")
+    unconf, ev = answers.unconfirmed_source("judgment:availability.in_office_schedule", "Cisco", "workday")
+    assert unconf and "= 'Yes'" in ev and "including 5 days a week" in ev, ev
+
+
 @pytest.mark.asyncio
 async def test_another_sites_verification_mail_is_looked_past_before_parking(store):
     """Deutsche Bank (Recsolu, 2026-10-22): an Oracle tenant's day-old mail was the newest 'verify' email; the run was held

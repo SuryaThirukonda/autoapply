@@ -288,7 +288,10 @@ def unconfirmed_source(source: str | None, company: str = "", ats: str = "") -> 
                 val, why = None, ""
             if val:
                 shown = f"{val!r} ({why})" if why else repr(val)
-        return True, f"the agent picked this option for the stored answer {key} = {shown}"
+        # the question the stored answer answers: Cisco's 'Office days per week' = '5 days in a week' was failed as
+        # unsupported against a bare 'Yes', whose question reads "...including 5 days a week?" (2026-10-23)
+        asked = f" (his answer to: {str(a.note)[:200]!r})" if a.note else ""
+        return True, f"the agent picked this option for the stored answer {key} = {shown}{asked}"
     return True, ""
 
 
