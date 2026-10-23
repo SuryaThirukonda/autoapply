@@ -461,6 +461,14 @@ SIGN_IN_FAILED = re.compile(
 ACCOUNT_EXISTS = re.compile(
     r"(already (exists|registered|in use|been registered|associated with an account)|an account (with|for|using) this email|"
     r"email (address )?is already|you already have an account(?!\s*\?)|user already exists)", re.I)
+# A tenant's minimum password length: Red Hat's reset page 'A minimum of 14 characters', PIMCO 'at least 12 characters'.
+PW_MIN_LEN = re.compile(r"(?:minimum(?:\s+length)?(?:\s+of)?|at\s+least|no\s+fewer\s+than)\s*:?\s*(\d{1,2})\s*(?:or\s+more\s+)?char(?:acter)?s?\b|"
+                        r"\b(\d{1,2})\s*(?:or\s+more|\+)\s*char(?:acter)?s?\b", re.I)
+
+
+def password_min_length(text: str) -> int:
+    """The longest minimum password length a page states, else 0."""
+    return max((int(a or b) for a, b in PW_MIN_LEN.findall(text or "")), default=0)
 RESET_STEPS = ("sign-in with the universal password failed on this tenant: do the password reset. Click 'Forgot your password?' (or 'Reset password'), "
                "fill the email box from answer_key identity.email, click the send button, call open_password_reset_link, snapshot, call credentials "
                "mode 'set_password' with the new-password ref (confirm box via confirm_password_ref, email_ref ''), click the save button (on "
@@ -708,7 +716,11 @@ def combined_account_application(snap) -> bool:
 
 
 SELF_SATISFIED = re.compile(r"\b(this|that|it|the requirement|requirement) (is|was) (already )?(satisfied|met)\b|"
-                            r"\bso (this|it|that) is (satisfied|met|fine)\b|\b(he|surya) (meets|satisfies) (it|this|the requirement)\b", re.I)
+                            r"\bso (this|it|that) is (satisfied|met|fine)\b|\b(he|surya) (meets|satisfies) (it|this|the requirement)\b|"
+                            # Westinghouse (2026-10-23): "requiring C# or C++ coursework/project experience, and C++ is present,
+                            # so eligible; wait can't park?" stood as an eligibility hold
+                            r"\bso (he is |surya is |he's |he remains )?(eligible|qualified)\b|"
+                            r"\b(he|surya) (is|remains|appears|seems) (fully )?(eligible|qualified)\b", re.I)
 
 
 def never_tick(item: dict | None, val) -> str:
@@ -2738,7 +2750,37 @@ class ToolDispatcher:
                     out["next"] = ("the account was created (no 'already exists' message). Take a snapshot: if it is a Sign In page, "
                                    "call credentials login_universal and click Sign In; if it asks you to verify the email, call "
                                    "open_verification_link.")
+        # a Create Account or new-password form that is still there because the tenant wants a longer password
+        if self.ctx.creds_mode in ("create", "set_password") and not self.ctx.signed_in \
+                and re.search(r"create account|sign up|register|continue|submit|save|reset", f"{clicked} {label or ''}", re.I):
+            need = await self._password_too_short()
+            if need:
+                self._park_password_too_short(need)
         return out, None
+
+    async def _password_too_short(self) -> int:
+        """The minimum length an account form still on screen demands when PASSWORD_BIT is shorter, else 0. Red Hat's reset
+        and sign-up both refused it ('A minimum of 14 characters') and the run spent five minutes before a portal_error
+        hold; PIMCO (12) and Phillips 66 too (2026-10-23). Only lengths are compared: the password never leaves the harness."""
+        pw = SETTINGS.creds.universal_password or ""
+        if not pw:
+            return 0
+        probe = await self._account_probe()
+        if not probe or (probe.get("pw") or 0) < 1:
+            return 0
+        try:
+            text = await self.ctx.ex.page_text(8000)
+        except Exception:  # noqa: BLE001 - no page text: nothing known
+            return 0
+        if not re.search(r"password", text or "", re.I):
+            return 0
+        need = password_min_length(text)
+        return need if need > len(pw) else 0
+
+    def _park_password_too_short(self, need: int):
+        db.event(self.ctx.job_id, "creds:password_too_short", {"host": self.ctx.portal_host, "min": need})
+        raise Parked(f"credentials_unknown: {self.ctx.portal_host} requires a password of at least {need} characters and "
+                     "PASSWORD_BIT is shorter; Surya decides which password this tenant gets", "hold")
 
     async def _account_probe(self) -> dict:
         try:
@@ -3757,6 +3799,8 @@ class ToolDispatcher:
             # The harness sets the password and saves it itself: 7-Eleven, GDIT and Mastercard (2026-10-20) opened the link
             # and parked, taking Workday's 'Submit' (the reset page's save button) for the application's submit.
             done = await self._finish_password_reset()
+            if done.get("too_short"):
+                self._park_password_too_short(int(done["too_short"]))
             if done.get("same"):
                 return {"status": "already_set", "url": self.ctx.ex.url, "next": self.SAME_PASSWORD_NEXT}, None
             if done.get("saved"):
@@ -3953,6 +3997,10 @@ class ToolDispatcher:
             saved = not probe or (probe.get("pw") or 0) < 2 or sign_in_page(probe)
             if not saved and await self._reset_same_as_old():
                 return {"saved": False, "same": True}
+            if not saved:
+                need = await self._password_too_short()
+                if need:
+                    return {"saved": False, "too_short": need}
             db.event(self.ctx.job_id, "creds:reset_saved" if saved else "creds:reset_not_saved", {"host": self.ctx.portal_host})
             return {"saved": bool(saved)}
         except Exception as e:  # noqa: BLE001 - the model can still finish by hand

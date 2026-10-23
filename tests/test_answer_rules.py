@@ -2527,3 +2527,9 @@ def test_an_eligibility_reason_that_says_it_is_satisfied_is_no_hold():
     from goat.agent.tools import SELF_SATISFIED
     assert SELF_SATISFIED.search("requires U.S. person status; Surya is a U.S. citizen, so this is satisfied. Need inspect")
     assert not SELF_SATISFIED.search("The role requires pursuing a graduate degree, which Surya is not pursuing.")
+    # Westinghouse (2026-10-23)
+    assert SELF_SATISFIED.search("This is a software role requiring C# or C++ coursework/project experience, and C++ is present, "
+                                 "so eligible; wait can't park?")
+    assert SELF_SATISFIED.search("requires a 3.0 GPA; Surya is eligible with a 4.0")
+    assert not SELF_SATISFIED.search("requires an active Secret clearance before the start date; Surya is not eligible to start without one")
+    assert not SELF_SATISFIED.search("open only to students who are not eligible for other programs")
