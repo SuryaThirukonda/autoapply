@@ -133,7 +133,8 @@ def test_analyst_roles_beyond_data_analytics_are_rejected():
     def status(title):
         return triage.classify({"title": title, "url": "https://acme.wd1.myworkdayjobs.com/x", "category": "Software",
                                 "company_name": "Acme"}, r)[:2]
-    for t in ("Business Analyst Intern", "Portfolio Analytics Intern", "Cybersecurity Analyst Intern", "Technology Audit Summer Analyst"):
+    for t in ("Business Analyst Intern", "Portfolio Analytics Intern", "Technology Audit Summer Analyst"):
         assert status(t) == ("rejected", "title:analyst_not_data"), t
-    for t in ("Data Analytics Intern", "Supply Chain Data Analyst Intern", "Software Engineer, Analytics Platform", "Software Engineering Intern"):
+    for t in ("Data Analytics Intern", "Supply Chain Data Analyst Intern", "Software Engineer, Analytics Platform", "Software Engineering Intern",
+              "Cybersecurity Analyst Intern", "Intern - Security Analyst"):     # security analysts stay (Surya, 2026-10-23)
         assert status(t)[0] == "queued", t

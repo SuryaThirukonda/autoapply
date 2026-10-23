@@ -13,9 +13,9 @@
     "advanced_degree": "\\b(ph\\.?d|doctoral|master'?s|\\bms\\b|mba|graduate student|postdoc)\\b",
     "returning_intern": "\\breturn(ing)?\\b",
     "not_internship": "\\b(new grad|full[- ]time|apprentice)\\b",
-    "analyst_not_data": "^(?!.*\\b(data|software|developer|engineer\\w*|swe|sde|programm\\w*|machine learning)\\b).*\\b(analyst|analytics|analysis)\\b"
+    "analyst_not_data": "^(?!.*\\b(data|software|developer|engineer\\w*|swe|sde|programm\\w*|machine learning|cyber\\w*|security)\\b).*\\b(analyst|analytics|analysis)\\b"
   },
-  "_analyst_note": "Surya 2026-10-23: no analyst or analytics roles beyond data analytics. A title naming analyst, analytics or analysis without data or software engineering (business, portfolio, security, audit analysts) is rejected.",
+  "_analyst_note": "Surya 2026-10-23: no analyst or analytics roles beyond data analytics; cybersecurity and security analyst internships stay. A title naming analyst, analytics or analysis without data, software engineering or security (business, portfolio, audit analysts) is rejected.",
   "unsure_title_patterns": {
     "off_season_or_coop": "\\b(co-?op|fall|spring|winter|part[- ]time|2026)\\b",
     "hardware_role": "\\b(hardware|electrical|fpga|asic|rtl|verilog|vhdl|pcb|analog|circuit|chip design|silicon)\\b"
