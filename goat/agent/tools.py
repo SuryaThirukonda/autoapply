@@ -603,6 +603,26 @@ def citizenship_block(snap) -> bool:
     return any(CITIZENSHIP_LABEL.search(str(i.get("label") or "")) for i in (getattr(snap, "items", None) or []))
 
 
+CITIZENSHIP_DATE_KEY = "compliance.citizenship_obtained_date"
+
+
+def citizenship_date_answer():
+    """The date he obtained U.S. citizenship: his date of birth (a citizen by birth), stored on first use with that reason in
+    its note. Westinghouse's judge refused 'Date Obtained 1' filled from compliance.date_of_birth as unsupported, and the
+    operator answer holding the reason inside its value was typed whole into the date box (2026-10-23)."""
+    a = answers.get(CITIZENSHIP_DATE_KEY)
+    if a is not None and a.has_value:
+        return a
+    dob = answers.get("compliance.date_of_birth")
+    m = re.search(r"\d{1,2}/\d{1,2}/\d{4}", str(dob.answer)) if dob is not None and dob.has_value else None
+    if not m:
+        return None
+    answers.save_answer(CITIZENSHIP_DATE_KEY, m.group(0), answer_type="text", source="derived",
+                        note="He is a U.S. citizen by birth, so the date he obtained U.S. citizenship is his date of birth "
+                             "(Surya's answer for Westinghouse's 'Date Obtained', 2026-10-22)")
+    return answers.get(CITIZENSHIP_DATE_KEY)
+
+
 def sign_in_link(snap) -> dict | None:
     """A page's own 'Sign In' / 'Log In' link when no sign-in form is showing (no password box)."""
     items = getattr(snap, "items", None) or []
@@ -715,6 +735,8 @@ def combined_account_application(snap) -> bool:
     return len(filled) >= 6
 
 
+EXPRESSION_OF_INTEREST = re.compile(r"express(?:ing|ions?)\s+(?:of\s+)?interest|not\s+currently\s+(?:available|open)\s+for\s+hir|"
+                                    r"until\s+(?:it|the\s+requisition|the\s+position|the\s+role)\s+(?:formally\s+)?opens", re.I)
 SELF_SATISFIED = re.compile(r"\b(this|that|it|the requirement|requirement) (is|was) (already )?(satisfied|met)\b|"
                             r"\bso (this|it|that) is (satisfied|met|fine)\b|\b(he|surya) (meets|satisfies) (it|this|the requirement)\b|"
                             # Westinghouse (2026-10-23): "requiring C# or C++ coursework/project experience, and C++ is present,
@@ -1684,7 +1706,13 @@ class ToolDispatcher:
             # certification date twice (2026-10-21): that date is when he obtained the citizenship or status listed.
             return None, "", ("this 'Date Obtained' belongs to the citizenship / status block (Country N Name, Type of Status N): "
                               "it is the date he obtained that status, not a certification date. For a U.S. citizen by birth it is "
-                              "his date of birth: answer_key compliance.date_of_birth (Westinghouse asked Surya for it, 2026-10-22).")
+                              f"his date of birth: answer_key {CITIZENSHIP_DATE_KEY}.")
+        if answer_key in ("compliance.date_of_birth", "q.date_obtained_for_citizenship_status_u_s_citizenship") \
+                and OBTAINED_DATE.search(label or "") and citizenship_block(self.ctx.last_snapshot):
+            # the date with its reason (citizen by birth), so the fact check can see why a birth date is the date obtained
+            a_cd = citizenship_date_answer()
+            if a_cd is not None and a_cd.has_value:
+                return str(a_cd.answer), f"standing:{CITIZENSHIP_DATE_KEY}", None
         if answer_key == "identity.zip" and ZIP_EXTENSION.search(label or ""):
             # Berkshire Hathaway Energy's Oracle address got 77479 in 'Postal Code Extension' too (the judge caught it, 2026-10-22)
             return None, "", ("this box takes the 4-digit ZIP+4 extension, which is not stored: leave it blank (it is optional "
@@ -3368,6 +3396,12 @@ class ToolDispatcher:
                                "(never the Yes of willing-to-obtain)")
                 db.event(self.ctx.job_id, "answer:clearance_obstacle", {"question": question[:160]})
                 return out, None
+        if OBTAINED_DATE.search(question or "") and citizenship_block(self.ctx.last_snapshot):
+            a_cd = citizenship_date_answer()
+            if a_cd is not None and a_cd.has_value:
+                out = self._present(a_cd, via="citizenship_date_rule")
+                out["note"] = "the date he obtained his U.S. citizenship: a citizen by birth, so his date of birth"
+                return out, None
         hs = high_school_place(question) if not options else ""
         if hs:
             a_hs = high_school_full_answer() if hs == "full" else answers.get("education.high_school_city")
@@ -3839,6 +3873,17 @@ class ToolDispatcher:
         first), each through choose or fill_batch. Returns 'label = value' for each one set."""
         done: list[str] = []
         snap = self.ctx.last_snapshot
+        # A label the page repeats belongs to one row of a repeated section (each work entry's Company Name, Title, Start
+        # Date): a lookup by its words cannot tell which entry the row is for. Westinghouse's new row for his Rathinam
+        # Group entry got Southwest Airlines and his internship start date 05/18/2027 (2026-10-23). Such fields are only
+        # kept when their value already is a stored answer; filling them is the model's (or a section filler's) job.
+        def _texty(i: dict) -> bool:      # options ('Yes', 'No') repeat by nature; their question is the group
+            return i.get("tag") != "toggle" and (i.get("type") or "").lower() not in ("radio", "checkbox")
+        seen: dict[str, int] = {}
+        for i in (snap.items if snap else []):
+            if _texty(i):
+                k = answers.norm(str(i.get("label") or ""))
+                seen[k] = seen.get(k, 0) + 1
         for r in reasons or []:
             m = _EMPTY_REQ.match(str(r)) or _UNSOURCED.match(str(r))
             if not m:
@@ -3846,6 +3891,9 @@ class ToolDispatcher:
             ref, label = m.group("ref"), m.group("label").strip(" *:")
             item = snap.find(ref) if snap else None
             if item is None or (item.get("type") or "").lower() in ("file", "password"):
+                continue
+            repeated = _texty(item) and seen.get(answers.norm(str(item.get("label") or label)), 0) > 1
+            if repeated and m.re is _EMPTY_REQ:
                 continue
             if m.re is _UNSOURCED:
                 # a value a previous attempt left: when it IS a stored answer, it is recorded as that answer; otherwise
@@ -3899,6 +3947,8 @@ class ToolDispatcher:
                     if len(done) >= 12:
                         break
                     continue
+            if repeated:
+                continue
             res, _ = await self.t_lookup_answer(label, [], None, ref)
             key = (res or {}).get("key") if isinstance(res, dict) and not res.get("miss") else None
             a = answers.get(key, self.ctx.job.get("company", ""), self.ctx.portal) if key else None
@@ -4619,6 +4669,15 @@ class ToolDispatcher:
                              + ("This page has the Submit button: call submit now." if done else "Continue the application.")}, None
         # an eligibility park whose own words say the requirement is met (Sierra Space, 2026-10-22: "requires U.S. person
         # status; Surya is a U.S. citizen, so this is satisfied") is refused whatever the park count
+        # A requisition that collects expressions of interest until it formally opens rules nobody out: applying is how
+        # interest is expressed (Smith+Nephew's three software internships were held as eligibility, 2026-10-23).
+        if low.startswith("eligibility") and EXPRESSION_OF_INTEREST.search(reason) and not self.DISQUALIFIERS.search(non_grad) \
+                and self.ctx.control_failures.get("park:interest", 0) < 2:
+            self.ctx.control_failures["park:interest"] = self.ctx.control_failures.get("park:interest", 0) + 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "expression of interest"})
+            return {"error": "not parked: a posting that takes expressions of interest until it formally opens is applied to like "
+                             "any other (the application is the expression of interest), and nothing in it rules Surya out. "
+                             "Click Apply and fill the application."}, None
         if low.startswith("eligibility") and SELF_SATISFIED.search(reason) and self.ctx.control_failures.get("park:self_satisfied", 0) < 3:
             self.ctx.control_failures["park:self_satisfied"] = self.ctx.control_failures.get("park:self_satisfied", 0) + 1
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "says it is satisfied"})
