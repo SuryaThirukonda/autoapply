@@ -92,3 +92,22 @@ async def test_an_expression_of_interest_posting_is_applied_to(store):
     out, _ = await d.t_park("eligibility: The posting states that the position is not currently available for hiring and is only "
                             "accepting expressions of interest until it formally opens.")
     assert "expression of interest" in out["error"], out
+
+
+@pytest.mark.asyncio
+async def test_an_eligibility_hold_quoting_years_the_posting_never_states_is_refused(store):
+    """Cisco 'Embedded Systems I' (2026-10-23) was held for '2 years of work experience', a rule of its '... II' siblings."""
+    from goat.agent.tools import posting_states_years
+    assert posting_states_years(2, "An undergraduate degree program with 2 years of work experience")
+    assert posting_states_years(2, "2+ years of experience with embedded systems")
+    assert posting_states_years(2, "two years of industry experience") and posting_states_years(3, "3-5 years")
+    assert not posting_states_years(2, "Currently enrolled in an undergraduate degree program. Proficient in C.")
+    d, ctx = _dispatcher(_job())
+    ctx.posting_text = "Minimum Qualifications: Currently enrolled in an undergraduate degree program. Proficient in C."
+
+    async def page_text(n=0):
+        return "Software Engineer Embedded Systems I (Intern) Apply"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("eligibility: Cisco requires undergraduate applicants to have 2 years of work experience; Surya's "
+                            "documented professional experience does not meet that minimum.")
+    assert "does not state" in out["error"], out

@@ -735,6 +735,17 @@ def combined_account_application(snap) -> bool:
     return len(filled) >= 6
 
 
+_NUM_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
+YEARS_CLAIM = re.compile(r"\b(\d{1,2})\+?\s*(?:years?|yrs?)\b", re.I)
+
+
+def posting_states_years(n: int, text: str) -> bool:
+    """The text names n years ('2 years', '2+ years', 'two years', '2-3 years')."""
+    word = _NUM_WORDS.get(n, str(n))
+    return bool(re.search(rf"(?<![\d.]){n}\s*\+?\s*(?:-\s*\d+\s*)?(?:years?|yrs?)\b|\b{word}\s*(?:\(\s*{n}\s*\)\s*)?\+?\s*years?\b",
+                          text or "", re.I))
+
+
 EXPRESSION_OF_INTEREST = re.compile(r"express(?:ing|ions?)\s+(?:of\s+)?interest|not\s+currently\s+(?:available|open)\s+for\s+hir|"
                                     r"until\s+(?:it|the\s+requisition|the\s+position|the\s+role)\s+(?:formally\s+)?opens", re.I)
 SELF_SATISFIED = re.compile(r"\b(this|that|it|the requirement|requirement) (is|was) (already )?(satisfied|met)\b|"
@@ -4678,6 +4689,15 @@ class ToolDispatcher:
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "no requirement named"})
             return {"error": "not parked: an eligibility hold must quote the posting's requirement he does not meet, and this "
                              "reason names none. If nothing in the posting rules him out, continue the application."}, None
+        # A number of years the posting itself never states: Cisco's 'Embedded Systems I' was held for "2 years of work
+        # experience", a rule only its sibling postings ('... II') carry (2026-10-23).
+        m_years = YEARS_CLAIM.search(reason)
+        if low.startswith("eligibility") and m_years and self.ctx.control_failures.get("park:years_not_in_posting", 0) < 2 \
+                and not posting_states_years(int(m_years.group(1)), f"{self.ctx.posting_text or ''} {page_now or ''}"):
+            self.ctx.control_failures["park:years_not_in_posting"] = self.ctx.control_failures.get("park:years_not_in_posting", 0) + 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "years not in this posting"})
+            return {"error": f"not parked: this posting does not state {m_years.group(0)!r} anywhere (a sibling posting may); an "
+                             "eligibility hold quotes THIS posting's requirement. Continue the application."}, None
         # A skill or technology the posting asks for is no eligibility rule (Motorola, 2026-10-20: "requires Android Studio and
         # Android SDK knowledge, which is not in Surya's stored profile"): he applies, and his résumé shows what he has.
         if low.startswith("eligibility") and self.SKILL_ONLY.search(reason) and not self.HARD_REQUIREMENT.search(reason) \
