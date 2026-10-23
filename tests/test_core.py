@@ -123,3 +123,17 @@ def test_an_instruction_reply_is_no_value(tmp_path):
         assert answers.INSTRUCTION_REPLY.match(reply), reply
     for value in ("Retry Labs", "Jane Smith", "No", "None", "Wait staff", "jsmith@example.com"):
         assert not answers.INSTRUCTION_REPLY.match(value), value
+
+
+def test_analyst_roles_beyond_data_analytics_are_rejected():
+    """Surya (2026-10-23): no analytics roles beyond data analytics; business analyst and portfolio analytics are not his."""
+    from goat import triage
+    r = triage.rules()
+
+    def status(title):
+        return triage.classify({"title": title, "url": "https://acme.wd1.myworkdayjobs.com/x", "category": "Software",
+                                "company_name": "Acme"}, r)[:2]
+    for t in ("Business Analyst Intern", "Portfolio Analytics Intern", "Cybersecurity Analyst Intern", "Technology Audit Summer Analyst"):
+        assert status(t) == ("rejected", "title:analyst_not_data"), t
+    for t in ("Data Analytics Intern", "Supply Chain Data Analyst Intern", "Software Engineer, Analytics Platform", "Software Engineering Intern"):
+        assert status(t)[0] == "queued", t
