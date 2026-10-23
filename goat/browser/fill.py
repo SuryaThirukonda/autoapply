@@ -230,6 +230,18 @@ async def fill_batch(ex: Executor, fields: list[dict]) -> list[FieldResult]:
     if not fields:
         return []
     fields = await _month_layouts(ex, fields)
+    strings = [str(f["ref"]) for f in fields if isinstance(f.get("value"), str) and f["value"].strip()]
+    try:
+        places = set(await ex.eval(JS_LEVER_LOCATION_REFS, strings) or []) if strings else set()
+    except Exception:
+        places = set()
+    if places:
+        # Lever's location box: a place picked from its search, never typed text (Palantir, 2026-10-22)
+        picked = {str(f["ref"]): await _choose_lever_location(ex, str(f["ref"]), [f["value"]]) for f in fields
+                  if str(f["ref"]) in places}
+        rest = iter(await fill_batch(ex, [f for f in fields if str(f["ref"]) not in places]))
+        return [picked[str(f["ref"])] or FieldResult(str(f["ref"]), False, "", "not Lever's location box")
+                if str(f["ref"]) in places else next(rest) for f in fields]
     if needs_real_typing(ex):
         typed, clicked, rest = [], [], []
         for f in fields:
@@ -1210,6 +1222,92 @@ async def _choose_pcty(ex: Executor, ref: str, wants: list[str]) -> FieldResult 
     return FieldResult(ref, False, got, f"picked '{pick['text']}' but the box shows '{got}'")
 
 
+JS_LEVER_LOCATION = js._COMMON_WRAP("""
+  const el = findRef(ref);
+  if (!el || !el.matches || !el.matches('input.location-input, input[data-qa="location-input"]')) return null;
+  const field = el.closest('.application-field') || el.parentElement;
+  const hidden = field && field.querySelector('input[name="selectedLocation"]');
+  if (!hidden) return null;
+  const rows = Array.from(field.querySelectorAll('.dropdown-results .dropdown-location'))
+    .map(r => ({ id: r.id, text: (r.textContent || '').trim() }));
+  const none = field.querySelector('.dropdown-no-results');
+  return { shown: el.value || '', selected: hidden.value || '', rows, none: !!(none && none.offsetParent) };
+""", "ref")
+JS_LEVER_LOCATION_REFS = js._COMMON_WRAP("""
+  return refs.filter(r => { const el = findRef(r);
+    return !!(el && el.matches && el.matches('input.location-input, input[data-qa="location-input"]')); });
+""", "refs")
+
+
+def place_variants(wants: list[str]) -> list[str]:
+    """'Sugar Land, Texas, United States' -> also 'Sugar Land, TX, USA', '... TX, United States' and 'Sugar Land, TX':
+    place pickers spell the state and the country their own way."""
+    from ..agent.tools import _US_STATES
+    by_name = {n.lower(): c for c, n in _US_STATES.items()}
+    out = [w for w in wants if w]
+    for w in list(out):
+        parts = [p.strip() for p in w.split(",")]
+        if len(parts) < 2 or not parts[0]:
+            continue
+        code = by_name.get(parts[1].lower()) or (parts[1].upper() if parts[1].upper() in _US_STATES else "")
+        for v in ((f"{parts[0]}, {code}, USA", f"{parts[0]}, {code}, United States", f"{parts[0]}, {code}") if code else ()):
+            if v not in out:
+                out.append(v)
+    return out
+
+
+async def _choose_lever_location(ex: Executor, ref: str, wants: list[str]) -> FieldResult | None:
+    """Lever's 'Current location' takes only a place picked from its own search: typing 'Sugar Land' lists 'Sugar Land,
+    TX, USA', and the click fills the hidden selectedLocation. Typing the whole 'Sugar Land, TX, United States' finds
+    nothing, Lever empties the box, and the gate refused the page (Palantir, 2026-10-22). None when the box is not Lever's."""
+    try:
+        host = await ex.eval(JS_LEVER_LOCATION, ref)
+    except Exception:
+        host = None
+    if not isinstance(host, dict):
+        return None
+    places = place_variants(wants)
+    shown = str(host.get("shown") or "")
+    if host.get("selected") and best_option([{"text": shown}], places) is not None:
+        return FieldResult(ref, True, shown)
+    box = ex.page.locator(f'[data-goat-ref="{ref}"]').first
+    queries = list(dict.fromkeys(w.split(",")[0].strip() for w in wants if w and w.split(",")[0].strip()))
+    listed: list[dict] = []
+    for q in queries[:3]:
+        try:
+            await box.click(timeout=5000)
+            await ex.page.keyboard.press("Control+a")
+            await ex.page.keyboard.press("Backspace")
+            await ex.page.keyboard.type(q[:60], delay=50)
+        except Exception as e:
+            return FieldResult(ref, False, shown, f"could not type into Lever's location box: {type(e).__name__}")
+        pick = None
+        for _ in range(24):                 # its search answers in about a second
+            await asyncio.sleep(0.25)
+            got = await ex.eval(JS_LEVER_LOCATION, ref)
+            host = got if isinstance(got, dict) else {}
+            listed = host.get("rows") or []
+            pick = best_option([{"text": r["text"]} for r in listed], places) if listed else None
+            if pick is not None or host.get("none"):
+                break
+        if pick is None:
+            continue
+        row_id = next(r["id"] for r in listed if r["text"] == pick["text"])
+        try:
+            await ex.page.locator(f'[id="{row_id}"]').first.click(timeout=5000)
+        except Exception:
+            await ex.page.evaluate("(id) => { const r = document.getElementById(id); if (r) r.click(); }", row_id)
+        for _ in range(12):
+            await asyncio.sleep(0.25)
+            got = await ex.eval(JS_LEVER_LOCATION, ref)
+            host = got if isinstance(got, dict) else {}
+            if host.get("selected"):
+                return FieldResult(ref, True, str(host.get("shown") or pick["text"]))
+        return FieldResult(ref, False, str(host.get("shown") or ""), f"picked '{pick['text']}' but Lever kept no location")
+    return FieldResult(ref, False, str(host.get("shown") or ""),
+                       f"Lever's location search offered no match for {queries[:3]}; it listed {[r['text'] for r in listed][:8]}")
+
+
 async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bool = True) -> FieldResult:
     """Pick an option in a custom dropdown / combobox / autocomplete.
 
@@ -1226,6 +1324,9 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
     pcty = await _choose_pcty(ex, ref, wants)
     if pcty is not None:
         return pcty
+    lever = await _choose_lever_location(ex, ref, wants)
+    if lever is not None:
+        return lever
     if info.get("tag") != "select":
         try:
             inner = await ex.eval(JS_LISTBOX_WRAPPER_INPUT, ref)

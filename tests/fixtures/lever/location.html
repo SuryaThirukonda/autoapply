@@ -1,0 +1,53 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Lever location (fixture)</title></head>
+<body>
+<!-- Lever's structured 'Current location' question as Palantir's form drew it on 2026-10-22: a text box whose search
+     lists places, a hidden selectedLocation that only a click on a listed place fills, and text that names no place
+     emptied when the box loses focus. The search here answers after 300 ms like Lever's searchLocations. -->
+<form>
+<ul>
+  <li class="application-question" data-qa="structured-contact-location-question"><label>
+    <div class="application-label">Current location <span class="required">&#x2731;</span></div>
+    <div class="application-field">
+      <input class="location-input" data-qa="location-input" id="location-input" type="text" maxlength="100" name="location" required>
+      <input id="selected-location" type="hidden" name="selectedLocation" value="">
+      <div class="dropdown-container" style="display: none;">
+        <div class="dropdown-results width-full cursor-pointer"></div>
+        <div class="dropdown-no-results" style="display: none;">No location found. Try entering a different location</div>
+      </div>
+    </div></label></li>
+  <li class="application-question"><label>
+    <div class="application-label">Full name <span class="required">&#x2731;</span></div>
+    <div class="application-field"><input type="text" name="name" id="name" required></div></label></li>
+</ul>
+</form>
+<script>
+const PLACES = ["Sugar Land, TX, USA", "Sugarland, MD, USA", "Austin, TX, USA"];
+const inp = document.getElementById('location-input'), hid = document.getElementById('selected-location');
+const box = document.querySelector('.dropdown-container'), res = document.querySelector('.dropdown-results');
+const none = document.querySelector('.dropdown-no-results');
+const squash = s => s.toLowerCase().replace(/\s+/g, '');
+let timer = null;
+inp.addEventListener('input', () => {
+  hid.value = '';
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    const q = squash(inp.value.trim());
+    const hits = q.length < 2 ? [] : PLACES.filter(p => squash(p).startsWith(q));
+    res.innerHTML = '';
+    hits.forEach((p, i) => {
+      const d = document.createElement('div');
+      d.className = 'break-word dropdown-location width-full py1 px2';
+      d.id = 'location-' + i;
+      d.textContent = p;
+      d.addEventListener('mousedown', e => e.preventDefault());
+      d.addEventListener('click', () => { inp.value = p; hid.value = JSON.stringify({ name: p, id: 'x' + i }); box.style.display = 'none'; });
+      res.appendChild(d);
+    });
+    none.style.display = hits.length ? 'none' : '';
+    box.style.display = '';
+  }, 300);
+});
+inp.addEventListener('blur', () => setTimeout(() => { if (!hid.value) { inp.value = ''; box.style.display = 'none'; } }, 200));
+</script>
+</body></html>
