@@ -899,7 +899,12 @@ JS_PAGE_ERRORS = r"""
             if (!c || !txt(c)) { c = null; let p = el.parentElement; for (let i = 0; i < 5 && p; i++, p = p.parentElement) { const t = txt(p); if (t && t.length < 240) { c = p; break; } } }
             let shown = c ? txt(c) : '';
             if (c && shown) { for (const l of c.querySelectorAll('label, legend')) { const lt = txt(l); if (lt) shown = shown.replace(lt, ''); } }
-            const own = nearestLabel(el) || '';
+            // the box's own question by aria-labelledby or <label for>: the nearest text can be the picked chip itself
+            // (Twitch's citizenship multi-select, 2026-10-22: the chip 'United States of America (USA)' was taken for the
+            // label and cut from the shown text, so the pick read as empty and blocked every submit)
+            const labelled = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+              .map(i => { const n = document.getElementById(i); return n ? txt(n) : ''; }).join(' ').trim();
+            const own = labelled || (el.labels && el.labels.length ? txt(el.labels[0]) : '') || nearestLabel(el) || '';
             if (shown && own && shown.trim().startsWith(own)) shown = shown.trim().slice(own.length);
             shown = shown.replace(/^[\s*:]+|[\s*:]+$/g, '').trim();
             if (shown && !/^(select one|select\.\.\.|select|choose one|choose|search|no selection)$/i.test(shown)) empty = false;

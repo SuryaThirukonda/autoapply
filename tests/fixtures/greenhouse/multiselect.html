@@ -1,0 +1,39 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Greenhouse multi-select (fixture)</title></head>
+<body>
+<!-- Greenhouse's job-boards react-select multi-selects as Twitch's form drew them on 2026-10-22: a picked country is a chip
+     in the value container while the combobox input stays empty. The first question is picked, the second is not. -->
+<form>
+  <div class="select__container">
+    <label id="question_1[]-label" for="question_1[]" class="label select__label">In which country/region do you have citizenship?<span aria-hidden="true">*</span></label>
+    <div class="select-shell"><div>
+      <div class="select__control">
+        <div class="select__value-container select__value-container--is-multi select__value-container--has-value">
+          <div class="select__multi-value"><div class="select__multi-value__label">United States of America (USA)</div>
+            <div role="button" class="select__multi-value__remove" aria-label="Remove United States of America (USA)"><button type="button" aria-label="Remove selection"></button></div></div>
+          <div class="select__input-container" data-value="">
+            <input class="select__input" id="question_1[]" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false"
+                   aria-haspopup="true" aria-required="true" aria-labelledby="question_1[]-label" value="" style="width: 40px">
+          </div>
+        </div>
+        <div class="select__indicators"><button type="button" aria-label="Toggle flyout"></button></div>
+      </div>
+    </div></div>
+  </div>
+  <div class="select__container">
+    <label id="question_2-label" for="question_2" class="label select__label">Will you require sponsorship?<span aria-hidden="true">*</span></label>
+    <div class="select-shell"><div>
+      <div class="select__control">
+        <div class="select__value-container">
+          <div class="select__placeholder">Select...</div>
+          <div class="select__input-container" data-value="">
+            <input class="select__input" id="question_2" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false"
+                   aria-haspopup="true" aria-required="true" aria-labelledby="question_2-label" value="" style="width: 40px">
+          </div>
+        </div>
+        <div class="select__indicators"><button type="button" aria-label="Toggle flyout"></button></div>
+      </div>
+    </div></div>
+  </div>
+</form>
+</body></html>
