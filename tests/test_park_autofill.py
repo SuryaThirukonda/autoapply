@@ -66,3 +66,40 @@ async def test_an_incomplete_form_park_naming_a_stopper_word_is_still_checked(st
         assert await ex.page.evaluate("() => document.getElementById('q1').value") == "No"
     finally:
         await ex.close(close_browser=True)
+
+
+LEFT = """<!doctype html><html><body style="margin:20px">
+<form onsubmit="event.preventDefault();">
+  <label for="d1">Key Responsibilities</label><input id="d1" type="text" maxlength="4000" value="&#8226; Launched a live manuscript-formatting beta; 40+ journal profiles &#8226; 200+ conversions"><br>
+  <label for="ph">* Home Phone #</label><input id="ph" type="text" value="8321205"><br>
+  <label for="nick">Nickname</label><input id="nick" type="text" value="Captain Hook"><br>
+  <button type="submit">Submit Application</button>
+</form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_values_an_earlier_attempt_left_are_recorded_when_they_are_his_answers(store, tmp_path):
+    """Westinghouse (SuccessFactors, 2026-10-23): after sign-in the form still held the last attempt's work descriptions and
+    phone number, all his own stored values; the gate refused them as unsourced (a description holding ';' never matches its
+    split stored variants, a phone box holds only the local part) and the run stopped."""
+    answers.save_answer("experience.work.1.description", "• Launched a live manuscript-formatting beta; 40+ journal profiles \\n• 200+ conversions",
+                        answer_type="text", source="questionnaire")
+    answers.save_answer("identity.phone", "281-832-1205", answer_type="text", source="questionnaire")
+    page = tmp_path / "left.html"
+    page.write_text(LEFT, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = await snapshot.take(ex)
+        out, _ = await d.t_park("needs_you: the form still shows values from an earlier attempt")
+        assert "experience.work.1.description" in out["error"] and "identity.phone" in out["error"], out
+        assert "Nickname" not in out["error"]                     # not his answer: left for the model
+        srcs = {r[0]: r[1] for r in db.connect().execute("SELECT field_label, source FROM decisions WHERE job_id=?", (ctx.job_id,))}
+        assert srcs.get("Key Responsibilities") == "standing:experience.work.1.description"
+        assert srcs.get("Home Phone #") == "standing:identity.phone"
+    finally:
+        await ex.close(close_browser=True)

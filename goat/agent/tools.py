@@ -733,6 +733,33 @@ def never_tick(item: dict | None, val) -> str:
 
 
 _EMPTY_REQ = re.compile(r"^empty_required: (?P<label>.+?) \((?P<type>[a-z-]+)\) ref=(?P<ref>e\d+)")   # 'select-one' too
+_UNSOURCED = re.compile(r"^value on page with no sourced decision this attempt: \[(?P<ref>e\d+)\] (?P<label>.*?) = ['\"]")
+
+
+def standing_key_for_value(value: str, label: str = "") -> str | None:
+    """The stored answer a value already on the page IS (a previous attempt left it): his work-entry description word for
+    word, or cut to the box's length; another distinctive stored value; the local part of his phone number."""
+    from ..adapters import _standing_values
+    nv = answers.norm(value)
+    if len(nv) < 4:
+        return None
+    if re.search(r"\bphone\b|\bnumber\b", label or "", re.I):
+        digits = re.sub(r"\D", "", value or "")
+        a = answers.get("identity.phone")
+        if a is not None and a.has_value and len(digits) >= 7 and re.sub(r"\D", "", str(a.answer)).endswith(digits):
+            return "identity.phone"
+    key = _standing_values().get(nv)
+    if key and not key.startswith("self_id."):
+        return key
+    # the stored descriptions separate their bullets with a literal backslash-n, which becomes a real line break when typed
+    # (Westinghouse's boxes held his text with four characters fewer, 2026-10-23)
+    nv = answers.norm((value or "").replace("\\n", "\n"))
+    for r in db.connect().execute("SELECT key, answer FROM answers WHERE superseded_by IS NULL AND approved=1 AND answer IS NOT NULL "
+                                  "AND scope='global' AND key LIKE 'experience.work.%'"):
+        na = answers.norm(str(r["answer"]).replace("\\n", "\n"))
+        if na == nv or (len(nv) >= 40 and na.startswith(nv)):
+            return str(r["key"])
+    return None
 
 
 def stored_for_blockers(reasons: list[str], company: str = "", portal: str = "") -> list[str]:
@@ -3692,13 +3719,28 @@ class ToolDispatcher:
         done: list[str] = []
         snap = self.ctx.last_snapshot
         for r in reasons or []:
-            m = _EMPTY_REQ.match(str(r))
+            m = _EMPTY_REQ.match(str(r)) or _UNSOURCED.match(str(r))
             if not m:
                 continue
             ref, label = m.group("ref"), m.group("label").strip(" *:")
             item = snap.find(ref) if snap else None
             if item is None or (item.get("type") or "").lower() in ("file", "password"):
                 continue
+            if m.re is _UNSOURCED:
+                # a value a previous attempt left: when it IS a stored answer, it is recorded as that answer; otherwise
+                # it is re-set from the question's own answer below (a self-identification value through its rules)
+                try:
+                    info = await self.ctx.ex.read_ref(ref)
+                except Exception:  # noqa: BLE001
+                    info = {}
+                val = str(info.get("value") or info.get("shown") or "")
+                k_val = standing_key_for_value(val, label) if val else None
+                if k_val:
+                    records.record_decision(self.ctx.job_id, self.ctx.page_no, label, val[:300], f"standing:{k_val}", ref)
+                    done.append(f"{label[:50]} kept ({k_val})")
+                    if len(done) >= 12:
+                        break
+                    continue
             res, _ = await self.t_lookup_answer(label, [], None, ref)
             key = (res or {}).get("key") if isinstance(res, dict) and not res.get("miss") else None
             a = answers.get(key, self.ctx.job.get("company", ""), self.ctx.portal) if key else None
@@ -4524,7 +4566,8 @@ class ToolDispatcher:
                 # the blockers his stored answers already cover, with their keys: Westinghouse's run parked 'no_standing_answer'
                 # five times in two minutes over 'Are you 18 years or older?' and the like (2026-10-21)
                 known = stored_for_blockers(gate.reasons, self.ctx.job.get("company", ""), self.ctx.portal)
-                if known and self.ctx.control_failures.get("park:autofill", 0) < 3:
+                left_over = any(_UNSOURCED.match(str(r)) for r in gate.reasons)    # values an earlier attempt left
+                if (known or left_over) and self.ctx.control_failures.get("park:autofill", 0) < 3:
                     # L3Harris (2026-10-23): the run filled one or two such fields between parks and gave up on a long
                     # SuccessFactors form with ten covered blockers left. The harness fills them itself, with the tools the
                     # model would use; the gate and the checks before submit still judge the result.
