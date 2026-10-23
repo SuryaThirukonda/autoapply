@@ -476,6 +476,31 @@ CREATE_STEPS = ("no reset email came, so this tenant most likely has no account 
 # 'An error occurred while processing your request' when it is opened again (Phillips 66, 2026-10-21).
 SESSION_URL = re.compile(r"[?&;](_s[.]crb|_s[.]token|jsessionid|sessionid)=", re.I)
 
+# Compare a password box and its confirm box in the page (the text never comes back), and when they differ, set the
+# confirm box from the password box through the native setter so a React form takes it.
+JS_MATCH_CONFIRM = """([a, b]) => {
+  const q = (r) => document.querySelector('[data-goat-ref="' + r + '"]');
+  const x = q(a), y = q(b);
+  if (!x || !y || !x.value) return 'differs';
+  if (x.value === y.value) return 'same';
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  y.focus(); set.call(y, x.value);
+  for (const t of ['input', 'change']) y.dispatchEvent(new Event(t, { bubbles: true }));
+  y.blur();
+  return x.value === y.value ? 'repaired' : 'differs';
+}"""
+
+
+async def match_confirm_password(ex, password_ref: str, confirm_ref: str) -> str:
+    """'same', 'repaired' or 'differs' (or 'unknown' when the page could not be read): the confirm box against the
+    password box. Micron's and GDIT's reset pages (2026-10-23) held 13 characters in 'Verify New Password' to the
+    password's 10 and refused the reset as 'passwords do not match' three times: a retype had been appended to a partial
+    first one."""
+    try:
+        return str(await ex.page.evaluate(JS_MATCH_CONFIRM, [password_ref, confirm_ref]))
+    except Exception:  # noqa: BLE001 - the portal's own check still stands
+        return "unknown"
+
 
 def way_back_url(*urls: str) -> str:
     """The first of these addresses that can be opened again (it carries no session crumb)."""
@@ -3148,6 +3173,9 @@ class ToolDispatcher:
                     if attempt == 0:
                         await ex.focus_ref(ref)
                     else:
+                        # a retry starts from an empty box: Ctrl+A missed once and the retype was appended, so Micron's
+                        # and GDIT's 'Verify New Password' held 13 characters to the password's 10 (2026-10-23)
+                        await loc.fill("", timeout=3000)
                         await loc.focus(timeout=3000)
                     await ex.page.keyboard.press("Control+a")
                     await ex.page.keyboard.press("Backspace")
@@ -3181,10 +3209,15 @@ class ToolDispatcher:
         status = await asyncio.to_thread(self.ctx.creds.fill_credentials, host, email, type_email, type_pw, mode)
         if mode == "set_password" and status == "exists_unknown":
             return {"status": "no_password_configured", "hint": "PASSWORD_BIT is not set; park with credentials_unknown"}, None
+        confirm = ""
         if confirm_password_ref and status.startswith("filled"):
             def type_pw2(v: str) -> None:
                 asyncio.run_coroutine_threadsafe(_type_into(confirm_password_ref, v, True), loop).result(30)
             await asyncio.to_thread(self.ctx.creds.fill_confirm_password, host, type_pw2)
+            if password_ref:
+                confirm = await match_confirm_password(ex, password_ref, confirm_password_ref)
+                if confirm in ("repaired", "differs"):
+                    db.event(self.ctx.job_id, "creds:confirm_password", {"host": host, "result": confirm})
         self.ctx.budget.step()
         records.record_decision(self.ctx.job_id, self.ctx.page_no, f"account {mode} ({host})", "(set)", "policy:may_create_accounts", password_ref)
         if status == "exists_unknown":
@@ -3205,6 +3238,10 @@ class ToolDispatcher:
                 info = {}
             if info.get("found"):
                 out[name] = "set" if info.get("value") else "empty"
+        if confirm == "repaired":
+            out["confirm_box"] = "set (it differed from the password box and was set again to match)"
+        elif confirm == "differs":
+            out["confirm_box"] = "differs from the password box: call credentials again on this form"
         return out, None
 
     async def t_enter_email_code(self, code_refs: list[str]):
