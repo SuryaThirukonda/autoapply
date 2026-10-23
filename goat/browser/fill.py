@@ -1021,6 +1021,15 @@ async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bo
             pass
     wants = list(wants) + [x for x in extra if x not in wants]
     r = await _choose(ex, ref, wants, type_to_filter=type_to_filter)
+    if not r.ok:
+        # the field already holds one of his later preferences and the list could not be worked: that value stands
+        try:
+            info = await ex.read_ref(ref)
+            held = str(info.get("shown") or info.get("value") or "").strip()
+        except Exception:
+            held = ""
+        if held and not PLACEHOLDER.match(held) and any(_norm(w) and _norm(held) == _norm(w) for w in wants):
+            return FieldResult(r.ref or ref, True, held)
     if autosaves(ex):
         await ex.wait_saves()
     if r.ok and NO_RESULTS.match(r.readback or ""):
@@ -1418,12 +1427,17 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
     # 0. already showing the wanted option: nothing to click. A decline-led self-identification chain keeps a value only
     #    when it is a decline: LSEG's ethnicity list still held 'Asian (United States of America)' from an earlier attempt,
     #    that matched the chain's fallback, and the list was never opened to look for its decline option (2026-10-21).
+    #    Only his first preference is kept unopened: Carrier's 'academic standing at assignment start' held 'Senior' (a
+    #    fallback of his 'Junior; ...; Senior') from an earlier pick and was never opened to find Junior (2026-10-23).
+    #    choose() keeps a later preference when the list cannot be opened.
     decline_led = bool(wants) and _norm(wants[0]) == "decline"
-    for w in wants:
+    for i, w in enumerate(wants):
         if _norm(w) and not PLACEHOLDER.match(before or "") and _norm(before) == _norm(w):
             if decline_led and not DECLINE_OPT.search(before or ""):
                 break
-            return FieldResult(ref, True, before)
+            if i == 0 or not any(_norm(x) for x in wants[:i]):
+                return FieldResult(ref, True, before)
+            break
 
     # 1. react-select through its own props: list its options, pick by OUR preference order (the first
     #    want that is offered wins, never the first option in page order), then select that exact label.

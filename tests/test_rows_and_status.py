@@ -157,3 +157,38 @@ async def test_technology_experience_is_no_eligibility_rule(store):
     out, _ = await d.t_park("eligibility: the role requires React, GraphQL and Kubernetes experience not established in "
                             "Surya's profile")
     assert "not an eligibility rule" in out["error"], out
+
+
+STANDING = """<!doctype html><html><body>
+<div data-automation-id="formField-standing"><label for="sd">Academic standing at assignment start*</label>
+<button id="sd" data-goat-ref="e970" aria-haspopup="listbox" type="button">Senior</button></div>
+<script>
+  const btn = document.getElementById('sd');
+  btn.addEventListener('click', () => {
+    if (document.getElementById('lb')) return;
+    const ul = document.createElement('ul'); ul.id = 'lb'; ul.setAttribute('role', 'listbox');
+    ul.style.cssText = 'position:absolute;top:40px;left:10px;width:220px;margin:0;padding:0;background:#fff;border:1px solid #888';
+    for (const t of ['Freshman', 'Sophomore', 'Junior', 'Senior']) {
+      const li = document.createElement('li'); li.setAttribute('role', 'option'); li.textContent = t;
+      li.style.cssText = 'display:block;height:24px;list-style:none';
+      li.addEventListener('click', () => { btn.textContent = t; ul.remove(); });
+      ul.appendChild(li);
+    }
+    document.body.appendChild(ul);
+  });
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_held_fallback_gives_way_to_his_first_preference(tmp_path):
+    """Carrier (2026-10-23): 'Senior' (a fallback of 'Junior; ...; Senior') was kept and never changed to Junior."""
+    from goat import db as _db
+    from goat.browser import fill
+    _db.reset_for_tests(tmp_path / "t.db")
+    ex = await _open(tmp_path, STANDING, "standing.html")
+    try:
+        r = await fill.choose(ex, "e970", ["Junior", "3rd year", "Senior"])
+        assert r.ok, r.error
+        assert await ex.page.inner_text("#sd") == "Junior"
+    finally:
+        await ex.close(close_browser=True)
