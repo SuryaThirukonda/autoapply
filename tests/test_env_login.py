@@ -28,10 +28,20 @@ def test_env_login_stays_off_without_the_variable(monkeypatch):
     assert bitwarden.env_login_active() is False
 
 
-def test_env_login_defers_to_an_unlocked_vault(monkeypatch):
+def test_password_bit_wins_over_an_unlocked_vault(tmp_path, monkeypatch):
+    """Westinghouse (2026-10-23): with the vault unlocked, sign-in typed the vault item's other password and failed, while
+    the reset page said PASSWORD_BIT already was the account's password. PASSWORD_BIT is his one sign-in password."""
+    db.reset_for_tests(tmp_path / "t.db")
     monkeypatch.setattr(SETTINGS.creds, "universal_password", "pw-for-test")
+    monkeypatch.setattr(SETTINGS.creds, "application_email", "app@example.com")
     monkeypatch.setattr(bitwarden, "status", lambda: "unlocked")
-    assert bitwarden.env_login_active() is False
+    monkeypatch.setattr(bitwarden, "lookup", lambda host: {"bw_item_id": "vault-item"})
+    monkeypatch.setattr(bitwarden, "_get_password", lambda item_id: "the-vault-password")
+    assert bitwarden.env_login_active() is True
+    typed = {}
+    out = bitwarden.fill_credentials("career4.successfactors.com", "", lambda v: typed.__setitem__("email", v),
+                                     lambda v: typed.__setitem__("pw", v), "login_universal")
+    assert out == "filled_universal" and typed == {"email": "app@example.com", "pw": "pw-for-test"}
 
 
 def test_set_password_types_the_env_password_only(monkeypatch):

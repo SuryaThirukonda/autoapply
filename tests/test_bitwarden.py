@@ -103,6 +103,8 @@ def fake(monkeypatch, tmp_path):
     monkeypatch.setattr(bw.SETTINGS.creds, "bw_clientid", "")
     monkeypatch.setattr(bw.SETTINGS.creds, "bw_clientsecret", "")
     monkeypatch.setattr(bw.SETTINGS.creds, "bw_server", "")
+    # the vault is the credential source only without PASSWORD_BIT (env_login_active)
+    monkeypatch.setattr(bw.SETTINGS.creds, "universal_password", "")
     yield f
     db.reset_for_tests(tmp_path / "t2.db")
 

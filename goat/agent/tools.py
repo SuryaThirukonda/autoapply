@@ -147,6 +147,7 @@ class RunContext:
     creds_page_url: str = ""       # the sign-in page where credentials were last typed
     reset_link_tried: bool = False # open_password_reset_link was called this run
     reset_form_nudged: bool = False   # ...once, on a forgot-password form that was not sent yet
+    reset_same: bool = False          # the reset page said his password already is the account's password
     reset_not_received: bool = False  # ...and no reset email came
     create_tried: bool = False     # credentials mode 'create' was used this run
     account_exists: bool = False   # a Create Account click said the account already exists
@@ -524,6 +525,13 @@ JS_UNSENT_RESET_FORM = """() => {
                  .test((e.textContent || e.value || '').trim()));
   return send ? { send: (send.textContent || send.value || '').trim(), filled: !!box.value } : null;
 }"""
+
+
+# "New password cannot be the same as your old password." (Westinghouse's SuccessFactors reset page, 2026-10-23): the
+# account already holds his application password (Surya had reset it to PASSWORD_BIT himself), so the next step is to
+# sign in with it, not to keep pressing the reset page's save button.
+SAME_AS_OLD = re.compile(r"\b(new )?password\s+(cannot|can ?not|can't|must not|may not|should not)\s+be\s+(the\s+)?same\s+as\s+"
+                         r"(your\s+|the\s+)?(old|current|existing|previous)(\s+one|\s+password)?\b", re.I)
 
 
 async def unsent_reset_form(ex) -> dict:
@@ -3518,6 +3526,8 @@ class ToolDispatcher:
             # The harness sets the password and saves it itself: 7-Eleven, GDIT and Mastercard (2026-10-20) opened the link
             # and parked, taking Workday's 'Submit' (the reset page's save button) for the application's submit.
             done = await self._finish_password_reset()
+            if done.get("same"):
+                return {"status": "already_set", "url": self.ctx.ex.url, "next": self.SAME_PASSWORD_NEXT}, None
             if done.get("saved"):
                 return {"status": "password_set", "url": self.ctx.ex.url,
                         "next": "the new password is set and saved. Take a snapshot; on the Sign In form call credentials "
@@ -3549,6 +3559,23 @@ class ToolDispatcher:
     SAVE_PASSWORD_LABEL = re.compile(r"^\s*(submit|save|save password|reset password|set password|change password|update password|"
                                      r"continue|confirm|done)\s*$", re.I)
 
+    async def _reset_same_as_old(self) -> bool:
+        """The reset page refused his password as the account's current one: record it once and say so."""
+        try:
+            text = await self.ctx.ex.page_text(6000)
+        except Exception:  # noqa: BLE001 - no page text: not known
+            return False
+        if not SAME_AS_OLD.search(text or ""):
+            return False
+        if not self.ctx.reset_same:
+            self.ctx.reset_same = True
+            db.event(self.ctx.job_id, "creds:reset_same_password", {"host": self.ctx.portal_host})
+        return True
+
+    SAME_PASSWORD_NEXT = ("the account already uses his application password (the reset page says the new password cannot be "
+                          "the same as the old one): leave the reset page (its Cancel, or the Sign In link), call credentials "
+                          "login_universal on the Sign In form and click Sign In")
+
     async def _finish_password_reset(self) -> dict:
         """On the reset page the password link opened: type the application password into both boxes and click the
         page's save button. Returns {'saved': True} when the reset form is gone afterwards."""
@@ -3579,6 +3606,8 @@ class ToolDispatcher:
             await self.ctx.ex.settle(quiet_ms=800)
             probe = await self._account_probe()
             saved = not probe or (probe.get("pw") or 0) < 2 or sign_in_page(probe)
+            if not saved and await self._reset_same_as_old():
+                return {"saved": False, "same": True}
             db.event(self.ctx.job_id, "creds:reset_saved" if saved else "creds:reset_not_saved", {"host": self.ctx.portal_host})
             return {"saved": bool(saved)}
         except Exception as e:  # noqa: BLE001 - the model can still finish by hand
@@ -3989,7 +4018,12 @@ class ToolDispatcher:
                 return {"error": "not parked: this run opened the portal's verification link, so the account's email is confirmed "
                                  "('Invalid Token' only means the link was used already). Call credentials mode 'login_universal' with "
                                  "this Sign In form's email and password refs and click Sign In."}, None
-            if self.ctx.creds_mode == "set_password" and (probe.get("pw") or 0) >= 2 \
+            if (self.ctx.reset_same or (self.ctx.creds_mode == "set_password" and await self._reset_same_as_old())) \
+                    and self.ctx.control_failures.get("creds:reset_same_bounce", 0) < 1:
+                self.ctx.control_failures["creds:reset_same_bounce"] = 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "reset same as old"})
+                return {"error": f"not parked: {self.SAME_PASSWORD_NEXT}."}, None
+            if self.ctx.creds_mode == "set_password" and (probe.get("pw") or 0) >= 2 and not self.ctx.reset_same \
                     and self.ctx.control_failures.get("creds:reset_save_bounce", 0) < 2:
                 # 7-Eleven (2026-10-20): the new password was typed and the run parked without clicking the reset page's
                 # 'Submit' (it took that for the application's submit).

@@ -538,3 +538,45 @@ async def test_create_says_which_password_boxes_hold_the_password(store):
     out, _ = await d.t_credentials("create", "e2", "e4", "e6")
     assert out["status"] == "filled_universal" and out["password_box"] == "set" and out["confirm_box"] == "set"
     assert "(set)" not in str(out)
+
+
+SAME_AS_OLD_FORM = """<!doctype html><html><body style="margin:20px">
+<h2>Career Opportunities: Password Reset</h2>
+<p id="msg"></p>
+<label for="p1">New Password:</label><input id="p1" type="password"><br><br>
+<label for="p2">Retype New Password:</label><input id="p2" type="password"><br><br>
+<button type="button" id="go" onclick="document.getElementById('msg').textContent = 'New password cannot be the same as your old password.';">Submit</button>
+<button type="button">Cancel</button>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_reset_refused_as_his_current_password_sends_the_run_to_sign_in(store, tmp_path):
+    """Westinghouse (2026-10-23): Surya had reset the account to PASSWORD_BIT himself; the reset page said 'New password
+    cannot be the same as your old password', and the run pressed its Submit again and parked credentials_unknown."""
+    from goat.browser.executor import Executor, HostPolicy
+    page = tmp_path / "same.html"
+    page.write_text(SAME_AS_OLD_FORM, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add("")
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+
+        async def goto(u):
+            await ex.page.goto(url)
+        ex.goto = goto
+        ctx.mail = SimpleNamespace(fetch_password_reset_link=lambda portal, host, after, **k: SimpleNamespace(status="reset_link", url=url))
+        ctx.creds = SimpleNamespace(fill_credentials=lambda host, email, te, tp, mode: (tp("Test#Pass123"), "filled_universal")[1],
+                                    fill_confirm_password=lambda host, tp: (tp("Test#Pass123"), "filled_universal")[1])
+        out, _ = await d.t_open_password_reset_link()
+        assert out["status"] == "already_set" and "login_universal" in out["next"], out
+        assert ctx.reset_same
+        kinds = [r[0] for r in db.connect().execute("SELECT kind FROM events WHERE job_id=?", (ctx.job_id,))]
+        assert "creds:reset_same_password" in kinds and "creds:reset_not_saved" not in kinds
+        out, _ = await d.t_park("credentials_unknown: the reset page refuses the new password")
+        assert "login_universal" in out["error"] and "already uses his application password" in out["error"]
+    finally:
+        await ex.close(close_browser=True)

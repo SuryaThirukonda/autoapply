@@ -329,14 +329,12 @@ def _fill(host: str, item_id: str, email: str | None,
 
 
 def env_login_active() -> bool:
-    """True when the one application password from the environment (PASSWORD_BIT) is the credential source:
-    it is set, and the Bitwarden vault is not unlocked (signed out, locked, or no CLI at all)."""
-    if not SETTINGS.creds.universal_password:
-        return False
-    try:
-        return status() != "unlocked"
-    except Exception:
-        return True
+    """True when the one application password from the environment (PASSWORD_BIT) is the credential source: whenever it
+    is set. Surya's rule: PASSWORD_BIT is his sign-up AND sign-in password on every portal (2026-10-22, again 2026-10-23
+    after he reset Micron and Westinghouse to it). It used to defer to an unlocked Bitwarden vault, whose lock state
+    changes between calls: one Westinghouse run typed the vault item's other password at sign-in ('Invalid email address
+    or password') and PASSWORD_BIT on the reset page ('New password cannot be the same as your old password')."""
+    return bool(SETTINGS.creds.universal_password)
 
 
 def _fill_from_env(host: str, email: str | None, type_email: Callable[[str], None] | None,
