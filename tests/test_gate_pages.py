@@ -1148,3 +1148,33 @@ async def test_apply_on_a_quick_apply_account_page_is_a_submit_control():
         assert el.submit is True, el
     finally:
         await ex.close()
+
+
+GENERAL_MATTER_NOTE = """<html><body><form id="f">
+<fieldset class="field"><legend>When are you available for a 12 week internship? Check all that apply *</legend>
+ <label><input type="checkbox" name="t" value="f26"> Fall 2026</label>
+ <label><input type="checkbox" name="t" value="s27"> Spring 2027</label>
+ <label><input type="checkbox" name="t" value="su27" checked> Summer 2027</label>
+ <div class="helper-text helper-text--error">Please note that you must be available for the full 12 weeks</div>
+</fieldset>
+<button type="submit" id="go" onclick="document.getElementById('f').outerHTML='<p>Thank you for applying</p>'; return false;">Submit</button>
+</form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_submit_lets_a_standing_note_under_an_answered_question_through():
+    """General Matter (Greenhouse, 2026-10-23): the gate passed, the judge passed, and submit itself refused the click
+    four times on the question's own note 'Please note that you must be available for the full 12 weeks'."""
+    from goat.browser.submit import submit
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(GENERAL_MATTER_NOTE)
+        snap = await snapshot.take(ex)
+        blocked = await submit(ex, None, label="Submit", wait_s=3)
+        assert blocked.status == "blocked" and "12 weeks" in " ".join(blocked.why), blocked
+        r = await submit(ex, None, label="Submit", wait_s=6, snapshot=snap)
+        assert r.status == "submitted", r
+    finally:
+        await ex.close()

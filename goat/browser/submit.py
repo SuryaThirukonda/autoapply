@@ -62,13 +62,15 @@ async def _issue_banner(ex: Executor) -> str:
 LATE_CONFIRM_S = 30.0     # after wait_s with no change: keep watching for a slow portal's confirmation
 
 
-async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: float = 15.0) -> SubmitResult:
+async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: float = 15.0, snapshot=None) -> SubmitResult:
     scan = await scan_errors(ex)
     # The gate's stale-message rule applies here too: SuccessFactors keeps 'Please complete your personal information.'
     # on screen after every field is set; CenturyLink passed the gate, the judge and the check, and submit refused it on
     # that message alone (2026-10-21).
     from ..gate import drop_stale_required
-    scan = drop_stale_required(scan, None)
+    # with the page's snapshot it also drops a question's standing note under a ticked answer (General Matter's 'Please
+    # note that you must be available for the full 12 weeks' refused four verified submits, 2026-10-23)
+    scan = drop_stale_required(scan, snapshot)
     why = why_blocked(scan)
     if why:
         return SubmitResult("blocked", why=why, url=scan.get("url", ex.url))

@@ -4243,7 +4243,7 @@ class ToolDispatcher:
             db.event(ctx.job_id, "auto_submit:verified", {"unconfirmed": v.unconfirmed, "judge": (v.verdict or {}).get("verdict")})
             ctx.auto_submitted = True
         try:
-            res = await do_submit(ctx.ex, ctx.job_id, label=button_label or "")
+            res = await do_submit(ctx.ex, ctx.job_id, label=button_label or "", snapshot=snap)
         except Exception as e:
             # The click may have gone through before the tool broke (Hy-Vee, 2026-10-20: the page moved to 'Application
             # Submitted' and a scan crashed on the navigation; the job was held while the application was in). A page

@@ -185,6 +185,9 @@ def drop_stale_required(errors: dict | None, snapshot) -> dict:
     # standing note 'Please note that you must be available for the full 12 weeks' under a ticked Summer 2027 (2026-10-23)
     answered = {_answers.norm(g.get("label") or "") for g in (getattr(snapshot, "groups", None) or [])
                 if any(o.get("checked") for o in g.get("options", []))}
+    # the note may sit nearest one of the group's option labels instead of its question
+    answered |= {_answers.norm(o.get("label") or "") for g in (getattr(snapshot, "groups", None) or [])
+                 if any(o2.get("checked") for o2 in g.get("options", [])) for o in g.get("options", [])}
     answered |= {_answers.norm(it.get("group") or "") for it in (getattr(snapshot, "items", None) or [])
                  if it.get("group") and (it.get("checked") or it.get("pressed"))}
     answered.discard("")
