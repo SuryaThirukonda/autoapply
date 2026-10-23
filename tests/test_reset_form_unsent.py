@@ -113,3 +113,30 @@ async def test_an_application_pages_submit_keeps_its_submit_marker(store):
         assert "SUBMIT-CONTROL(only submit() may click)" in out["outline"] and "ACCOUNT-BUTTON" not in out["outline"]
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_credentials_park_on_an_unsent_reset_form_sends_it_first(store):
+    """Westinghouse (2026-10-23): the run reached the Password Help form and parked there without sending it."""
+    from goat import answers
+    answers.save_answer("identity.email", "someone@example.com", answer_type="text", source="questionnaire")
+    ex = await _open("password_help.html")
+    try:
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        calls = []
+
+        def fetch(portal, host, after, **k):
+            calls.append(host)
+            return SimpleNamespace(status="not_received", url=None)
+        ctx.mail = SimpleNamespace(fetch_password_reset_link=fetch)
+        out, _ = await d.t_park("credentials_unknown: the reset form did not open a reset page")
+        assert "harness sent the password-reset form ('Submit')" in out["error"] and "not_received" in out["error"], out
+        assert calls and ctx.reset_link_tried
+        assert await ex.page.evaluate("() => document.getElementById('sent').hidden") is False      # the form was sent
+        kinds = [r[0] for r in db.connect().execute("SELECT kind FROM events WHERE job_id=?", (ctx.job_id,))]
+        assert "creds:reset_form_sent" in kinds and "creds:reset_form_unsent" not in kinds
+        decisions = [r[0] for r in db.connect().execute("SELECT value FROM decisions WHERE job_id=?", (ctx.job_id,))]
+        assert any("@" in (v or "") for v in decisions)                                             # his email went in
+    finally:
+        await ex.close(close_browser=True)

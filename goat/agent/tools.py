@@ -3620,6 +3620,31 @@ class ToolDispatcher:
     SAVE_PASSWORD_LABEL = re.compile(r"^\s*(submit|save|save password|reset password|set password|change password|update password|"
                                      r"continue|confirm|done)\s*$", re.I)
 
+    async def _send_reset_form(self) -> str:
+        """A forgot-password form still waiting on screen: type his email into it (when empty) and press its send button.
+        Returns the button's label, or '' when there is no such form or it could not be sent."""
+        form = await unsent_reset_form(self.ctx.ex)
+        if not form:
+            return ""
+        snap = await snapmod.take(self.ctx.ex)
+        self.ctx.last_snapshot = snap
+        box = next((i for i in snap.items if i.get("ref") and i.get("tag") == "input"
+                    and (i.get("type") or "text").lower() in ("text", "email")
+                    and re.search(r"e-?mail|user", str(i.get("label") or ""), re.I)), None)
+        btn = next((i for i in snap.items if i.get("ref") and answers.norm(i.get("label") or "") == answers.norm(form["send"])), None)
+        if box is None or btn is None:
+            return ""
+        if not form.get("filled"):
+            out, _ = await self.t_fill_batch([{"ref": box["ref"], "answer_key": "identity.email", "value": None, "source": None,
+                                               "label": str(box.get("label") or "Email Address")}])
+            if not str((out or {}).get("summary", "")).startswith("1 set"):
+                return ""
+        clicked, _ = await self.t_click(btn["ref"], str(btn.get("label") or form["send"]))
+        if isinstance(clicked, dict) and clicked.get("error"):
+            return ""
+        db.event(self.ctx.job_id, "creds:reset_form_sent", {"host": self.ctx.portal_host, "send": form["send"]})
+        return form["send"]
+
     async def _reset_same_as_old(self) -> bool:
         """The reset page refused his password as the account's current one: record it once and say so."""
         try:
@@ -4137,6 +4162,19 @@ class ToolDispatcher:
             self.ctx.control_failures["creds:create_bounce"] = 1
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "create not tried"})
             return {"error": "not parked: " + CREATE_STEPS}, None
+        if low.startswith("credentials") and self.ctx.mail is not None and not self.ctx.reset_link_tried \
+                and self.ctx.control_failures.get("creds:auto_reset", 0) < 1:
+            # Westinghouse (2026-10-23): the run reached SuccessFactors' Password Help form and parked there instead of
+            # sending it. The harness sends a reset form left on screen itself, then follows the reset email.
+            sent = await self._send_reset_form()
+            if sent:
+                self.ctx.control_failures["creds:auto_reset"] = 1
+                self.ctx.reset_form_nudged = True
+                out, _ = await self.t_open_password_reset_link()
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "credentials": "reset sent by the harness",
+                                                           "result": str((out or {}).get("status") or (out or {}).get("error") or "")[:80]})
+                return {"error": f"not parked: the harness sent the password-reset form ('{sent}') and checked the mailbox: "
+                                 f"{json.dumps(out)[:600]}"}, None
         if low.startswith("credentials") and self.ctx.mail is not None and not self.ctx.reset_link_tried \
                 and self.ctx.control_failures.get("creds:bounce", 0) < 2:
             # One application password everywhere: a credentials park is allowed only after the reset flow was
