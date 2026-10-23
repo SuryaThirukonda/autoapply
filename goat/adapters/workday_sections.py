@@ -66,7 +66,10 @@ WORK_KINDS = ("workExperience", "workexperience", "experience", "employment")
 # The work-history section's own heading: Rogue Fitness calls it "Professional Experience" (2026-10-20: only the tenant's
 # pre-rendered block was filled, and entries 2-5 failed with "Add button not found" because the Add Another button sat
 # under a heading the filler did not know).
-WORK_HEADING = re.compile(r"^(?:(?:work|professional|employment|job)\s+(?:experience|history)|employment|experience)\b", re.I)
+# Workday's newer My Experience layout titles it "Add Work Experience" (panels "Add Work Experience 1"): CVS Health's
+# Medicaid internship, 2026-10-23, where only one block could be kept and entries swapped places in it.
+WORK_HEADING = re.compile(r"^(?:add\s+(?:another\s+)?)?(?:(?:work|professional|employment|job)\s+(?:experience|history)|employment|"
+                          r"experience)\b", re.I)
 SITE_KINDS = ("websites", "website", "webAddress", "webAddresses")
 
 

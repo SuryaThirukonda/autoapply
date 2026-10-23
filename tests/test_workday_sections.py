@@ -167,3 +167,13 @@ def test_workday_hints_cover_education_on_a_return_visit():
     from goat.adapters import for_portal
     hints = for_portal("workday").hints
     assert "never gets a Field of Study" in hints and "delete every Education entry and add each of them again" in hints
+
+
+def test_the_newer_layouts_add_work_experience_heading_is_the_work_section():
+    """CVS Health (Workday, 2026-10-23): the section reads 'Add Work Experience' (panels 'Add Work Experience 1'); the
+    filler never found its Add button, kept one block, and swapped entries in and out of it."""
+    from goat.adapters.workday_sections import WORK_HEADING
+    for h in ("Work Experience", "Add Work Experience", "Add Work Experience 1", "Professional Experience", "Employment History"):
+        assert WORK_HEADING.search(h), h
+    for h in ("Education", "Add Education", "Websites", "Additional Information"):
+        assert not WORK_HEADING.search(h), h
