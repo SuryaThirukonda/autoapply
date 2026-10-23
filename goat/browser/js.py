@@ -124,15 +124,25 @@ _COMMON = r"""
   }
   // A control drawn inside a custom element's shadow root (SmartRecruiters' spl-button / spl-checkbox, 2026-10-21) has
   // no text or label of its own: its host carries the name (aria-label 'Add experience entry') and the slotted text ('Add').
+  // A UI5 widget nests its input two shadow roots deep and names the outer host with accessible-name / title
+  // (SuccessFactors' 'When are you available to start work?' date picker, Westinghouse 2026-10-23: the input had no label,
+  // the run left it empty, and the judge failed the draft): the nearest host up to three levels that names the control.
   function shadowHostNames(el) {
-    const r = el && el.getRootNode ? el.getRootNode() : null;
-    const h = r && r.host ? r.host : null;
-    if (!h) return [];
     const out = [];
-    const a = (h.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-    if (a) out.push(a.slice(0, 120));
-    const t = txt(h).slice(0, 120);
-    if (t && t !== a) out.push(t);
+    let n = el;
+    for (let i = 0; i < 3; i++) {
+      const r = n && n.getRootNode ? n.getRootNode() : null;
+      const h = r && r.host ? r.host : null;
+      if (!h) break;
+      for (const attr of ['aria-label', 'accessible-name', 'title']) {
+        const a = (h.getAttribute(attr) || '').replace(/\s+/g, ' ').trim();
+        if (a && !out.includes(a.slice(0, 120))) out.push(a.slice(0, 120));
+      }
+      const t = txt(h).slice(0, 120);
+      if (t && !out.includes(t)) out.push(t);
+      if (out.length) break;
+      n = h;
+    }
     return out;
   }
   // The pick a design-system field keeps on its custom-element host while its own box is empty (SmartRecruiters' City
