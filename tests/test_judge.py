@@ -355,3 +355,16 @@ def test_the_judge_knows_a_no_earlier_application_answer_is_supported():
     from goat import judge
     text = " ".join(str(v) for v in vars(judge).values() if isinstance(v, str))
     assert "recruitment or hiring process" in text and "application ledger" in text
+
+
+def test_a_clear_of_a_sibling_control_is_not_the_answer():
+    """Ursa Major (2026-10-22): 'No' set on the refugee/asylum control (e31), then a sibling control with the same label
+    (e30) cleared; read as the last decision, the clear made the judge fail a page that showed 'No'."""
+    from goat.judge import Judge
+    log = [{"page": 1, "field_label": "Refugee or Asylum status", "value": "No", "source": "standing:q.refugee", "ref": "e31"},
+           {"page": 1, "field_label": "Refugee or Asylum status", "value": "", "source": "cleared", "ref": "e30"}]
+    text = Judge._log_text(log)
+    assert "= 'No'" in text and "cleared" not in text
+    # a clear of the very control that held the value is a correction, and stays
+    log[1]["ref"] = "e31"
+    assert "source cleared" in Judge._log_text(log)

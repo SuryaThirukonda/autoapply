@@ -212,7 +212,15 @@ class Judge:
     @staticmethod
     def _log_text(decisions: list[dict], job_id: int | None = None) -> str:
         lines = []
+        set_refs: dict[str, set] = {}
+        for d in decisions:
+            if d.get("source") != "cleared" and str(d.get("value") or "").strip():
+                set_refs.setdefault(str(d.get("field_label") or ""), set()).add(d.get("ref"))
         for d in decisions[-150:]:
+            if d.get("source") == "cleared" and set_refs.get(str(d.get("field_label") or ""), set()) - {d.get("ref")}:
+                # Ursa Major (2026-10-22): 'No' was set on the question's own control, then a sibling control with the
+                # same label was cleared; read as the last word, the clear made the judge call the page's 'No' wrong
+                continue
             v = str(d.get('value') or '')
             v = v if len(v) <= 2000 else v[:2000] + " …[cut for length]"
             label = str(d.get('field_label') or '')
