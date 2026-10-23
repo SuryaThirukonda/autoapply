@@ -110,3 +110,16 @@ def test_role_fit_names_his_roles_and_holds_other_fields():
     assert triage.classify(row)[:2] == (triage.UNSURE, "title:off_role")
     assert triage.classify({**row, "title": "Wireless Hardware Engineer Intern"})[:2] == (triage.UNSURE, "title:hardware_role")
     assert triage.classify({**row, "title": "Software Engineer Intern"})[0] == triage.QUEUED
+
+
+def test_an_instruction_reply_is_no_value(tmp_path):
+    """Allstate (2026-10-23): Surya answered 'What's their name or email address?' with 'Retry' on the website; typed into
+    the referrer box it would have been sent as the referrer's name."""
+    from goat import answers, db
+    db.reset_for_tests(tmp_path / "t.db")
+    answers.save_answer("q.what_s_their_name_or_email_address_required", "Retry", answer_type="text", source="web")
+    assert not answers.get("q.what_s_their_name_or_email_address_required").has_value
+    for reply in ("retry", "Try again.", "skip", "ask me", "keep pause"):
+        assert answers.INSTRUCTION_REPLY.match(reply), reply
+    for value in ("Retry Labs", "Jane Smith", "No", "None", "Wait staff", "jsmith@example.com"):
+        assert not answers.INSTRUCTION_REPLY.match(value), value

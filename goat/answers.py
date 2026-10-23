@@ -32,6 +32,13 @@ def key_from_question(text: str) -> str:
     return "q." + "_".join(words[:8]) if words else "q.unknown"
 
 
+# A reply that tells goat what to do rather than what to type: Surya answered Allstate's 'What's their name or email
+# address?' with 'Retry' on the website (2026-10-23), and the run would have typed it into the referrer box. Such a reply
+# is no value: the question stays open and is asked again on the next attempt.
+INSTRUCTION_REPLY = re.compile(r"^\s*(?:please\s+)?(?:re-?try(?: it)?|try (?:it )?again|skip(?: it)?|requeue|pause|hold|wait|ask me|"
+                               r"keep (?:it )?paused?|do not answer(?: yet)?|don'?t answer(?: yet)?)\s*[.!]*\s*$", re.I)
+
+
 @dataclass
 class Answer:
     key: str
@@ -48,7 +55,7 @@ class Answer:
     def has_value(self) -> bool:
         if self.answer_type == "blank":
             return self.answer is not None      # "leave it empty" is a decision, not a gap
-        return self.answer is not None and str(self.answer).strip() != ""
+        return self.answer is not None and str(self.answer).strip() != "" and not INSTRUCTION_REPLY.match(str(self.answer))
 
     @property
     def tier(self) -> str:
