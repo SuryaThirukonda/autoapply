@@ -534,3 +534,10 @@ def test_a_reset_mailed_from_the_employers_own_domain_is_found():
                                           client=FakeMailClient([[m]]), company="Paccar")
     assert res.status == "reset_link" and res.url == link
     assert "paccar" in gmail.build_reset_query("successfactors", me, 1_700_000_000, gmail.company_sender_tokens("PACCAR"))
+
+
+def test_a_letters_only_greenhouse_code_beats_the_word_after_code():
+    """Neuralink (2026-10-23): the 8-letter mixed-case code sat more than 40 characters from "code" and 'resubmit' was typed."""
+    body = ("Copy and paste this code into the security code field on your application:\n# qWErTyUi\n\n"
+            "After you enter the code, resubmit your application.\n\n© 2026 Greenhouse")
+    assert gmail.extract_code(body, "greenhouse") == "qWErTyUi"

@@ -319,7 +319,10 @@ def extract_code(text: str, portal: str) -> str | None:
         tok = m.group(0)
         if tok.lower() in COMMON_WORDS:
             continue
-        mixed = any(ch.isdigit() for ch in tok) and any(ch.isalpha() for ch in tok)
+        # letters and digits, or upper and lower case past the first letter: Neuralink's Greenhouse code was eight letters
+        # ('tGRZwWdK'-like), more than 40 characters from "code", and 'resubmit' (right after "the code,") was typed (2026-10-23)
+        mixed = (any(ch.isdigit() for ch in tok) and any(ch.isalpha() for ch in tok)) or \
+            (any(ch.isupper() for ch in tok[1:]) and any(ch.islower() for ch in tok))
         rank = 0
         if pattern == EIGHT_ALNUM and not mixed:
             # a plain word or plain number only counts when it sits right next to "code"
