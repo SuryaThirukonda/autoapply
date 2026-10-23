@@ -111,3 +111,22 @@ async def test_an_eligibility_hold_quoting_years_the_posting_never_states_is_ref
     out, _ = await d.t_park("eligibility: Cisco requires undergraduate applicants to have 2 years of work experience; Surya's "
                             "documented professional experience does not meet that minimum.")
     assert "does not state" in out["error"], out
+
+
+def test_a_plain_no_never_picks_an_option_that_says_he_graduated():
+    """Nintendo (2026-10-23): his co-op answer No picked 'Not Applicable, Graduated' for the Fall 2027 term."""
+    from goat.browser import fill
+    opts = [{"text": "August 2027"}, {"text": "Not Applicable, Graduated"}]
+    assert fill.best_option(opts, ["No"]) is None
+    assert fill.best_option([{"text": "Yes"}, {"text": "Not interested"}], ["No"])["text"] == "Not interested"
+
+
+@pytest.mark.asyncio
+async def test_he_requires_no_housing_accommodation(store):
+    """Nintendo (2026-10-23): 'Require housing accommodation?' went out Yes from his 'can arrange his own housing' Yes."""
+    answers.save_answer("availability.own_housing", "Yes", answer_type="choice", source="questionnaire")
+    d, ctx = _dispatcher(_job())
+    out, _ = await d.t_lookup_answer("Will you require housing accommodation during the internship?", ["Yes", "No"], None, None)
+    assert out["answer"] == "No" and out["via"] == "housing_rule", out
+    out, _ = await d.t_lookup_answer("Would you like a housing stipend?", ["Yes", "No"], None, None)
+    assert out.get("via") != "housing_rule"

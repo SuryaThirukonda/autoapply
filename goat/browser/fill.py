@@ -958,7 +958,10 @@ def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
             if len(aff) == 1:
                 return aff[0]
         if w in ("no", "false"):
-            neg = [o for o in options if NEG_OPT.match((o["text"] or "").strip())]
+            # an option that also states a fact is no plain No: Nintendo's 'Not Applicable, Graduated' was picked for his
+            # co-op answer No and said he had graduated (2026-10-23)
+            neg = [o for o in options if NEG_OPT.match((o["text"] or "").strip())
+                   and not re.search(r"\b(graduat\w*|completed|retired|employed|enrolled)\b", o["text"] or "", re.I)]
             if len(neg) == 1:
                 return neg[0]
     return None

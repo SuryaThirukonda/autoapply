@@ -604,6 +604,8 @@ def citizenship_block(snap) -> bool:
 
 
 CITIZENSHIP_DATE_KEY = "compliance.citizenship_obtained_date"
+NEEDS_HOUSING = re.compile(r"\b(require|need|requesting|request)\w*\b.{0,40}\bhousing\b|\bhousing (accommodation|assistance)s?\b.{0,40}\?",
+                           re.I)
 
 
 def citizenship_date_answer():
@@ -3434,6 +3436,17 @@ class ToolDispatcher:
                                "(never the Yes of willing-to-obtain)")
                 db.event(self.ctx.job_id, "answer:clearance_obstacle", {"question": question[:160]})
                 return out, None
+        if NEEDS_HOUSING.search(question or "") and not re.search(r"\bstipend|allowance|reimburs", question or "", re.I):
+            # he arranges his own housing (availability.own_housing Yes), so he requires no housing accommodation: Nintendo's
+            # 'Require housing accommodation?' went out Yes from that key (2026-10-23)
+            own = answers.get("availability.own_housing")
+            if own is not None and own.has_value and answer_polarity(str(own.answer)) == "yes":
+                neg = default_no_choice(question, options) or "No"
+                answers.save_answer("availability.needs_housing_accommodation", "No", answer_type="choice", source="derived",
+                                    note="he can arrange his own housing for the summer (availability.own_housing Yes), so he "
+                                         "requires no housing accommodation", aliases=[question])
+                return {"key": "availability.needs_housing_accommodation", "answer": neg, "confidence": 1.0, "via": "housing_rule",
+                        "note": "he arranges his own housing: he requires no housing accommodation (answer No)"}, None
         if OBTAINED_DATE.search(question or "") and citizenship_block(self.ctx.last_snapshot):
             a_cd = citizenship_date_answer()
             if a_cd is not None and a_cd.has_value:
