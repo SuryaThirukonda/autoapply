@@ -2513,6 +2513,24 @@ class ToolDispatcher:
             except Exception:
                 text = ""
             m = SIGN_IN_FAILED.search(text) if self.ctx.creds_mode != "create" else None
+            if m is None and self.ctx.creds_mode != "create":
+                # SuccessFactors reloads the page on Sign In and draws 'Invalid email address or password' after it settles:
+                # Westinghouse's click read no failure, the reset was refused as 'sign in first', and the run parked
+                # (2026-10-23). While the sign-in form is still on screen, read the page again.
+                from ..gate import ACCOUNT_PAGE
+                for _ in range(3):
+                    await asyncio.sleep(1.5)
+                    probe = await self._account_probe()      # {} while the page is still reloading: read on
+                    heads = " | ".join([probe.get("title") or ""] + list(probe.get("heads") or [])[:4]) if probe else ""
+                    if probe and not (probe.get("pw") and (sign_in_page(probe) or ACCOUNT_PAGE.search(heads))):
+                        break                                 # the sign-in form is gone: no failure to read
+                    try:
+                        text = await self.ctx.ex.page_text(30000)
+                    except Exception:
+                        text = ""
+                    m = SIGN_IN_FAILED.search(text)
+                    if m:
+                        break
             if m:
                 self.ctx.reset_needed = True
                 self.ctx.sign_in_url = way_back_url(self.ctx.creds_page_url, getattr(self.ctx.ex, "url", "") or "") \

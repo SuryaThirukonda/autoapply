@@ -113,6 +113,20 @@ def claim_next() -> dict | None:
         return job
 
 
+async def stale_sign_in_tab(ex) -> bool:
+    """The held tab shows an account page (sign-in, password help, create account) at an address with a one-time session
+    crumb: nothing on it is worth keeping, and the crumb no longer works."""
+    from .agent.tools import SESSION_URL
+    from .gate import ACCOUNT_PAGE
+    if not SESSION_URL.search(getattr(ex, "url", "") or ""):
+        return False
+    try:
+        title = await ex.page.title()
+    except Exception:  # noqa: BLE001 - unreadable: keep the tab
+        return False
+    return bool(ACCOUNT_PAGE.search(title or ""))
+
+
 def keeps_decisions(job: dict) -> bool:
     """A released draft whose tab is still known: its decisions are the ones Surya approved, so they stay."""
     return bool(job.get("cleared_live")) and bool(job.get("tab_target_id"))
@@ -520,6 +534,14 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             await ex.settle()
             if not ex.policy.allowed(ex.url) or "login" in ex.url.lower():
                 await ex.goto(apply_url)   # expired session: re-open and re-fill from the store
+                reopened = True
+            elif await stale_sign_in_tab(ex):
+                # A SuccessFactors sign-in page held at a used session crumb ('career?_s.crb=...') takes no new Sign In:
+                # Westinghouse's requeued run typed his password there, the page repeated the old 'Invalid email address
+                # or password', and its reset link fell back to the posting (2026-10-23). Start the account step clean.
+                if await clear_sf_session(ex):
+                    db.event(job_id, "sf:session_cleared", {"why": "stale sign-in tab"})
+                await ex.goto(apply_url)
                 reopened = True
             else:
                 # A stale Workday tab shows "Something went wrong ... refresh the page": do that, then re-open the posting.
