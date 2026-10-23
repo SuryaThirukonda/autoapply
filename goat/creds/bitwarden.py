@@ -346,7 +346,7 @@ def _fill_from_env(host: str, email: str | None, type_email: Callable[[str], Non
     if type_password is not None:
         type_password(SETTINGS.creds.universal_password)
     _touch(host)
-    log.info("creds: filled %s from the environment login (Bitwarden vault not unlocked)", host)
+    log.info("creds: filled %s from PASSWORD_BIT (the environment login)", host)
     return "filled_universal"
 
 
