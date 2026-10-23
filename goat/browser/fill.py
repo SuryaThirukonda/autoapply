@@ -325,6 +325,22 @@ def _squash(s: str) -> str:
     return _norm(s).replace(" ", "")
 
 
+def _one_edit(a: str, b: str) -> bool:
+    """a and b differ by exactly one added, dropped, changed or swapped character."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        diff = [i for i in range(len(a)) if a[i] != b[i]]
+        return len(diff) == 1 or (len(diff) == 2 and diff[1] == diff[0] + 1
+                                  and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]])
+    if len(a) > len(b):
+        a, b = b, a
+    i = 0
+    while i < len(a) and a[i] == b[i]:
+        i += 1
+    return a[i:] == b[i + 1:]
+
+
 # What a Workday multi-level prompt's control reads while a category is open or nothing is picked yet.
 LEVELISH = re.compile(r"(expanded|\b0 items selected\b|^search$)", re.I)
 
@@ -809,8 +825,29 @@ def degree_option(options: list[dict], wants: list[str]) -> tuple[dict | None, l
         options = [o for o in options if _norm(o.get("text")) in exact or not _HONOURS.search(o.get("text") or "")]
     sci = [o for o in options if _SCIENCE_BACHELOR.search(o.get("text") or "")]
     if sci:
-        return next((o for o in sci if _norm(o.get("text")) in exact), sci[0]), options
+        hit = next((o for o in sci if _norm(o.get("text")) in exact), None)
+        if hit is not None:
+            return hit, options
+        # A science bachelor's in another field is another degree: ABB's Workday list offered 'B.S.M.E. - Bachelor of Science
+        # in Mechanical Engineering' first and it went in for his BS in Computer Science (the judge caught it, 2026-10-23).
+        # His own field first, then a plain science bachelor's; another field's only by an exact answer.
+        his = [o for o in sci if _HIS_FIELD.search(_science_field(o.get("text") or ""))]
+        plain = [o for o in sci if not _science_field(o.get("text") or "")]
+        if his or plain:
+            return (his or plain)[0], options
+        options = [o for o in options if o not in sci]
     return None, [o for o in options if _norm(o.get("text")) in exact or not _OTHER_BACHELOR.search(o.get("text") or "")]
+
+
+_SCIENCE_IN = re.compile(r"\bscience\s+(?:in|of)\s+(?P<field>[a-z].*)$", re.I)
+_HIS_FIELD = re.compile(r"\bcomput(er|ing|ation(al)?)\b|\bsoftware\b|\binformatics\b|\bc\.?s\.?\b", re.I)
+
+
+def _science_field(text: str) -> str:
+    """The field a science bachelor's names ('Mechanical Engineering' in 'Bachelor of Science in Mechanical Engineering'),
+    or '' for a plain one."""
+    m = _SCIENCE_IN.search(text or "")
+    return m.group("field").strip() if m else ""
 
 
 def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
@@ -874,6 +911,14 @@ def _best_option_core(options: list[dict], wants: list[str]) -> dict | None:
         sq = [o for o in options if _squash(o["text"]) == _squash(want)]
         if len(sq) == 1:
             return sq[0]
+        # The portal's own misspelling: Allstate's Workday list offered 'Sophmore', no wording matched it, and the chain
+        # fell through to his credit-hours fallback 'Junior' (2026-10-23). One letter off a long word is the same answer,
+        # never on a school's name or a number.
+        sw = _squash(want)
+        if len(sw) >= 7 and not institution and not re.search(r"\d", sw):
+            typo = [o for o in options if _one_edit(_squash(o["text"]), sw)]
+            if len(typo) == 1:
+                return typo[0]
     # A month-year answer against quarter ranges ("April - June 2028" holds May 2028; Oracle graduation dates, 2026-10-19).
     for want in wants:
         m = _MONTH_YEAR.match((want or "").strip())
