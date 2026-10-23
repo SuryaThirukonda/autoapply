@@ -101,8 +101,28 @@ TALENT_COMMUNITY = re.compile(r"\b((talent|career|candidate)s?\s+(communit(y|ies
                               r"part of (our |the )?communit(y|ies)|join (our |the )?(talent|career|candidate))\b", re.I)
 
 
+# A certification held is a credential, not an 'I certify' box: Cisco's "Which post-secondary education opportunity are you
+# currently pursuing?" listed 'Other Diploma/Degree/Certification', the consent pass ticked it as his truthfulness
+# attestation, and the judge failed the draft (2026-10-23).
+CREDENTIAL_NOUN = re.compile(r"\bcertifications?\b(?!\s+(that|of (the )?(accuracy|truth|information)|and (authori[sz]ation|"
+                             r"acknowledg|release|signature)|statement))", re.I)
+CREDENTIAL_CONTEXT = re.compile(r"\b(diplomas?|degrees?|licen[cs]es?|courses?|programs?|programmes?|training|bootcamps?|ged|"
+                                r"professional|industry|technical|vocational|trade school|education|associate'?s?|bachelor'?s?|"
+                                r"master'?s?|doctorate|ph\.?d)\b", re.I)
+FIRST_PERSON_CONSENT = re.compile(r"\b(i|we)\s+(hereby\s+)?(have read|agree|acknowledge|consent|certify|understand|accept|"
+                                  r"authori[sz]e|attest|confirm|declare)\b|\bby (checking|ticking|clicking|selecting|signing|"
+                                  r"submitting)\b", re.I)
+
+
+def credential_not_consent(label: str) -> bool:
+    return bool(CREDENTIAL_NOUN.search(label or "") and CREDENTIAL_CONTEXT.search(label or "")
+                and not FIRST_PERSON_CONSENT.search(label or ""))
+
+
 def consent_key(label: str) -> str | None:
     """The standing answer key that authorizes ticking this consent, or None to leave it alone."""
+    if credential_not_consent(label):
+        return None
     if TALENT_COMMUNITY.search(label or ""):
         return "policy.may_join_talent_community"
     if SMS.search(label):
