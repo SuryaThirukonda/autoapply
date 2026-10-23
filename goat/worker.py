@@ -463,6 +463,13 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
     if cap_reason:
         set_status(job_id, states.HOLD, reason=cap_reason)
         return RunOutcome(states.HOLD, cap_reason)
+    # A role less aligned with his preferences at an employer that already holds 6 of his active positions: not applied
+    # to (Surya, 2026-10-22). Counted at run time over sent applications and jobs under way, not the queue behind it.
+    capped = caps.less_aligned_capped(job.get("company") or "", job.get("title") or "", with_queued=False,
+                                      listing_id=job.get("listing_id"))
+    if capped:
+        set_status(job_id, states.DEAD, reason="skipped: " + capped)
+        return RunOutcome(states.DEAD, capped)
 
     # The same posting already applied to: Ryan listed requisition R0020808 on two career sites, and the second job opened
     # Workday only to read "You applied for this job" (2026-10-22). The gate's ledger check would stop it later anyway.

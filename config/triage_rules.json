@@ -88,6 +88,8 @@
   "max_listings_in_notice": 15,
   "relevant_title_pattern": "\\b(software|swe|sde|developer|engineer|engineering|data|machine learning|ml|ai|analytics|analyst|scientist|backend|back-end|full[- ]?stack|cloud|devops|platform|infrastructure|security|research|programmer|computing|automation)\\b",
   "_tier_a_note": "Surya 2026-10-13: Simplify handles Workday, iCIMS and Oracle well enough; the agent autofills with Simplify and fills the rest by hand.",
+  "less_aligned_per_company": 6,
+  "_less_aligned_note": "Surya 2026-10-22: a role less aligned with his preferences (role_fit not 'aligned') is not applied to when its employer already holds 6 of his active, non-rejected positions (applications sent, jobs under way, and the queue when queueing). goat/caps.py.",
   "application_caps": [
     {
       "company": "Waymo",

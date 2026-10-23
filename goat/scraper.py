@@ -178,6 +178,12 @@ def ingest(rows: list[dict], *, first_run: bool) -> dict:
                     counts["duplicate"] = counts.get("duplicate", 0) + 1
                 else:
                     held.add(lid, company, title, url)
+            if status == triage.QUEUED:
+                from . import caps
+                capped = caps.less_aligned_capped(company, title, with_queued=True, listing_id=lid)
+                if capped:
+                    status, reason = triage.SKIPPED, capped
+                    counts["company_cap"] = counts.get("company_cap", 0) + 1
             con.execute(_INSERT_LISTING, _listing_values(
                 row, ats=ats, variant=variant, triage_status=status, triage_reason=reason, ts=ts))
             fit = triage.role_fit(title)
@@ -290,7 +296,7 @@ EXTRA_FEEDS = (
     ("adminazhar", "https://raw.githubusercontent.com/adminazhar/Summer-2027-Internships/main/ENGINEERING_INTERNSHIPS.md"),
 )
 # which feed gave goat a listing, by its id ('manual:' rows come from the tracker sheet, the rest from Simplify)
-FEED_PREFIXES = {"zshah-": "zshah101", "adminazhar-": "adminazhar", "manual:": "manual"}
+FEED_PREFIXES = {"zshah-": "zshah101", "adminazhar-": "adminazhar", "internlist-": "intern-list", "manual:": "manual"}
 # a bank's 'Summer Associate' is its MBA and graduate program; 'Summer Analyst' is the undergraduate one
 _INTERNSHIP = re.compile(r"\b(intern|internship|co-?op|summer analyst|apprentice(ship)?)\b", re.I)
 _US_STATES = ("AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|"

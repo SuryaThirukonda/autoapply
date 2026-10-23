@@ -56,6 +56,57 @@ def check(company: str, title: str, listing_id: str | None = None, now: int | No
     return None
 
 
+# Surya (2026-10-22): "if they are less aligned to my preferences, then ensure you dont apply to more than 6 roles per company
+# (6 active non rejected positions). if there is already more than 6, then do not apply to those." Aligned roles
+# (triage.role_fit) are never held back by it; his own Need to Apply rows ('manual:' listings) are his picks and are not.
+LESS_ALIGNED_PER_COMPANY = 6
+# positions under way or waiting on him; applications sent come from the ledger (goat records no rejections, so each counts)
+UNDER_WAY = ("filling", "gated", "submitting", "awaiting_answer", "awaiting_code", states.READY_FOR_YOU)
+_COMPANY_SUFFIX = {"inc", "incorporated", "corp", "corporation", "co", "company", "llc", "ltd", "plc", "lp", "group",
+                   "holdings", "the", "technologies", "technology", "tech", "systems", "solutions", "labs", "laboratory",
+                   "laboratories", "services"}
+
+
+def company_key(name: str) -> str:
+    """One key per employer: 'Palantir Technologies' and 'Palantir', 'Qorvo, Inc.' and 'Qorvo', 'JPMorgan Chase' and
+    'JP Morgan Chase' (parentheses, punctuation, spaces and legal or generic suffixes set aside)."""
+    import re
+    text = re.sub(r"\(.*?\)", " ", (name or "").lower())
+    return "".join(t for t in re.findall(r"[a-z0-9]+", text) if t not in _COMPANY_SUFFIX)
+
+
+def company_positions(company: str, *, with_queued: bool, exclude_listing: str | None = None) -> int:
+    """Active, non-rejected positions at this employer: applications sent, jobs under way or waiting on Surya, and
+    (with_queued) jobs in the queue. One per posting."""
+    key = company_key(company)
+    if not key:
+        return 0
+    con = db.connect()
+    seen = {r["listing_id"] or r["canonical_key"] for r in con.execute(
+        "SELECT listing_id, canonical_key, company FROM applications WHERE submitted_at IS NOT NULL").fetchall()
+        if company_key(r["company"] or "") == key}
+    live = UNDER_WAY + ((states.QUEUED,) if with_queued else ())
+    seen |= {r["listing_id"] for r in con.execute(
+        "SELECT j.listing_id, l.company FROM jobs j JOIN listings l ON l.id=j.listing_id WHERE j.status IN (%s)"
+        % ",".join("?" * len(live)), live).fetchall() if company_key(r["company"] or "") == key}
+    seen.discard(exclude_listing)
+    seen.discard(None)
+    return len(seen)
+
+
+def less_aligned_capped(company: str, title: str, *, with_queued: bool, listing_id: str | None = None) -> str | None:
+    """The reason a less-aligned role is not applied to (its employer already holds the cap), else None."""
+    from .triage import ALIGNED, role_fit, rules as triage_rules
+    if role_fit(title) == ALIGNED or str(listing_id or "").startswith("manual:"):
+        return None
+    limit = int(triage_rules().get("less_aligned_per_company") or LESS_ALIGNED_PER_COMPANY)
+    n = company_positions(company, with_queued=with_queued, exclude_listing=listing_id)
+    if n < limit:
+        return None
+    return (f"company_cap: {company} already has {n} active applications or jobs; roles less aligned with his "
+            f"preferences stop at {limit} per company (Surya, 2026-10-22)")
+
+
 def hold_if_capped(job: dict) -> str | None:
     """Worker hook: hold a capped job (with its reopen time) and return the reason; None to go ahead."""
     hit = check(job.get("company") or "", job.get("title") or "", job.get("listing_id"))
