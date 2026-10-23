@@ -67,3 +67,46 @@ def test_a_navigation_under_the_prefill_is_no_run_error():
     assert prefill_navigation_error(Exception("Page.evaluate: Execution context was destroyed, most likely because of a navigation"))
     assert prefill_navigation_error(Exception("Frame was detached"))
     assert not prefill_navigation_error(Exception("KeyError: 'ref'"))
+
+
+POSTING = """<!doctype html><html><head><title>Summer Intern - Software Engineering Job Details</title></head><body>
+<h1>Summer Intern - Software Engineering</h1><a href="#apply" id="apply">Apply now</a></body></html>"""
+PROFILE = """<!doctype html><html><head><title>Career Opportunities: My Profile</title></head><body>
+<h1>Candidate Profile</h1><button type="button">Save</button></body></html>"""
+SIGN_IN_TO_PROFILE = """<!doctype html><html><head><title>Career Opportunities: Sign In</title></head><body>
+<h1>Career Opportunities: Sign In</h1>
+<label for="e">Email Address:*</label><input id="e" type="text">
+<label for="p">Password:*</label><input id="p" type="password">
+<button type="button" onclick="location.href='profile.html?navBarLevel=MY_PROFILE'">Sign In</button>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_sign_in_that_lands_on_my_profile_reopens_the_posting(store, tmp_path):
+    """Westinghouse (2026-10-23): SuccessFactors signed in to 'My Profile'; the run never found the application again."""
+    for name, html in (("posting.html", POSTING), ("profile.html", PROFILE), ("signin.html", SIGN_IN_TO_PROFILE)):
+        (tmp_path / name).write_text(html, encoding="utf-8")
+    posting = (tmp_path / "posting.html").resolve().as_uri()
+    url = (tmp_path / "signin.html").resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url, posting]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        job = _job()
+        job["url"] = posting
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        ctx.creds_mode = "login_universal"
+
+        async def goto(u):                  # file:// pages have no host for the allowlist
+            await ex.page.goto(u)
+        ex.goto = goto
+        ctx.last_snapshot = await snapshot.take(ex)
+        ref = next(i["ref"] for i in ctx.last_snapshot.items if (i.get("label") or "").strip() == "Sign In")
+        out, _ = await d.t_click(ref, "Sign In")
+        assert out.get("signed_in") and "Apply now" in out.get("next", ""), out
+        assert ex.url.split("?")[0].endswith("posting.html")
+        kinds = [r[0] for r in db.connect().execute("SELECT kind FROM events WHERE job_id=?", (ctx.job_id,))]
+        assert "creds:signed_in" in kinds
+    finally:
+        await ex.close(close_browser=True)

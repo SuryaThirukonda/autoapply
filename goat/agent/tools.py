@@ -866,6 +866,12 @@ def signed_in_form(probe: dict) -> str:
     return ""
 
 
+def sf_profile_page(url: str, title: str) -> bool:
+    """SuccessFactors' candidate profile ('Career Opportunities: My Profile', navBarLevel=MY_PROFILE): where it lands after a
+    Sign In, away from the job's application."""
+    return bool(re.search(r"navBarLevel=MY_PROFILE", url or "", re.I) or re.search(r"\bmy profile\b", title or "", re.I))
+
+
 def sign_in_page(probe: dict) -> bool:
     """A sign-in form: a password box and a 'Sign In' / 'Log In' heading or title."""
     if not isinstance(probe, dict) or not probe.get("pw"):
@@ -2670,6 +2676,23 @@ class ToolDispatcher:
                     out["signed_in"] = True
                     out["next"] = (f"signed in: the application form is open ('{head}'). Take a snapshot and fill it; the account step "
                                    "is done (never park credentials now).")
+                elif not create_click and re.search(r"sign ?in|log ?in", clicked, re.I) and sf_profile_page(
+                        getattr(self.ctx.ex, "url", "") or "", (probe or {}).get("title") or "") \
+                        and (self.ctx.job.get("url") or self.ctx.job.get("apply_url")):
+                    # SuccessFactors signs in to the candidate's 'My Profile', not to the application: Westinghouse's run
+                    # never found the form again and parked portal_error (2026-10-23). The posting is reopened; its Apply
+                    # now goes on signed in.
+                    target = str(self.ctx.job.get("url") or self.ctx.job.get("apply_url"))
+                    await self.ctx.ex.goto(target)
+                    await self.ctx.ex.settle(quiet_ms=600)
+                    self.ctx.signed_in = True
+                    db.event(self.ctx.job_id, "creds:signed_in", {"host": self.ctx.portal_host, "heading": "My Profile",
+                                                                  "mode": self.ctx.creds_mode, "reopened": target[:200]})
+                    out["signed_in"] = True
+                    out["url"] = self.ctx.ex.url
+                    out["next"] = ("signed in: SuccessFactors showed your candidate profile, so the harness reopened the posting. "
+                                   "Take a snapshot and click its Apply now: the application opens signed in (never park "
+                                   "credentials now).")
                 elif create_click and probe and (probe.get("pw") or 0) >= 2:
                     # The Create Account form is still there: the click did not go through (an empty verify-password
                     # box under a password manager's menu, Analog Devices 2026-10-20) or the form shows an error.
