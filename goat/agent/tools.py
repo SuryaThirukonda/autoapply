@@ -1709,6 +1709,14 @@ class ToolDispatcher:
                 return None, "", ("this field asks about someone else (a referrer, contact or reference), so none of his own details "
                                   "go here. Look it up as its own question (lookup_answer); if nothing is stored, ask_user, or "
                                   "follow his instruction for it.")
+        if answer_key in ("education.high_school", "education.high_school_city"):
+            # a box that asks the institution's name with its city and state takes all three: SWBC's 'List the educational
+            # institution name, city, and state' held 'Sugar Land, TX', then 'Clements High School' (2026-10-23)
+            own = str(((self.ctx.last_snapshot.find(ref) if ref and self.ctx.last_snapshot is not None else None) or {}).get("label") or label or "")
+            if NAME_ASKED.search(own) and PLACE_ASKED.search(own):
+                a_hs = high_school_full_answer()
+                if a_hs is not None and a_hs.has_value:
+                    return str(a_hs.answer), f"standing:{HIGH_SCHOOL_FULL_KEY}", None
         if answer_key == "identity.phone" and ref and self.ctx.last_snapshot is not None:
             # his number asked in parts: Westinghouse's 'Home Phone' after its 'Home/Area Code' box was filled with the whole
             # number from identity.phone (2026-10-23)

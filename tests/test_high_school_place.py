@@ -75,3 +75,30 @@ def test_his_own_details_are_no_answer_about_someone_else():
     assert fit.misfit("Referrer's Name", "Surya Thirukonda", "identity.legal_name")
     assert not fit.misfit("Email Address*", "thirukondas@gmail.com", "identity.email")
     assert not fit.misfit("How did you hear about us? (referral source)", "LinkedIn", "how_did_you_hear.preferred_option")
+
+
+@pytest.mark.asyncio
+async def test_the_school_name_into_a_name_city_state_box_types_all_three(store, tmp_path):
+    """SWBC (2026-10-23): the box then held only 'Clements High School'."""
+    from goat.browser import snapshot
+    from goat.browser.executor import Executor, HostPolicy
+    _school()
+    html = ("<!doctype html><html><body><form><label for='q'>List the educational institution name, city, and state for which "
+            "you indicated you completed above.*</label><textarea id='q' required></textarea></form></body></html>")
+    page = tmp_path / "swbc2.html"
+    page.write_text(html, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if i.get("tag") in ("textarea", "input"))
+        out, _ = await d.t_fill_batch([{"ref": ref, "answer_key": "education.high_school", "value": None, "source": None,
+                                        "label": "Institution name"}])
+        assert out["results"][0]["status"] == "set", out
+        assert await ex.page.evaluate("() => document.getElementById('q').value") == "Clements High School, Sugar Land, TX"
+    finally:
+        await ex.close(close_browser=True)
