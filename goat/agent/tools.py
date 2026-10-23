@@ -1275,6 +1275,43 @@ _US_STATES = {"AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas"
 _POSTED_LOCATION = re.compile(r"\bLocations?\s*:?\s*([A-Z][A-Za-z .'-]{1,40}?),\s*([A-Z][A-Za-z ]{1,30}?)"
                               r"(?:,\s*(?:United States(?: of America)?|USA|US)\b|\s*[\n|]|\s*$)")
 
+# "California Applicants only: ... By checking the following box, I waive my right to receive copies of public records"
+# (ABB, 2026-10-23, options 'I waive my right ...' / 'Not applicable'): a question only for another state's applicants does
+# not apply to him. 'Not applicable' went in under consent.privacy_notice (Yes) as the model's judgment, and the judge
+# failed the draft for it.
+_STATE_NAMES = "|".join(sorted((re.escape(s) for s in _US_STATES.values()), key=len, reverse=True)) + "|New York City|NYC"
+OTHER_STATE_ONLY = re.compile(
+    rf"\b(?P<s1>{_STATE_NAMES})\s+(applicants?|residents?|candidates?)\s+only\b|"
+    rf"\b(only|applies|applicable)\s+(only\s+)?(to|for)\s+(applicants?|residents?|candidates?)\s+(in|of|from)\s+(the state of\s+)?(?P<s2>{_STATE_NAMES})\b|"
+    rf"\bif you (are|reside|live)( a resident)?\s+(of|in)\s+(the state of\s+)?(?P<s3>{_STATE_NAMES})\b|"
+    rf"\bif you are an?\s+(?P<s4>{_STATE_NAMES})\s+(resident|applicant)\b", re.I)
+OTHER_STATE_KEY = "location.other_state_not_applicable"
+OTHER_STATE_ANSWER = "Not applicable; N/A; Does not apply; Not applicable to me; No"
+
+
+def other_state_only(question: str, home_state: str) -> str:
+    """The state a question is limited to when that is not his home state ('California'), else ''."""
+    m = OTHER_STATE_ONLY.search(question or "")
+    if not m or not (home_state or "").strip():
+        return ""
+    st = next((g for g in (m.group("s1"), m.group("s2"), m.group("s3"), m.group("s4")) if g), "")
+    if st.lower() in ("nyc", "new york city"):
+        st = "New York"
+    st = next((s for s in _US_STATES.values() if s.lower() == st.lower()), st)
+    return st if st.lower() != home_state.strip().lower() else ""
+
+
+def other_state_answer():
+    """The stored rule for another state's questions, created on first use (from his home state, so 'seed:derived': the
+    fact check reads its note)."""
+    a = answers.get(OTHER_STATE_KEY)
+    if a is None or not a.has_value:
+        answers.save_answer(OTHER_STATE_KEY, OTHER_STATE_ANSWER, answer_type="choice_chain", source="seed:derived",
+                            note="A question only for applicants in another U.S. state (California, New York, ...) does not apply "
+                                 "to him: he lives in Sugar Land, Texas. The option saying it does not apply, else No.")
+        a = answers.get(OTHER_STATE_KEY)
+    return a
+
 
 def posting_city_state(job: dict, posting_text: str) -> tuple[str, str] | None:
     """The posting's first U.S. location as (city, full state name), from the listing or the posting text."""
@@ -3051,6 +3088,16 @@ class ToolDispatcher:
                 out["note"] = ("his skills list: tick EVERY option in `tick` (fill_batch, one entry per box, answer_key "
                                "experience.skills_list) and leave the others unticked")
                 db.event(self.ctx.job_id, "answer:skills_rule", {"question": question[:160], "tick": out["tick"][:20]})
+                return out, None
+        home = answers.get("identity.state", self.ctx.job.get("company", ""), self.ctx.portal)
+        st = other_state_only(question, str(home.answer) if home is not None and home.has_value else "")
+        if st and (options or not is_free_response(question, options)):
+            a_os = other_state_answer()
+            if a_os is not None and a_os.has_value:
+                out = self._present(a_os, via="home_state_rule")
+                out["note"] = (f"this question is only for {st} applicants and he lives in {home.answer}: pick the option that says it "
+                               "does not apply (Not applicable / N/A), else No")
+                db.event(self.ctx.job_id, "answer:other_state", {"state": st, "question": question[:160]})
                 return out, None
         a = answers.lookup(question, self.ctx.job.get("company", ""), self.ctx.portal)
         if a is not None and a.has_value:
