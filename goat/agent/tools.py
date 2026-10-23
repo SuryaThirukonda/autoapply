@@ -920,7 +920,10 @@ def signed_in_form(probe: dict) -> str:
 def sf_profile_page(url: str, title: str) -> bool:
     """SuccessFactors' candidate profile ('Career Opportunities: My Profile', navBarLevel=MY_PROFILE): where it lands after a
     Sign In, away from the job's application."""
-    return bool(re.search(r"navBarLevel=MY_PROFILE", url or "", re.I) or re.search(r"\bmy profile\b", title or "", re.I))
+    # Workday's candidate home too: Nissan's Sign In landed on /userHome and the run opened another posting from its list
+    # (2026-10-23)
+    return bool(re.search(r"navBarLevel=MY_PROFILE|myworkday(jobs|site)\.com/.*/userHome\b", url or "", re.I)
+                or re.search(r"\bmy profile\b", title or "", re.I))
 
 
 def sign_in_page(probe: dict) -> bool:

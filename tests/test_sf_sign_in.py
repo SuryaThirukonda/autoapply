@@ -110,3 +110,10 @@ async def test_a_sign_in_that_lands_on_my_profile_reopens_the_posting(store, tmp
         assert "creds:signed_in" in kinds
     finally:
         await ex.close(close_browser=True)
+
+
+def test_workday_candidate_home_counts_as_a_profile_landing():
+    """Nissan (2026-10-23): Workday's /userHome after Sign In; the run opened another posting from its list."""
+    from goat.agent.tools import sf_profile_page
+    assert sf_profile_page("https://alliance.wd3.myworkdayjobs.com/en-US/nissanjobs/userHome", "Careers")
+    assert not sf_profile_page("https://alliance.wd3.myworkdayjobs.com/en-US/nissanjobs/job/X_R1/apply/applyManually", "Apply")
