@@ -1990,6 +1990,16 @@ class ToolDispatcher:
                 opt_label = (item.get("label") or "").strip()
                 if answers.norm(opt_label) in ("no", "none", "none of the above", "n a", "not applicable") \
                         or re.match(r"^(no|none)\b", opt_label, re.I):
+                    # ...unless another option of the same question is his answer: Cisco's "Which post-secondary education
+                    # are you currently pursuing?" got 'None of the Above' ticked from education.completed_college_program
+                    # (No) beside his Bachelor's; Workday cleared it again, the record kept it, and the draft was held
+                    # (2026-10-23)
+                    other = await self._group_others_ticked(f["ref"], fields)
+                    if other:
+                        results.append({"ref": f["ref"], "status": "failed",
+                                        "error": f"another option of this question is his answer ('{other[:60]}' is ticked): "
+                                                 f"'{opt_label[:40]}' would contradict it; leave it unticked"})
+                        continue
                     val = "true"
                     label_matched = True
             # A "Yes" answer must not land on a negated option ("Not willing to relocate").
@@ -2730,6 +2740,35 @@ class ToolDispatcher:
         self.ctx.last_snapshot = None   # a different page: snapshot again before using refs
         out["note"] = "call snapshot before using any ref on this page"
         return out, None
+
+    async def _group_others_ticked(self, ref: str, fields: list[dict]) -> str:
+        """The label of another option of the checkbox group holding `ref` that is ticked on the page, or that this same
+        fill_batch ticks; '' when there is none."""
+        snap = self.ctx.last_snapshot
+        group = next((g for g in (getattr(snap, "groups", None) or []) if any(o.get("ref") == ref for o in g.get("options", []))), None)
+        options = list(group.get("options", [])) if group else []
+        try:
+            sib = await self.ctx.ex.eval(js.JS_CHOICE_SIBLINGS, ref)
+        except Exception:
+            sib = []
+        if isinstance(sib, list) and sib:
+            options = sib                    # the page's own state, with what this run ticked so far
+        others = {o.get("ref"): o for o in options if o.get("ref") and o.get("ref") != ref}
+        hit = next((o for o in others.values() if o.get("checked")), None)
+        if hit is not None:
+            return str(hit.get("label") or "")
+        company = self.ctx.job.get("company", "")
+        for g in fields:
+            if g.get("ref") not in others or (g.get("source") or "").lower() == "clear":
+                continue
+            v = str(g.get("value") or "").strip().lower()
+            if v in AFFIRMATIVE:
+                return str(others[g["ref"]].get("label") or g.get("label") or "")
+            if not v and g.get("answer_key"):
+                a = answers.get(g["answer_key"], company, self.ctx.portal)
+                if a is not None and a.has_value and answers.norm(str(a.answer)).split(" ")[0] not in ("no", "none", "false", "n"):
+                    return str(others[g["ref"]].get("label") or g.get("label") or "")
+        return ""
 
     async def _chain_pick(self, ref: str, parts: list[str]) -> dict | None:
         """The option an ordered chain picks in the radio / checkbox group holding `ref`: the first chain entry (its

@@ -1476,7 +1476,7 @@ JS_CHOICE_SIBLINGS = r"""(ref) => {
   for (let i = 0; i < 6 && box; i++, box = box.parentElement) {
     const peers = Array.from(box.querySelectorAll('input[type="checkbox"], input[type="radio"]'));
     if (peers.length >= 2) {
-      return JSON.stringify(peers.map(p => ({ ref: p.getAttribute('data-goat-ref') || '', label: labelFor(p) })).filter(p => p.ref));
+      return JSON.stringify(peers.map(p => ({ ref: p.getAttribute('data-goat-ref') || '', label: labelFor(p), checked: !!p.checked })).filter(p => p.ref));
     }
   }
   return JSON.stringify([]);
