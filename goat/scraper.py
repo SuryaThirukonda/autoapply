@@ -471,7 +471,12 @@ def poll_extra_once(feeds=EXTRA_FEEDS, fetch=None) -> dict:
     fetch = fetch or _fetch_feed
     out: dict = {}
     con = db.connect()
-    held = PostingIndex(con.execute("SELECT id, company, title, url FROM listings"))
+    # This runs on the scraper's thread over goat's one shared connection: every read is fetched whole under goat.db's
+    # lock (as cloud._read_local does). Iterating a cursor here while the worker wrote made its writes fail with
+    # 'database is locked' (2026-10-22 18:26: run_job crashed on the first automatic poll).
+    with db._lock:
+        listings = con.execute("SELECT id, company, title, url FROM listings").fetchall()
+    held = PostingIndex(listings)
     for name, url in feeds:
         label = f"{name}:{url.rsplit('/', 1)[-1]}"
         try:
@@ -484,7 +489,8 @@ def poll_extra_once(feeds=EXTRA_FEEDS, fetch=None) -> dict:
         except Exception as e:  # noqa: BLE001 - a feed that cannot be read is skipped this time
             out[label] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
             continue
-        known = {r[0] for r in con.execute("SELECT id FROM listings WHERE source=?", (name,))}
+        with db._lock:
+            known = {r[0] for r in con.execute("SELECT id FROM listings WHERE source=?", (name,)).fetchall()}
         batch = []
         for r in rows:
             if r["id"] in known:

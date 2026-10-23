@@ -175,6 +175,40 @@ def test_a_list_that_cannot_be_read_does_not_stop_the_other(fresh_db):
     assert db.meta_get("extra_feed:zshah101:jobs.json:last_ok") is not None      # an unchanged list was still read
 
 
+def test_a_poll_never_breaks_the_workers_writes(tmp_path, monkeypatch):
+    """The poll runs on the scraper's thread over goat's one connection. While it built its index from an open cursor,
+    a write from another process made every write of the worker fail with 'database is locked' (2026-10-22 18:26)."""
+    import sqlite3
+    import threading
+    db.reset_for_tests(tmp_path / "race.db")
+    with db.tx() as c:
+        for i in range(1500):
+            c.execute("INSERT INTO listings(id, company, title, url, triage_status, active) VALUES(?,?,?,?,'queued',1)",
+                      (f"l{i}", f"Co {i}", "Software Engineer Intern", f"https://x.example/jobs/{i}"))
+    add = scraper.PostingIndex.add
+    monkeypatch.setattr(scraper.PostingIndex, "add", lambda self, *a: (time.sleep(0.0005), add(self, *a)))
+    errors = []
+
+    def worker():
+        time.sleep(0.1)
+        other = sqlite3.connect(str(tmp_path / "race.db"), timeout=30)       # an operator script writes meanwhile
+        other.execute("INSERT INTO meta(key, value) VALUES('x', '1') ON CONFLICT(key) DO UPDATE SET value='2'")
+        other.commit()
+        for k in range(10):
+            try:
+                db.event(None, "test:write", {"k": k})
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{type(e).__name__}: {e}")
+            time.sleep(0.02)
+
+    t = threading.Thread(target=worker)
+    t.start()
+    scraper.poll_extra_once(FEEDS[:1], fetch=_fetcher({"zshah101:jobs.json": json.dumps({})}))
+    t.join()
+    db.reset_for_tests(tmp_path / "after.db")
+    assert errors == []
+
+
 def test_simplify_adds_no_second_job_for_a_posting_another_list_gave(fresh_db):
     scraper.ingest(scraper.zshah_rows({"gh:globex:1": _zshah("gh:globex:1", "Globex", "Software Developer Intern", GLOBEX)}),
                    first_run=False)
