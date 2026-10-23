@@ -3361,7 +3361,14 @@ class ToolDispatcher:
         if fetch is None:
             return {"error": "the mail helper cannot fetch reset links"}, None
         quiet = self.ctx.portal == "workday" and workday_mail_quiet()
-        res = await asyncio.to_thread(fetch, self.ctx.portal, self.ctx.portal_host, after_ts, **({"timeout_s": 45} if quiet else {}))
+        kw = {"timeout_s": 45} if quiet else {}
+        try:
+            import inspect
+            if "company" in inspect.signature(fetch).parameters:
+                kw["company"] = self.ctx.job.get("company", "")     # the employer may send it (PACCAR, 2026-10-22)
+        except (TypeError, ValueError):
+            pass
+        res = await asyncio.to_thread(fetch, self.ctx.portal, self.ctx.portal_host, after_ts, **kw)
         status = getattr(res, "status", "not_received")
         if quiet and status != "reset_link":
             db.event(self.ctx.job_id, "creds:mail_quiet", {"host": self.ctx.portal_host, "waited_s": 45})

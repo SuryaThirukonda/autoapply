@@ -520,3 +520,17 @@ def test_oracle_fusion_mail_on_the_employer_domain_is_found():
     assert "@" not in q.split("after:")[0], q
     assert sender_allowed("noreply_fusion_essf@oci.brkenergy.com", "oracle", host, toks)
     assert not sender_allowed("offers@brkenergy-deals.example", "oracle", host, toks)
+
+
+def test_a_reset_mailed_from_the_employers_own_domain_is_found():
+    """PACCAR (2026-10-22): its SuccessFactors password resets come from DoNotReply@paccar.com with a link on the
+    SuccessFactors host; only SuccessFactors' own senders were searched and the run parked 'no reset email'."""
+    me = "career5.successfactors.eu"
+    link = "https://career5.successfactors.eu/career?company=paccarinc&career_ns=password_reset&token=abc"
+    m = _msg("p1", 1_700_000_100, "PACCAR Recruiting <DoNotReply@paccar.com>", "Password Reset", f'<a href="{link}">Reset</a>', html=True)
+    assert gmail.fetch_password_reset_link("successfactors", me, 1_700_000_000, timeout_s=0, poll_s=0,
+                                           client=FakeMailClient([[m]])).status == "not_received"
+    res = gmail.fetch_password_reset_link("successfactors", me, 1_700_000_000, timeout_s=0, poll_s=0,
+                                          client=FakeMailClient([[m]]), company="Paccar")
+    assert res.status == "reset_link" and res.url == link
+    assert "paccar" in gmail.build_reset_query("successfactors", me, 1_700_000_000, gmail.company_sender_tokens("PACCAR"))

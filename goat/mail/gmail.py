@@ -822,14 +822,17 @@ def fetch_password_reset_link(
     poll_s: float | None = None,
     client: MailClient | None = None,
     _sleep: Callable[[float], None] = time.sleep,
+    company: str = "",
 ) -> LinkResult:
     """Wait for the portal's password-reset email and return its reset link (on the portal's host).
     Used when a tenant already holds an account under an older password: the agent asks for a reset and
-    sets Surya's one application password on it."""
+    sets Surya's one application password on it. `company`: the employer, whose own mail domain may send it
+    (PACCAR's SuccessFactors resets come from DoNotReply@paccar.com and were never found, 2026-10-22)."""
     client = client or default_client()
     timeout_s = SETTINGS.budgets.code_wait_s if timeout_s is None else timeout_s
     poll_s = SETTINGS.mail.poll_interval_s if poll_s is None else poll_s
     extra = workday_tenant_tokens(portal, portal_host)
+    extra += [t for t in company_sender_tokens(company) if t not in extra]
     query = build_reset_query(portal, portal_host, after_ts, extra)
 
     def _has_portal_link(m: Message) -> bool:
