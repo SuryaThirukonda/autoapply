@@ -757,6 +757,9 @@ SELF_SATISFIED = re.compile(r"\b(this|that|it|the requirement|requirement) (is|w
                             # Westinghouse (2026-10-23): "requiring C# or C++ coursework/project experience, and C++ is present,
                             # so eligible; wait can't park?" stood as an eligibility hold
                             r"\bso (he is |surya is |he's |he remains )?(eligible|qualified)\b|"
+                            # a reason that argues itself out of the hold (Mastercard, 2026-10-23: "... Actually requirements are
+                            # exposure, not strict. ... continue not park")
+                            r"\bcontinue,? (and )?not park\b|\bnot strict\b|\bshould not park\b|"
                             r"\b(he|surya) (is|remains|appears|seems) (fully )?(eligible|qualified)\b", re.I)
 
 
@@ -3914,7 +3917,9 @@ class ToolDispatcher:
     SKILL_ONLY = re.compile(r"\b(knowledge|familiar(ity)?|proficien(t|cy)|experience (with|in|using)|skills? (in|with)|"
                             r"understanding of|exposure to|hands-on|(?<!work )(?<!professional )(?<!industry )(?<!years of )"
                             r"(?<=[a-z/-] )experience\b|experience (is )?not (established|shown|documented|stated))", re.I)
-    HARD_REQUIREMENT = re.compile(r"clearance|citizen|green card|permanent resident|graduate (student|program|degree)|master|ph\.?d|"
+    # 'master' as a degree only: it matched 'Mastercard', and Mastercard's skill-only park stood (2026-10-23)
+    HARD_REQUIREMENT = re.compile(r"clearance|citizen|green card|permanent resident|graduate (student|program|degree)|"
+                                  r"\bmaster'?s\b|\bmasters? (degree|program|student)|ph\.?d|"
                                   r"doctoral|degree (by|in|before)|graduat(e|ion) (date|by|before|between|in)|enrolled|"
                                   r"\d+\+? years? of (professional|industry|work)|located in|resid(e|ent)|commut|onsite in|"
                                   r"co-?op term|semester|work term|unpaid|volunteer", re.I)

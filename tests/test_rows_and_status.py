@@ -192,3 +192,19 @@ async def test_a_held_fallback_gives_way_to_his_first_preference(tmp_path):
         assert await ex.page.inner_text("#sd") == "Junior"
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_mastercard_is_no_masters_degree(store):
+    """Mastercard (2026-10-23): 'master' in HARD_REQUIREMENT matched 'Mastercard' and a skill-only park stood."""
+    from goat.agent.tools import SELF_SATISFIED, ToolDispatcher
+    assert not ToolDispatcher.HARD_REQUIREMENT.search("Mastercard requires exposure to Kubernetes")
+    assert ToolDispatcher.HARD_REQUIREMENT.search("requires enrollment in a Master's program")
+    assert SELF_SATISFIED.search("Actually requirements are exposure, not strict. continue not park")
+    d, ctx = _dispatcher(_job())
+
+    async def page_text(n=0):
+        return "Platform Engineering Intern My Information"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("eligibility: Mastercard requires exposure to Kubernetes and Terraform")
+    assert "not an eligibility rule" in out["error"], out
