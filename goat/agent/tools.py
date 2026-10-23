@@ -738,6 +738,8 @@ def combined_account_application(snap) -> bool:
 
 
 _NUM_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
+FORM_FIELD_TALK = re.compile(r"\b((date|form|required|input|education|answer|text) fields?|dropdowns?|pickers?|text ?box(es)?|"
+                             r"checkbox(es)?|the form'?s?|month/year)\b", re.I)
 YEARS_CLAIM = re.compile(r"\b(\d{1,2})\+?\s*(?:years?|yrs?)\b", re.I)
 
 
@@ -4705,6 +4707,15 @@ class ToolDispatcher:
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "no requirement named"})
             return {"error": "not parked: an eligibility hold must quote the posting's requirement he does not meet, and this "
                              "reason names none. If nothing in the posting rules him out, continue the application."}, None
+        # A form field the run could not fill is no eligibility rule: Waymo was held 'eligibility: required education start/end
+        # date fields only support month/year ... enrollment dates unknown' (2026-10-23); his dates are stored.
+        if low.startswith("eligibility") and FORM_FIELD_TALK.search(reason) \
+                and self.ctx.control_failures.get("park:form_eligibility", 0) < 2:
+            self.ctx.control_failures["park:form_eligibility"] = self.ctx.control_failures.get("park:form_eligibility", 0) + 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "a form field, not a requirement"})
+            return {"error": "not parked: this names a form field, not a posting requirement he fails. Fill it from his stored "
+                             "answers (education.start 'August 2025', education.graduation 'May 2028', and so on; a month/year "
+                             "box takes the month and year) and continue."}, None
         # A number of years the posting itself never states: Cisco's 'Embedded Systems I' was held for "2 years of work
         # experience", a rule only its sibling postings ('... II') carry (2026-10-23).
         m_years = YEARS_CLAIM.search(reason)

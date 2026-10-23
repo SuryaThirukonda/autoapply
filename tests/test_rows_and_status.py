@@ -130,3 +130,16 @@ async def test_he_requires_no_housing_accommodation(store):
     assert out["answer"] == "No" and out["via"] == "housing_rule", out
     out, _ = await d.t_lookup_answer("Would you like a housing stipend?", ["Yes", "No"], None, None)
     assert out.get("via") != "housing_rule"
+
+
+@pytest.mark.asyncio
+async def test_an_eligibility_park_about_a_form_field_is_refused(store):
+    """Waymo (2026-10-23): 'eligibility: required education start/end date fields only support month/year ...'."""
+    d, ctx = _dispatcher(_job())
+
+    async def page_text(n=0):
+        return "Education Start date End date Submit your application"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("eligibility: required education start/end date fields only support month/year and the form's "
+                            "education record dates need clarification; current student enrollment dates unknown")
+    assert "names a form field" in out["error"], out
