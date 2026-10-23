@@ -143,3 +143,17 @@ async def test_an_eligibility_park_about_a_form_field_is_refused(store):
     out, _ = await d.t_park("eligibility: required education start/end date fields only support month/year and the form's "
                             "education record dates need clarification; current student enrollment dates unknown")
     assert "names a form field" in out["error"], out
+
+
+@pytest.mark.asyncio
+async def test_technology_experience_is_no_eligibility_rule(store):
+    """'<technology> experience not established' names skills, not an eligibility rule (Neuralink, 2026-10-23); FPGA or other
+    hardware work stays a disqualifier."""
+    d, ctx = _dispatcher(_job())
+
+    async def page_text(n=0):
+        return "Firmware Engineer Intern Apply"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("eligibility: the role requires React, GraphQL and Kubernetes experience not established in "
+                            "Surya's profile")
+    assert "not an eligibility rule" in out["error"], out

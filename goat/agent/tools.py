@@ -3909,8 +3909,11 @@ class ToolDispatcher:
             return {"status": status, "hint": "no reset email came and the account exists: park credentials_unknown"}, None
         return {"status": status, "next": CREATE_STEPS}, None
 
+    # also '<technology> experience' and 'experience not established' (Neuralink Firmware, 2026-10-23: "requiring embedded
+    # systems, MCU/FPGA and kernel-driver experience not established in Surya's profile")
     SKILL_ONLY = re.compile(r"\b(knowledge|familiar(ity)?|proficien(t|cy)|experience (with|in|using)|skills? (in|with)|"
-                            r"understanding of|exposure to|hands-on)\b", re.I)
+                            r"understanding of|exposure to|hands-on|(?<!work )(?<!professional )(?<!industry )(?<!years of )"
+                            r"(?<=[a-z/-] )experience\b|experience (is )?not (established|shown|documented|stated))", re.I)
     HARD_REQUIREMENT = re.compile(r"clearance|citizen|green card|permanent resident|graduate (student|program|degree)|master|ph\.?d|"
                                   r"doctoral|degree (by|in|before)|graduat(e|ion) (date|by|before|between|in)|enrolled|"
                                   r"\d+\+? years? of (professional|industry|work)|located in|resid(e|ent)|commut|onsite in|"
