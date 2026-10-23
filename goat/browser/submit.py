@@ -59,6 +59,9 @@ async def _issue_banner(ex: Executor) -> str:
     return m.group(0) if m else ""
 
 
+LATE_CONFIRM_S = 30.0     # after wait_s with no change: keep watching for a slow portal's confirmation
+
+
 async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: float = 15.0) -> SubmitResult:
     scan = await scan_errors(ex)
     # The gate's stale-message rule applies here too: SuccessFactors keeps 'Please complete your personal information.'
@@ -144,6 +147,26 @@ async def submit(ex: Executor, job_id: int | None, *, label: str = "", wait_s: f
         if refused:
             return SubmitResult("failed", why=refused, url=after_scan.get("url", ""), clicked_label=found.get("text", ""))
 
+    # Nothing moved yet: a slow portal confirms well after the wait. L3Harris' SuccessFactors showed 'Successfully Applied'
+    # about 20 s after the Apply click; the submit was called failed at 15 s and the run held 'stuck' over an application
+    # that had gone in (2026-10-23). Watch a while longer, for a confirmation, a new address or an issue banner only.
+    late_deadline = time.monotonic() + LATE_CONFIRM_S
+    while time.monotonic() < late_deadline:
+        await asyncio.sleep(2.0)
+        try:
+            last = await submit_signal(ex)
+        except Exception:
+            continue
+        if last.get("confirm_match"):
+            return SubmitResult("submitted", signal="confirmation_text (late): " + last["confirm_match"], url=last.get("url", ""),
+                                clicked_label=found.get("text", ""))
+        if last.get("url") and before.get("url") and last["url"] != before["url"] and not same_form_move(before["url"], last["url"]):
+            return SubmitResult("submitted", signal=f"url_changed (late): {before['url']} -> {last['url']}", url=last.get("url", ""),
+                                clicked_label=found.get("text", ""))
+        issue = await _issue_banner(ex)
+        if issue:
+            return SubmitResult("failed", why=[f"the portal says {issue!r}: the application is not submitted"],
+                                url=last.get("url", "") or ex.url, clicked_label=found.get("text", ""))
     try:
         after = await scan_errors(ex)
     except Exception:
