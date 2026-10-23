@@ -111,7 +111,7 @@ async def send_digest() -> None:
 
 
 RECONCILE_FIRST_DELAY_S = 300     # after a start, let the worker's sign-in codes and reset links go first
-RECONCILE_PAUSE_S = 1.0           # between applications: ~10 Gmail reads each, under the per-user rate limit
+RECONCILE_PAUSE_S = 2.0           # between applications: ~10 Gmail reads each, well under the per-user rate limit
 
 
 async def reconcile_mail_once(pause_s: float = RECONCILE_PAUSE_S) -> int:
@@ -126,6 +126,10 @@ async def reconcile_mail_once(pause_s: float = RECONCILE_PAUSE_S) -> int:
     for i, app in enumerate(ledger.unconfirmed_older_than(60)):
         if i:
             await asyncio.sleep(pause_s)
+        for _ in range(60):                    # a run waiting for a code or link reads Gmail first (at most 5 min)
+            if not gmail.urgent_active():
+                break
+            await asyncio.sleep(5.0)
         try:
             mid = await asyncio.to_thread(gmail.find_confirmation_email, app["company"], int(app["submitted_at"]) - 300, None)
         except Exception as e:  # noqa: BLE001 - the next pass tries this one again

@@ -40,3 +40,25 @@ async def test_one_failed_read_skips_only_that_application(apps, monkeypatch):
     assert seen == ["Alpha", "Bravo", "Charlie"] and pauses == [0.5, 0.5]
     left = [r["company"] for r in ledger.unconfirmed_older_than(60)]
     assert left == ["Alpha"]                                   # tried again on the next pass
+
+
+@pytest.mark.asyncio
+async def test_the_pass_waits_while_a_run_reads_gmail_for_a_code(apps, monkeypatch):
+    """Insperity (2026-10-23): its reset-link wait and the confirmation pass were both throttled by Gmail."""
+    busy = iter([True, True, False] + [False] * 20)
+    waits = []
+
+    async def pause(s):
+        waits.append(s)
+    monkeypatch.setattr(gmail, "urgent_active", lambda: next(busy))
+    monkeypatch.setattr(gmail, "find_confirmation_email", lambda company, after, client: None)
+    monkeypatch.setattr(supervisor.asyncio, "sleep", pause)
+    await supervisor.reconcile_mail_once(pause_s=0.5)
+    assert waits[:2] == [5.0, 5.0]                              # it stood aside twice before the first read
+
+
+def test_an_urgent_poll_marks_gmail_busy(monkeypatch):
+    monkeypatch.setattr(gmail, "_URGENT_UNTIL", 0.0)
+    assert not gmail.urgent_active()
+    gmail.mark_urgent()
+    assert gmail.urgent_active()

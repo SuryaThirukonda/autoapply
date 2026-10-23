@@ -595,6 +595,22 @@ class GmailClient:
 
 _default_client: MailClient | None = None
 
+# A run waiting for a sign-in code, verification link or reset link reads Gmail every few seconds; the hourly
+# confirmation pass must not compete with it (Insperity's reset-link wait and the pass were both throttled with
+# 'rateLimitExceeded', 2026-10-23).
+_URGENT_UNTIL = 0.0
+URGENT_HOLD_S = 45.0
+
+
+def mark_urgent() -> None:
+    global _URGENT_UNTIL
+    _URGENT_UNTIL = time.monotonic() + URGENT_HOLD_S
+
+
+def urgent_active() -> bool:
+    """A run read Gmail for a code or link within the last URGENT_HOLD_S seconds."""
+    return time.monotonic() < _URGENT_UNTIL
+
 
 def default_client() -> MailClient:
     global _default_client
@@ -648,6 +664,7 @@ def _poll_newest(
     seen: dict[str, Message | None] = {}
     listed_once = False
     while True:
+        mark_urgent()
         best: Message | None = None
         try:
             refs = client.list_messages(query, 10)
