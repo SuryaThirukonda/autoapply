@@ -43,3 +43,26 @@ async def test_a_park_fills_the_blockers_his_stored_answers_cover(store, tmp_pat
         assert "park:autofill" in kinds
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_an_incomplete_form_park_naming_a_stopper_word_is_still_checked(store, tmp_path):
+    """L3Harris (2026-10-23): 'ready_for_you: SuccessFactors form remains incomplete; required security-clearance, ...
+    questions need to be finished' stood at once because 'clearance' counts as a stopper word."""
+    answers.save_answer("compliance.criminal_history", "No", answer_type="choice", source="questionnaire", aliases=[FELONY])
+    page = tmp_path / "long2.html"
+    page.write_text(PAGE, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = await snapshot.take(ex)
+        out, _ = await d.t_park("ready_for_you: SuccessFactors form remains incomplete; required security-clearance, compliance, "
+                                "demographic, and signature questions need to be finished before Apply.")
+        assert out and "not parked" in out["error"], out
+        assert await ex.page.evaluate("() => document.getElementById('q1').value") == "No"
+    finally:
+        await ex.close(close_browser=True)

@@ -3969,6 +3969,11 @@ class ToolDispatcher:
                             r"legal|eligib|clearance|sponsor|not (offered|available|listed|selectable)|no (selectable|matching) |"
                             r"cannot be (set|selected|answered)|picker .*(not|no)\b", re.I)
     RFY_GIVE_UP = re.compile(r"^(ready_for_you|needs_you):\s*(please\s+)?(complete|finish|fill|continue|resume|fix|enter|provide|answer|select|add)\b", re.I)
+    # "SuccessFactors form remains incomplete; required security-clearance, compliance, demographic, and signature questions
+    # need to be finished before Apply" (L3Harris, 2026-10-23): an unfinished form, whatever stopper word it names
+    RFY_INCOMPLETE = re.compile(r"\b(incomplete|unfinished|not (yet )?(complete|completed|finished|filled)|"
+                                r"remain(s|ing)? (empty|unanswered|blank|unfilled)|still (empty|unanswered|blank|need)|"
+                                r"need(s)? to be (completed|finished|filled|answered))\b", re.I)
     # Surya 2026-10-18: a car requirement is fine (he arranges one); "local / within N miles" is fine when the posting is
     # paid; a straight hardware role is not.
     DISQUALIFIERS = re.compile(r"(master'?s|ph\.?d|doctoral|graduate program|active (secret|top secret|ts/sci|clearance)|returning intern|co-?op|fall 2027|spring 2028|quant|"
@@ -4452,7 +4457,7 @@ class ToolDispatcher:
         progressed_now = self.ctx.decisions_at_park >= 0 and n_dec_now > self.ctx.decisions_at_park
         rfy_soft = low.startswith(("ready_for_you", "needs_you")) \
             and (self.ctx.park_attempts < 4 or (progressed_now and self.ctx.parks_total < 10)) and (
-            not stoppers or (bool(self.RFY_GIVE_UP.search(reason)) and not real_challenge))
+            not stoppers or ((bool(self.RFY_GIVE_UP.search(reason)) or bool(self.RFY_INCOMPLETE.search(reason))) and not real_challenge))
         hard = reason.lower().startswith(("ready_for_you", "bot_check", "automation_prohibited", "eligibility", "answer_", "credentials", "code_not", "host_mismatch", "needs_you")) \
             and not rfy_soft
         # past the budget, a park is still checked twice when the page has a submit control: Northrop Grumman spent its
