@@ -146,6 +146,7 @@ class RunContext:
     sign_in_url: str = ""          # the page where that Sign In failed (the way back to its sign-up control)
     creds_page_url: str = ""       # the sign-in page where credentials were last typed
     reset_link_tried: bool = False # open_password_reset_link was called this run
+    reset_form_nudged: bool = False   # ...once, on a forgot-password form that was not sent yet
     reset_not_received: bool = False  # ...and no reset email came
     create_tried: bool = False     # credentials mode 'create' was used this run
     account_exists: bool = False   # a Create Account click said the account already exists
@@ -500,6 +501,37 @@ async def match_confirm_password(ex, password_ref: str, confirm_ref: str) -> str
         return str(await ex.page.evaluate(JS_MATCH_CONFIRM, [password_ref, confirm_ref]))
     except Exception:  # noqa: BLE001 - the portal's own check still stands
         return "unknown"
+
+
+# A forgot-password form not sent yet: a page about a forgotten password with an email box, no password box, and a send
+# button. PACCAR's SuccessFactors 'Password Help' page (2026-10-23) was still loading when the run took its snapshot; the
+# run asked for the reset email without clicking Submit and waited three minutes for mail that was never requested.
+JS_UNSENT_RESET_FORM = """() => {
+  const vis = (e) => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+                       return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const words = [location.href, document.title, ...Array.from(document.querySelectorAll('h1,h2,h3,h4,legend,label,p'))
+                 .slice(0, 80).map((e) => e.textContent || '')].join(' ');
+  if (!/forgot|reset (your |my )?password|password (reset|help)|recover/i.test(words)) return null;
+  if (Array.from(document.querySelectorAll('input[type=password]')).some(vis)) return null;
+  const said = (e) => [e.name, e.id, e.getAttribute('aria-label'), e.placeholder,
+                       e.labels && e.labels[0] ? e.labels[0].textContent : ''].join(' ');
+  const box = Array.from(document.querySelectorAll('input')).find((e) => vis(e) && !e.disabled &&
+                (e.type === 'email' || (e.type === 'text' && /mail|user/i.test(said(e)))));
+  if (!box) return null;
+  const send = Array.from(document.querySelectorAll('button, input[type=submit], input[type=button], [role=button]')).find((e) =>
+                 vis(e) && !e.disabled && /^(submit|send|send (reset |password reset )?(email|link)|reset( password)?|request( reset)?( link)?|continue|next)$/i
+                 .test((e.textContent || e.value || '').trim()));
+  return send ? { send: (send.textContent || send.value || '').trim(), filled: !!box.value } : null;
+}"""
+
+
+async def unsent_reset_form(ex) -> dict:
+    """{'send': button label, 'filled': email box filled} when the page shows a forgot-password form not sent yet, else {}."""
+    try:
+        got = await ex.page.evaluate(JS_UNSENT_RESET_FORM)
+    except Exception:  # noqa: BLE001 - no page to read: the mail poll decides
+        return {}
+    return got if isinstance(got, dict) and got.get("send") else {}
 
 
 def way_back_url(*urls: str) -> str:
@@ -3392,6 +3424,15 @@ class ToolDispatcher:
         if self.ctx.mail is None:
             return {"error": "mail helper not configured (Gmail API)"}, None
         import asyncio
+        if not self.ctx.reset_form_nudged:
+            form = await unsent_reset_form(self.ctx.ex)
+            if form:
+                # once per run: a form that stays on the page after its send click must not hold the run here
+                self.ctx.reset_form_nudged = True
+                db.event(self.ctx.job_id, "creds:reset_form_unsent", {"host": self.ctx.portal_host, "send": form["send"]})
+                first = "" if form.get("filled") else "fill the email box from answer_key identity.email, then "
+                return {"error": f"the password-reset form on this page was not sent yet, so no email is coming: {first}"
+                                 f"click '{form['send']}', then call open_password_reset_link"}, None
         self.ctx.reset_link_tried = True
         after_ts = db.now() - 600
         fetch = getattr(self.ctx.mail, "fetch_password_reset_link", None)
