@@ -375,3 +375,10 @@ def test_the_judge_knows_his_next_year_classification_is_junior():
     from goat.judge import JUDGE_INSTRUCTIONS
     assert "NEXT academic year" in JUDGE_INSTRUCTIONS and "class_standing_next" in JUDGE_INSTRUCTIONS
     assert "never ask for Senior there" in JUDGE_INSTRUCTIONS
+
+
+def test_the_judge_knows_successfactors_personal_information_message_is_stale():
+    """Westinghouse (2026-10-23): the judge failed a draft twice over 'Please complete your personal information.' beside a
+    Salutation that showed 'Mr'; the gate already treats that message as stale."""
+    from goat.judge import JUDGE_INSTRUCTIONS
+    assert "Please complete your personal information." in JUDGE_INSTRUCTIONS and "never fails the draft on its own" in JUDGE_INSTRUCTIONS
