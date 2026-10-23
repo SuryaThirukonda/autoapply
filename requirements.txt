@@ -21,3 +21,4 @@ openai>=3
 stagehand
 pyyaml
 httpx
+websockets

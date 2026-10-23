@@ -50,6 +50,62 @@ async def is_healthy() -> bool:
     return (await cdp_version()) is not None
 
 
+async def close_unresponsive_tabs(cdp_url: str | None = None, timeout: float = 4.0) -> list[dict]:
+    """Close the tabs whose page no longer answers a DevTools call; return them ({id, url}).
+
+    Playwright's connect_over_cdp attaches to every page and waits on each, so one hung tab makes every job fail
+    'browser_down' while /json/version (all is_healthy checks) still answers: 2026-10-22 21:19-21:55, a CVS Workday
+    tab and a SuccessFactors tab hung and the queue stood still for 35 minutes. A blank tab is opened first when every
+    tab is hung, so Chrome does not quit with its last window."""
+    import json
+
+    import websockets
+
+    base = (cdp_url or SETTINGS.browser.cdp_url).rstrip("/")
+    ver = await cdp_version(base)
+    if not ver:
+        return []
+    hung: list[dict] = []
+    async with websockets.connect(ver["webSocketDebuggerUrl"], open_timeout=timeout, max_size=None) as ws:
+        seq = 0
+
+        async def call(method: str, params: dict | None = None, session: str | None = None) -> dict:
+            nonlocal seq
+            seq += 1
+            mid = seq
+            msg = {"id": mid, "method": method, "params": params or {}}
+            if session:
+                msg["sessionId"] = session
+            await ws.send(json.dumps(msg))
+
+            async def reply() -> dict:
+                while True:
+                    r = json.loads(await ws.recv())
+                    if r.get("id") == mid:
+                        return r
+            return await asyncio.wait_for(reply(), timeout)
+
+        pages = [t for t in (await call("Target.getTargets"))["result"]["targetInfos"] if t.get("type") == "page"]
+        for t in pages:
+            session = (await call("Target.attachToTarget", {"targetId": t["targetId"], "flatten": True}))["result"]["sessionId"]
+            try:
+                await call("Runtime.evaluate", {"expression": "1", "returnByValue": True}, session)
+            except asyncio.TimeoutError:
+                hung.append({"id": t["targetId"], "url": t.get("url", "")})
+            try:
+                await call("Target.detachFromTarget", {"sessionId": session})
+            except Exception:  # noqa: BLE001 - a hung page may not answer the detach either
+                pass
+    if not hung:
+        return []
+    async with httpx.AsyncClient(timeout=10) as c:
+        if len(hung) == len(pages):
+            await c.put(f"{base}/json/new?about:blank")
+        for t in hung:
+            await c.get(f"{base}/json/close/{t['id']}")
+    return hung
+
+
 def launch_command(b=None, platform: str = sys.platform) -> tuple[list[str], dict[str, str] | None]:
     """argv and environment (None = inherit) for the dedicated Chrome on this platform."""
     b = b or SETTINGS.browser

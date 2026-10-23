@@ -63,7 +63,10 @@ async def watchdog(stop: asyncio.Event) -> None:
             ok = await chrome.is_healthy()
             if not ok and SETTINGS.browser.launch_if_missing:
                 log.warning("watchdog: Chrome CDP not answering; relaunching")
-                await chrome.ensure_running()
+                if await chrome.ensure_running():
+                    from .worker import CONTROL
+                    CONTROL.browser_back = True      # the worker retries now, not after its backoff
+                    CONTROL.wake.set()
             # Daily digest at 18:00 local; the nightly proposals pass at 02:00
             lt = time.localtime()
             if due_daily(18, last_digest_day, lt):

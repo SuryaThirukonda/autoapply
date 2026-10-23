@@ -354,6 +354,7 @@ class WorkerControl:
         self.browser_ok: bool | None = None
         self.browser_failures = 0
         self.current: dict | None = None    # {"job": ..., "ex": Executor} while a job runs
+        self.browser_back = False           # Chrome was relaunched: retry now instead of waiting out the backoff
 
     # -- called from any thread
     def _call(self, fn) -> None:
@@ -857,6 +858,15 @@ async def _run_controlled(job: dict) -> RunOutcome:
         CONTROL.stop_mode = ""
 
 
+def backoff_over(backoff_until: float, now: float) -> bool:
+    """The browser backoff ends at its time, or at once when the watchdog has relaunched Chrome (2026-10-22: Chrome was
+    back at 21:55 and the worker still waited out a 15-minute backoff)."""
+    if CONTROL.browser_back:
+        CONTROL.browser_back = False
+        return True
+    return now >= backoff_until
+
+
 async def worker_loop(stop: asyncio.Event, idle_s: float = 20.0) -> None:
     CONTROL.bind()
     log.info("worker: reconcile %s", reconcile_after_restart())
@@ -866,7 +876,7 @@ async def worker_loop(stop: asyncio.Event, idle_s: float = 20.0) -> None:
         if CONTROL.paused():
             await _wait([stop, CONTROL.wake], 30)
             continue
-        if time.monotonic() < backoff_until:
+        if not backoff_over(backoff_until, time.monotonic()):
             await _wait([stop, CONTROL.wake], min(30.0, backoff_until - time.monotonic()))
             continue
         job = claim_next()
@@ -885,6 +895,20 @@ async def worker_loop(stop: asyncio.Event, idle_s: float = 20.0) -> None:
         if out.status == BROWSER_DOWN:
             CONTROL.browser_failures += 1
             wait_s = BROWSER_BACKOFF_S[min(CONTROL.browser_failures, len(BROWSER_BACKOFF_S)) - 1]
+            if CONTROL.browser_failures >= 2 and await chrome.is_healthy():
+                # Chrome answers but Playwright cannot attach: a hung tab blocks connect_over_cdp
+                try:
+                    hung = await chrome.close_unresponsive_tabs()
+                except Exception as e:  # noqa: BLE001 - the backoff below still applies
+                    log.warning("worker: hung-tab check failed: %s: %s", type(e).__name__, e)
+                    hung = []
+                if hung:
+                    with db.tx() as con:
+                        con.executemany("UPDATE jobs SET tab_target_id=NULL WHERE tab_target_id=?", [(t["id"],) for t in hung])
+                    db.event(None, "browser:hung_tabs_closed", {"tabs": [t["url"][:160] for t in hung]})
+                    log.warning("worker: closed %d tab(s) that no longer answered: %s", len(hung),
+                                ", ".join(t["url"][:80] for t in hung))
+                    wait_s = 5
             if CONTROL.browser_ok is not False:
                 db.event(None, "browser:down", {"reason": out.reason[:300], "retry_in_s": wait_s})
             CONTROL.browser_ok = False
