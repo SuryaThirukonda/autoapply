@@ -764,6 +764,15 @@ JS_PAGE_ERRORS = r"""
                     (el.id && document.querySelector('[aria-errormessage="' + CSS.escape(el.id) + '"], [aria-describedby~="' + CSS.escape(el.id) + '"]'));
       if (owner) { const q = questionOf(owner); if (q) return q; }
     } catch (e) { /* fall through */ }
+    // a control's own label by aria-labelledby or <label for> before any walk: the walk's first label can be another
+    // field's (Ivalua, 2026-10-22: a required sponsorship-details textarea was named 'LinkedIn Profile') or a picked
+    // chip's 'select__multi-value__label' (Twitch, 2026-10-22: the pick was cut from its own box and it read empty)
+    try {
+      const byIds = (el.getAttribute && el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+        .map(i => { const n = document.getElementById(i); return n ? txt(n) : ''; }).filter(Boolean).join(' ').trim();
+      if (byIds) return byIds;
+      if (el.labels && el.labels.length) { const t = txt(el.labels[0]); if (t) return t; }
+    } catch (e) { /* fall through */ }
     let p = el, hops = 0;
     // a design-system label shows its words through a <slot> (SmartRecruiters' screening boxes read '*', 2026-10-21)
     const slotText = (n) => { const ps = []; const w = (x, d) => { if (!x || d > 30) return; if (x.nodeType === 3) { ps.push(x.nodeValue || ''); return; }
@@ -899,12 +908,7 @@ JS_PAGE_ERRORS = r"""
             if (!c || !txt(c)) { c = null; let p = el.parentElement; for (let i = 0; i < 5 && p; i++, p = p.parentElement) { const t = txt(p); if (t && t.length < 240) { c = p; break; } } }
             let shown = c ? txt(c) : '';
             if (c && shown) { for (const l of c.querySelectorAll('label, legend')) { const lt = txt(l); if (lt) shown = shown.replace(lt, ''); } }
-            // the box's own question by aria-labelledby or <label for>: the nearest text can be the picked chip itself
-            // (Twitch's citizenship multi-select, 2026-10-22: the chip 'United States of America (USA)' was taken for the
-            // label and cut from the shown text, so the pick read as empty and blocked every submit)
-            const labelled = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
-              .map(i => { const n = document.getElementById(i); return n ? txt(n) : ''; }).join(' ').trim();
-            const own = labelled || (el.labels && el.labels.length ? txt(el.labels[0]) : '') || nearestLabel(el) || '';
+            const own = nearestLabel(el) || '';
             if (shown && own && shown.trim().startsWith(own)) shown = shown.trim().slice(own.length);
             shown = shown.replace(/^[\s*:]+|[\s*:]+$/g, '').trim();
             if (shown && !/^(select one|select\.\.\.|select|choose one|choose|search|no selection)$/i.test(shown)) empty = false;
