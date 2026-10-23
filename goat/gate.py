@@ -181,11 +181,20 @@ def drop_stale_required(errors: dict | None, snapshot) -> dict:
     # 'Login/Primary Email' heading while the box itself is '* E-Mail'); with no empty required field left on the page it
     # is stale too.
     nothing_empty = not errs.get("empty_required")
+    # questions answered by ticking (a group with a checked option): General Matter's 12-week availability question kept its
+    # standing note 'Please note that you must be available for the full 12 weeks' under a ticked Summer 2027 (2026-10-23)
+    answered = {_answers.norm(g.get("label") or "") for g in (getattr(snapshot, "groups", None) or [])
+                if any(o.get("checked") for o in g.get("options", []))}
+    answered |= {_answers.norm(it.get("group") or "") for it in (getattr(snapshot, "items", None) or [])
+                 if it.get("group") and (it.get("checked") or it.get("pressed"))}
+    answered.discard("")
 
     def stale(e: dict) -> bool:
         near = _answers.norm(e.get("near") or "")
         text = str(e.get("text") or "")
         if nothing_empty and _SECTION_MSG.search(text):
+            return True
+        if re.match(r"\s*(please note|note:)", text, re.I) and near and (near in answered or near in filled):
             return True
         return bool(near) and bool(_REQUIRED_MSG.search(text)) and not _FORMAT_MSG.search(text) and near in filled
 

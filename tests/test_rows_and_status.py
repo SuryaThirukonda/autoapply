@@ -208,3 +208,17 @@ async def test_mastercard_is_no_masters_degree(store):
     ctx.ex.page_text = page_text
     out, _ = await d.t_park("eligibility: Mastercard requires exposure to Kubernetes and Terraform")
     assert "not an eligibility rule" in out["error"], out
+
+
+def test_a_standing_note_under_an_answered_question_is_no_error():
+    """General Matter (2026-10-23): 'Please note that you must be available for the full 12 weeks' under a ticked Summer 2027."""
+    from goat.gate import drop_stale_required
+    from goat.browser.snapshot import Snapshot
+    q = "When are you available for a 12 week internship? Check all that apply *"
+    s = Snapshot(url="u", title="t", headings=[], items=[], challenge={}, errors={},
+                 groups=[{"kind": "checkbox", "label": q, "options": [{"ref": "e1", "label": "Summer 2027", "checked": True},
+                                                                       {"ref": "e2", "label": "Spring 2027", "checked": False}]}])
+    errs = {"error_text": [{"near": q, "text": "Please note that you must be available for the full 12 weeks"}]}
+    assert drop_stale_required(errs, s)["error_text"] == []
+    s.groups[0]["options"][0]["checked"] = False
+    assert drop_stale_required(errs, s)["error_text"]
