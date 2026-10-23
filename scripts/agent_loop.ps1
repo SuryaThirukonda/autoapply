@@ -1,7 +1,8 @@
 # Keep `goat run` alive: start it, and start it again whenever it exits (a crash, or a kill to load new code).
 # Output from every run is appended to logs\agent-loop.log / logs\agent-loop.err, so one tail follows them all.
 #
-#   Start:  Start-Process powershell -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File","scripts\agent_loop.ps1" -WindowStyle Hidden
+#   Start:  Start-ScheduledTask -TaskName 'goat agent loop' (scripts\ensure_agent_loop.ps1 also runs it every 5 minutes;
+#           a loop started from a Claude session's shell dies when that session is closed)
 #   Reload: kill the python process running `goat run` (this loop starts the new code within ~5 s)
 #   Stop:   New-Item logs\agent-loop.stop, then kill the python process
 #
