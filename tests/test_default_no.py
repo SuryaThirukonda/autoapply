@@ -329,3 +329,11 @@ async def test_a_required_event_list_takes_its_none_option_else_other(store):
     assert out["answer"] == "Not Applicable", out
     out, _ = await d.t_lookup_answer("Did you attend any of our campus events? Select one", ["Yes", "No"])
     assert out.get("answer") != "Other", out
+
+
+@pytest.mark.asyncio
+async def test_an_event_name_box_takes_na(store):
+    """Gilead (2026-10-24): the event-name text box got 'Other' from the event-list rule; the judge failed it."""
+    d, _ = _dispatcher(_job("Gilead Sciences", "L12"))
+    out, _ = await d.t_lookup_answer("Please enter the name of the Career Event or University", [])
+    assert out["answer"] == "N/A", out

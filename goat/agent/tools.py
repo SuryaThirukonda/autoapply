@@ -3945,7 +3945,15 @@ class ToolDispatcher:
             # run called it untruthful to pick anything and held. He attended none: the list's 'none' wording, else Other.
             none_opt = next((o for o in options or [] if re.search(r"\b(not applicable|n/?a|none|did not attend|didn.?t attend|"
                                                                  r"no event|not listed)\b", o or "", re.I)), None)
-            pick = none_opt or next((o for o in options or [] if re.match(r"\s*other\b", o or "", re.I)), None) or "Other"
+            pick = none_opt or next((o for o in options or [] if re.match(r"\s*other\b", o or "", re.I)), None) or ("Other" if options else "N/A")
+            if not options:
+                # the event-name box (Gilead's 'Please enter the name of the Career Event or University', 2026-10-24) takes N/A
+                k_ev = answers.key_from_question(question)
+                answers.save_answer(k_ev, "N/A", answer_type="text", source="derived",
+                                    note="he attended no career fair or event (he found the posting online): N/A", aliases=[question])
+                db.event(self.ctx.job_id, "answer:no_event_attended", {"key": k_ev, "answer": "N/A"})
+                return {"key": k_ev, "answer": "N/A", "confidence": 1.0, "via": "source_rule",
+                        "note": "he attended no career fair or event (he found this posting online): type N/A"}, None
             k_ev = answers.key_from_question(question)
             answers.save_answer(k_ev, f"{pick}; Not applicable; N/A; None; Other", answer_type="choice_chain", source="derived",
                                 note="he found the posting online and attended no career fair or event: the list's none / not "
