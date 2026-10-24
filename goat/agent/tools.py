@@ -2746,6 +2746,7 @@ class ToolDispatcher:
         r = None
         fill.SEEN_OPTIONS.pop(ref, None)          # refs repeat across pages: only this call's lists count
         fill.CATEGORY_PATH.pop(ref, None)
+        fill.CATEGORY_LEAVES.pop(ref, None)
         if answer_key and his_wants and model_opts:
             # His answer first, alone: with the model's options mixed in, a stale wrong value that matches one of them
             # ("Yes" left by an earlier wrong key) was kept although the stored answer is "No" (Epic Games, 2026-10-19).
@@ -2783,6 +2784,7 @@ class ToolDispatcher:
                 if len(real) == 1 and answers.norm(real[0]) == answers.norm(shown):
                     only, mine = True, False
                     rec_src = f"standing:{answer_key} (the only option offered)"
+            parent = ""
             if answer_key and re.search(r"hear", answer_key) and not mine and stored_wants:
                 # a fallback past his first two how-heard choices says what the list offered, so the checks before submit
                 # can see LinkedIn and a job board were not there (General Motors: five drafts held over 'Other', 2026-10-24)
@@ -2810,7 +2812,15 @@ class ToolDispatcher:
                         # the option may be a category of a nested Workday list ('Internet Job Board / Job Search' opens its
                         # boards): his better-ranked wordings come along, so the inner level finds LinkedIn or a board
                         r2 = await fill.choose(self.ctx.ex, r.ref or ref, [better["text"], *stored_wants[:rank]])
-                        if not r2.ok:
+                        inside = fill.CATEGORY_LEAVES.get(r.ref or ref, {}).get(fill._norm(better["text"]), [])
+                        if not r2.ok and any(answers.norm(t) == answers.norm(shown) for t in inside):
+                            # the walk into the better category shows the very leaf already picked: the pick sits inside it
+                            # (GM 551's rerun found its 'Other' chip saved, so the first choose never walked the category)
+                            parent = " ".join(str(better["text"]).split())
+                            rec_src = f"{rec_src} (picked inside the category {parent[:80]!r})"
+                            rank = min(rank, next((i for i, w in enumerate(stored_wants)
+                                                   if fill.best_option([{"text": parent}], [w]) is not None), rank))
+                        elif not r2.ok:
                             db.event(self.ctx.job_id, "choose:repick_failed", {"key": answer_key, "wanted": better["text"][:60],
                                                                                "error": str(r2.error)[:300]})
                         if r2.ok:
@@ -2828,6 +2838,10 @@ class ToolDispatcher:
             first = next((w for w in his_wants if w), "") or next((w for w in wants if w), "")
             if only:
                 out["note"] = f"{shown[:60]!r} is the only option this list offers, so it is his answer: do not re-set it"
+            elif parent:
+                out["note"] = (f"{shown[:60]!r} sits inside the category {parent[:80]!r} (the portal's chip shows the leaf only): "
+                               "that category is his answer and the check before submit knows it. Do not re-set it, do not go back "
+                               "for it from Review.")
             elif mine:
                 out["note"] = (f"{shown[:60]!r} came from your options, not from the stored answer {first[:60]!r}: it must mean the same, "
                                "and the check before submit will verify it. If it does not, pick the option that says the stored answer.")

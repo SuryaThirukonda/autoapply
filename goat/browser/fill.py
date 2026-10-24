@@ -1070,6 +1070,13 @@ SEEN_OPTIONS: dict[str, list[str]] = {}
 # Its chip names only the leaf: General Motors' one 'Other' sits inside 'Internet Job Board / Job Search', and read as a
 # plain 'Other' it was re-picked in a loop and failed by the judge (2026-10-24).
 CATEGORY_PATH: dict[str, list[str]] = {}
+# the leaves each category showed when opened (ref -> {normalised category: [leaf texts]}): a rerun finds GM's 'Other' chip
+# already saved, and only a walk into 'Internet Job Board / Job Search' that shows that same 'Other' says where it sits
+CATEGORY_LEAVES: dict[str, dict[str, list[str]]] = {}
+
+
+def note_category(ref: str, category: str, leaves: list[dict]) -> None:
+    CATEGORY_LEAVES.setdefault(ref, {})[_norm(category)] = [str(o.get("text") or "").strip() for o in leaves or [] if o.get("text")]
 
 
 def note_seen(ref: str, options: list[dict]) -> None:
@@ -1702,6 +1709,7 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
                     # a category opened its next level (Job Board -> Indeed / LinkedIn / ...): stay in it
                     open_now = True
                     CATEGORY_PATH.setdefault(ref, []).append(" ".join(str(pick["text"]).split()))
+                    note_category(ref, pick["text"], nxt)
                     last_err = f"inside {pick['text']!r} the list shows: {[o['text'] for o in nxt[:12]]}; none matched the preference list"
                     continue
                 # a leaf that only showed its text: commit it through its own radio or the keyboard
@@ -1785,6 +1793,7 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
                 # a category opened its next level (Job Board -> Indeed / LinkedIn / ...): stay in it
                 open_now = True
                 CATEGORY_PATH.setdefault(ref, []).append(" ".join(str(pick["text"]).split()))
+                note_category(ref, pick["text"], nxt)
                 options_seen_at_level = [o["text"] for o in nxt[:12]]
                 last_err = f"inside {pick['text']!r} the list shows: {options_seen_at_level}; none matched the preference list"
                 continue

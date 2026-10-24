@@ -176,3 +176,48 @@ async def test_an_other_inside_the_job_board_category_is_his_job_board_answer(st
         assert "inside the category 'Internet Job Board / Job Search'" in src, src
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_saved_other_chip_is_placed_by_the_repicks_walk_into_the_category(store, tmp_path, monkeypatch):
+    """General Motors 551 (Workday, 2026-10-24): the rerun found its 'Other' chip already saved, so choose never walked into
+    'Internet Job Board / Job Search'. The re-pick's walk showed that same 'Other' inside the category, yet the pick was logged
+    as a fallback and the model went back from Review to fix it, twice."""
+    from goat.browser import fill
+    from goat.browser.fill import FieldResult
+    answers.save_answer("how_did_you_hear.preferred_option", "LinkedIn; Job Board; Agency / Search Firm; Other",
+                        answer_type="choice_chain", source="operator")
+    page = tmp_path / "gm5.html"
+    page.write_text(HEARD_PAGE, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if i.get("tag") == "select")
+        real_choose = fill.choose
+        calls = []
+
+        async def nothing(ex_, ref_):
+            return [], None
+        monkeypatch.setattr(fill, "peek_options", nothing)     # a picked Workday prompt cannot be peeked
+
+        async def saved_chip_then_walk(ex_, ref_, wants, **kw):
+            calls.append(list(wants))
+            if len(calls) == 1:                  # the chip was already there: no walk
+                fill.note_seen(ref_, [{"text": t} for t in ("Career Fair", "Internet Job Board /  Job Search")])
+                return await real_choose(ex_, ref_, ["Other"], **kw)
+            fill.note_category(ref_, "Internet Job Board /  Job Search", [{"text": "Other"}, {"text": "Other"}])
+            return FieldResult(ref_, False, "Other", "inside 'Internet Job Board / Job Search' the list shows: ['Other', 'Other']")
+        monkeypatch.setattr(fill, "choose", saved_chip_then_walk)
+        out, _ = await d.t_choose(ref, "how_did_you_hear.preferred_option", [], "How Did You Hear About Us?", "answer_key")
+        assert out.get("readback") == "Other" and "sits inside the category" in out.get("note", ""), out
+        con = db.connect()
+        assert not con.execute("SELECT 1 FROM events WHERE kind IN ('choose:fallback','choose:repick_failed')").fetchone()
+        src = con.execute("SELECT source FROM decisions ORDER BY rowid DESC LIMIT 1").fetchone()[0]
+        assert "inside the category 'Internet Job Board / Job Search'" in src, src
+    finally:
+        await ex.close(close_browser=True)
