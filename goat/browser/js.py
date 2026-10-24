@@ -1209,6 +1209,8 @@ JS_READ_REF = r"""
   else if (type === 'file') value = el.files && el.files.length ? el.files[0].name : '';
   else if (type === 'checkbox' || type === 'radio') value = el.checked ? 'checked' : 'unchecked';
   // A dropdown button shows its pick as text; its value attribute is an internal id on Workday (Booz Allen, 2026-10-18).
+  // ... but an Oracle cx-select input holds its pick in its own value (Dell's ZIP / City read '' as a button, 2026-10-24)
+  else if (tag === 'input' && /cx-select-input/.test(String(el.className || ''))) value = (el.value || '').slice(0, 300);
   else if (tag === 'button' || el.getAttribute('aria-haspopup') || el.getAttribute('role') === 'combobox' && tag !== 'input') value = txt(el).slice(0, 300);
   else if ('value' in el) value = (el.value || '').slice(0, 300);
   else value = txt(el).slice(0, 300);
@@ -1250,6 +1252,7 @@ JS_READ_REFS = r"""
     else if (type === 'checkbox' || type === 'radio') out[ref] = { checked: !!el.checked };
     else if ((tag === 'button' || /^(radio|checkbox|switch)$/.test(el.getAttribute('role') || '')) && (el.hasAttribute('aria-pressed') || el.hasAttribute('aria-checked')))
       out[ref] = { pressed: (el.getAttribute('aria-pressed') ?? el.getAttribute('aria-checked')) === 'true' };
+    else if (tag === 'input' && /cx-select-input/.test(String(el.className || ''))) out[ref] = { value: (el.value || '').slice(0, 300) };
     else if (tag === 'button' || el.getAttribute('aria-haspopup') || (el.getAttribute('role') === 'combobox' && tag !== 'input'))
       out[ref] = { value: txt(el).slice(0, 300) };
     else if ('value' in el) out[ref] = { value: (el.value || '').slice(0, 300) };
