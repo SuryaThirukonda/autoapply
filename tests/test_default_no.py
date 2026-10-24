@@ -283,3 +283,21 @@ def test_contact_from_the_company_is_a_default_no():
     from goat.agent.tools import default_no_choice, is_affiliation_question
     q = "Have you recently been contacted by anyone from Intel?"
     assert is_affiliation_question(q, ["Yes", "No"]) and default_no_choice(q, ["Yes", "No"]) == "No"
+
+
+@pytest.mark.asyncio
+async def test_an_internship_at_the_company_applied_to_is_an_affiliation_no(store):
+    """UL Solutions (Oracle, 2026-10-24): 'Have you previously completed an internship at UL?' took his general prior-internship
+    Yes (DeKalb) through a substring alias; the judge failed the draft."""
+    from goat.agent.tools import internship_here
+    answers.save_answer("bank.prior-internship", "Yes", answer_type="choice", source="seed:answer_bank.json")
+    answers.add_alias('[["previously completed", "internship"], ["completed at least 1 internship"]]', "bank.prior-internship",
+                      kind="substrings")
+    assert answers.lookup("Have you previously completed an internship?").answer == "Yes"     # the seed alias still works
+    d, _ = _dispatcher(_job("UL Solutions", "L9"))
+    out, _ = await d.t_lookup_answer("Have you previously completed an internship at UL?", ["Yes", "No"])
+    assert out["answer"] == "No" and out["via"] == "profile_default_no", out
+    assert internship_here("Have you interned with UL Solutions before?", "UL Solutions")
+    assert not internship_here("Have you completed an internship at a technology company?", "UL Solutions")
+    assert not internship_here("Have you completed an internship?", "UL Solutions")
+    assert not internship_here("Have you completed an internship at Google?", "UL Solutions")

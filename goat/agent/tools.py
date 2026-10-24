@@ -1099,6 +1099,22 @@ def membership_default_no(question: str, options: list[str] | None) -> bool:
     return not _profile_names_any(parts)
 
 
+# 'Have you previously completed an internship at UL?' (UL Solutions, Oracle, 2026-10-24) took his general prior-internship
+# Yes (DeKalb) through a substring alias; an internship at the company he is applying to is an affiliation question
+PRIOR_INTERNSHIP_AT = re.compile(r"(?i:\b(internships?|co-?ops?|interned|intern)\b[^?]{0,40}?\b(at|with|for))\s+"
+                                 r"(?P<org>[A-Z][\w&.'-]*(?:\s+[A-Z][\w&.'-]*){0,3})")
+
+
+def internship_here(question: str, company: str) -> bool:
+    """The question asks about an internship or co-op at the company he is applying to (named in the question)."""
+    m = PRIOR_INTERNSHIP_AT.search(question or "")
+    comp = answers.norm(company or "").split()
+    if not m or not comp:
+        return False
+    org = answers.norm(m.group("org")).split()
+    return bool(org) and (org[0] == comp[0] or " ".join(org) in " ".join(comp))
+
+
 def is_affiliation_question(question: str, options: list[str] | None) -> bool:
     """A yes/no question in the employer/industry/affiliation family (options empty, or Yes/No-like)."""
     if membership_default_no(question, options) and not NOT_AFFILIATION.search(question or ""):
@@ -3914,6 +3930,9 @@ class ToolDispatcher:
                 db.event(self.ctx.job_id, "answer:other_state", {"state": st, "question": question[:160]})
                 return out, None
         a = answers.lookup(question, self.ctx.job.get("company", ""), self.ctx.portal)
+        if a is not None and a.via in ("alias_substrings", "alias_core") and a.scope != "company" \
+                and internship_here(question, self.ctx.job.get("company", "")):
+            return await self._settle_affiliation(question, options), None
         if a is not None and a.has_value:
             return self._present(a), None
         if a is not None and a.scope == "company":
