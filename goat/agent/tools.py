@@ -2729,6 +2729,7 @@ class ToolDispatcher:
             # options under experience.anything_else_default (empty), recorded as sourced (2026-10-19).
             return {"error": f"{answer_key} has no stored value for this question: lookup_answer it for the right key, or ask_user"}, None
         r = None
+        fill.SEEN_OPTIONS.pop(ref, None)          # refs repeat across pages: only this call's lists count
         if answer_key and his_wants and model_opts:
             # His answer first, alone: with the model's options mixed in, a stale wrong value that matches one of them
             # ("Yes" left by an earlier wrong key) was kept although the stored answer is "No" (Epic Games, 2026-10-19).
@@ -2776,6 +2777,9 @@ class ToolDispatcher:
                     except Exception:
                         offered = []
                     real = [str(o) for o in (offered or []) if str(o).strip() and not fill.PLACEHOLDER.match(str(o).strip())]
+                    if not real:
+                        # a Workday prompt cannot be peeked once picked: the options choose saw while working it
+                        real = [t for t in fill.SEEN_OPTIONS.get(r.ref or ref, []) if not fill.PLACEHOLDER.match(t)]
                     if real:
                         rec_src = f"{rec_src} (offered: {'; '.join(real)[:200]})"
                         db.event(self.ctx.job_id, "choose:fallback", {"key": answer_key, "picked": shown[:60], "offered": real[:30]})
@@ -4843,7 +4847,8 @@ class ToolDispatcher:
                     "blockers": reasons[:8]}, None
         # ... 'reside locally in the St. Louis area' too (Midland States Bank, $18 an hour, 2026-10-24)
         if low.startswith("eligibility") and re.search(r"within \d+ miles|commut|local (candidates|to)|relocation (assistance|help)|"
-                                                       r"\b(reside|live|living|located|based)\s+(locally|nearby|in the (area|region)|near)\b|"
+                                                       r"\b(reside|resides|residing|live|lives|living|located|based)\s+(locally|nearby|in the (area|region)|near)\b|"
+                                                       r"\blocal[- ]only\b|"
                                                        r"\blocal (residents?|applicants?|area)\b", low) \
                 and not re.search(r"unpaid|no pay|volunteer", low) and self.ctx.park_attempts < 2:
             # A local-candidates requirement only matters when the role is unpaid (Surya, 2026-10-18).

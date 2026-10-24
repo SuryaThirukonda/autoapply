@@ -65,3 +65,39 @@ async def test_a_late_how_heard_fallback_records_what_the_list_offered(store, tm
         assert "offered:" in src and "Career Fair" in src and "Employee Referral" in src, src
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_the_fallback_evidence_comes_from_what_choose_saw_when_the_list_cannot_be_peeked(store, tmp_path, monkeypatch):
+    """General Motors (Workday, 2026-10-24): peek_options read nothing from the Workday prompt once 'Other' was picked, so
+    the five drafts were held again with no evidence."""
+    from goat.browser import fill
+    answers.save_answer("how_did_you_hear.preferred_option", "LinkedIn; Job Board; Agency / Search Firm; Other",
+                        answer_type="choice_chain", source="operator")
+    page = tmp_path / "gm2.html"
+    page.write_text(HEARD_PAGE, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if i.get("tag") == "select")
+
+        async def nothing(ex_, ref_):
+            return [], None
+        monkeypatch.setattr(fill, "peek_options", nothing)
+        real_choose = fill.choose
+
+        async def choose_and_note(ex_, ref_, wants, **kw):
+            fill.note_seen(ref_, [{"text": t} for t in ("Career Fair", "Employee Referral", "Other")])
+            return await real_choose(ex_, ref_, wants, **kw)
+        monkeypatch.setattr(fill, "choose", choose_and_note)
+        out, _ = await d.t_choose(ref, "how_did_you_hear.preferred_option", [], "How Did You Hear About Us?", "answer_key")
+        assert out.get("readback") == "Other", out
+        src = db.connect().execute("SELECT source FROM decisions ORDER BY rowid DESC LIMIT 1").fetchone()[0]
+        assert "offered:" in src and "Employee Referral" in src, src
+    finally:
+        await ex.close(close_browser=True)

@@ -729,6 +729,11 @@ async def test_eligibility_local_is_satisfied_but_own_car_is_not(store):
                             "to the St. Louis office; Surya lives in Sugar Land, Texas.")
     assert "not parked" in out["error"], out
     ctx.park_attempts = 0
+    # Midland States Bank IT (2026-10-24): 'residing locally'
+    out, _ = await d.t_park("eligibility: posting requires residing locally in Effingham, IL; Surya lives in Texas and the role is "
+                            "local-only.")
+    assert "not parked" in out["error"], out
+    ctx.park_attempts = 0
     with pytest.raises(Parked):
         await d.t_park("eligibility: requires candidates in the St. Louis area who have their own transportation")
 

@@ -1063,6 +1063,19 @@ def month_numbers(wants: list[str]) -> list[str]:
     return out
 
 
+# The option texts each picker showed while choose worked it, per ref: a Workday prompt cannot be peeked afterwards, and
+# GM's how-heard fallback to 'Other' needed what its list offered as evidence (2026-10-24).
+SEEN_OPTIONS: dict[str, list[str]] = {}
+
+
+def note_seen(ref: str, options: list[dict]) -> None:
+    got = SEEN_OPTIONS.setdefault(ref, [])
+    for o in options or []:
+        t = str(o.get("text") or "").strip()
+        if t and t not in got and len(got) < 60:
+            got.append(t)
+
+
 async def choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: bool = True) -> FieldResult:
     extra = date_wants(list(wants))
     if extra:
@@ -1624,6 +1637,7 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
             open_now = False
             continue
         options = new_opts
+        note_seen(ref, options)
         pick = best_option(options, [want] if want else wants)
         if pick is None and open_now:
             # second level of a multi-level prompt (Job Board -> LinkedIn): try the whole preference list
