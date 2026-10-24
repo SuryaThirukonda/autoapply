@@ -405,3 +405,31 @@ def test_a_readback_complaint_the_page_no_longer_supports_is_dropped():
     finally:
         snapmod.take = orig
     assert len(left) == 1 and "[e167]" in left[0]
+
+
+def test_a_readback_complaint_on_a_hidden_oracle_step_is_read_from_the_page():
+    """ADT (Oracle, 2026-10-23): ZIP / City / State on step 2 held 77479, Sugar Land and TX when the run reached step 4, but
+    step 2's boxes are in no step-4 snapshot, so the old '' complaints stood and the draft was held."""
+    import asyncio
+    from types import SimpleNamespace
+    from goat import verify
+    from goat.browser.snapshot import Snapshot
+    snap = Snapshot(url="u", title="t", headings=[], items=[], groups=[], errors={}, challenge={})
+    ctx = SimpleNamespace(readback_open={2: ["field ZIP Code * [e46] shows '' but decision was '77479'",
+                                            "field City * [e49] shows '' but decision was 'Sugar Land'",
+                                            "field County * [e55] shows '' but decision was 'Fort Bend'"]})
+
+    class Ex:
+        async def eval(self, script, arg=None):
+            return {"e46": {"value": "77479"}, "e49": {"value": "Sugar Land"}, "e55": {"value": ""}}
+
+    async def fake_take(ex):
+        return snap
+    import goat.browser.snapshot as snapmod
+    orig = snapmod.take
+    snapmod.take = fake_take
+    try:
+        left = asyncio.run(verify.live_open_readback(ctx, Ex()))
+    finally:
+        snapmod.take = orig
+    assert len(left) == 1 and "[e55]" in left[0], left

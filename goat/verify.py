@@ -69,11 +69,27 @@ async def live_open_readback(ctx, ex) -> list[str]:
         snap = await snapmod.take(ex)
     except Exception:
         return open_readback(ctx)
+    # a field on another step of the form is in no snapshot of this one (Oracle keeps every step in the page): read it from
+    # the page by its ref. ADT's step-2 ZIP / City / State held their values at step 4 and the old '' complaints held the
+    # draft (2026-10-23).
+    away = [mm.group(1) for ms in opened.values() for m in (ms or []) if (mm := _MISMATCH.search(m)) and mm.group(1) not in snap.refs]
+    live = {}
+    if away:
+        try:
+            from .browser import js as _js
+            raw = await ex.eval(_js.JS_READ_REFS, away)
+            live = raw if isinstance(raw, dict) else {}
+        except Exception:
+            live = {}
     for page in list(opened):
         keep = []
         for m in opened[page] or []:
             mm = _MISMATCH.search(m)
             item = snap.refs.get(mm.group(1)) if mm else None
+            if item is None and mm and isinstance(live.get(mm.group(1)), dict):
+                info = live[mm.group(1)]
+                item = {"ref": mm.group(1), "tag": "input", "type": "text", "value": str(info.get("value") or ""),
+                        **({"shown": info["shown"]} if info.get("shown") else {})}
             if item is not None:
                 try:
                     want = ast.literal_eval(mm.group(3))
