@@ -2780,6 +2780,17 @@ class ToolDispatcher:
                 db.event(self.ctx.job_id, "choose:rank_skip", {"ref": ref, "taken": taken[:4], "skipped": [w for w in wants if w not in keep][:6]})
                 stored_wants = [w for w in stored_wants if w in keep] or keep
                 wants = keep
+        if answer_key and LOCATION_KEY.search(answer_key) and stored_wants and answers.norm(stored_wants[0]) in SELECT_ALL \
+                and not RANK_LABEL.search(label or ""):
+            # one office on a single-choice list: the posting's own. 'Which IAT Office are you aiming to work from?' took Dallas
+            # from his ranking after 'All offered locations', for a Raleigh internship, and the judge failed it (2026-10-24)
+            here = posting_city_state(self.ctx.job, self.ctx.posting_text)
+            if here:
+                abbr = next((k for k, v in _US_STATES.items() if v == here[1] and len(k) == 2), "")
+                prefer = [here[0]] + ([f"{here[0]}, {abbr}"] if abbr else []) + [f"{here[0]}, {here[1]}"]
+                wants = prefer + [w for w in wants if w not in prefer]
+                stored_wants = prefer + [w for w in stored_wants if w not in prefer]
+                db.event(self.ctx.job_id, "choose:posting_office", {"ref": ref, "office": prefer[0]})
         model_opts = [o for o in (options or []) if o]
         his_wants = [w for w in wants if w not in model_opts or w in stored_wants]
         if answer_key and not stored_wants:

@@ -221,3 +221,34 @@ async def test_a_saved_other_chip_is_placed_by_the_repicks_walk_into_the_categor
         assert "inside the category 'Internet Job Board / Job Search'" in src, src
     finally:
         await ex.close(close_browser=True)
+
+
+OFFICE_PAGE = """<!doctype html><html><body style="margin:20px"><form>
+<label for="of">Which IAT Office are you aiming to work from? *</label>
+<select id="of"><option value="">Select...</option><option>Chicago</option><option>Dallas</option><option>New York</option>
+<option>Raleigh</option></select>
+</form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_single_office_question_takes_the_postings_office(store, tmp_path):
+    """IAT Insurance Group (Workday, 2026-10-24): 'Which IAT Office are you aiming to work from?' took Dallas from his ranking
+    after 'All offered locations', for a Raleigh internship."""
+    answers.save_answer("availability.location_ranking", "All offered locations; Dallas; Houston; Austin; New York",
+                        answer_type="choice_chain", source="questionnaire")
+    page = tmp_path / "iat.html"
+    page.write_text(OFFICE_PAGE, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job("IAT Insurance Group", "L11"))
+        ctx.ex = ex
+        ctx.posting_text = "Data Engineering & Visualization Internship\nLocation: Raleigh, NC\nThis role works from our Raleigh office."
+        ctx.last_snapshot = snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if i.get("tag") == "select")
+        out, _ = await d.t_choose(ref, "availability.location_ranking", [], "Which IAT Office are you aiming to work from?", "answer_key")
+        assert out.get("readback") == "Raleigh", out
+    finally:
+        await ex.close(close_browser=True)
