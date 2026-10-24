@@ -2608,6 +2608,15 @@ async def test_a_question_only_for_visa_holders_is_no_for_a_citizen(store):
     assert out.get("answer") == "Not applicable", out
     from goat.agent.tools import VISA_HOLDER_ONLY
     assert not VISA_HOLDER_ONLY.search("Will you now or in the future require visa sponsorship?")
+    # Federal Reserve 557 (2026-10-24): the substring alias gave his sponsorship 'No', read as 'not eligible to work'
+    answers.save_answer("bank.sponsorship-now", "No", answer_type="choice", source="seed:answer_bank.json",
+                        aliases=["are you eligible to work without visa sponsorship"])
+    q2 = ("If you are not a U.S. citizen, national, permanent resident or protected individual, are you eligible to work "
+          "without visa sponsorship?")
+    out, _ = await d.t_lookup_answer(q2, ["N/A", "Yes", "No"])
+    assert out.get("answer") == "N/A" and out.get("key") == "work_authorization.visa_holder_only", out
+    # a question that asks his citizenship first is his to answer
+    assert not VISA_HOLDER_ONLY.search("Are you a U.S. citizen? If you are not a U.S. citizen, do you require sponsorship?")
 
 
 @pytest.mark.asyncio

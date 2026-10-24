@@ -1241,7 +1241,12 @@ def acknowledgement_key(question: str, options: list[str] | None) -> str | None:
 # A question only for visa holders / non-citizens ('If you are a visa holder, have you signed a declaration of intent to
 # become a permanent resident ...?'): he is a U.S. citizen, so it does not apply (Federal Reserve, 2026-10-24).
 VISA_HOLDER_ONLY = re.compile(r"\b(if|for|as) (you are |applicants? (who are|on) )?an? (visa holder|non[- ]?citizen|foreign national|"
-                              r"(current )?(f-?1|h-?1b|j-?1|opt) (student|visa|holder))s?\b|\bvisa holders?\b.{0,80}\b(declaration|intent|intend)\b",
+                              r"(current )?(f-?1|h-?1b|j-?1|opt) (student|visa|holder))s?\b|\bvisa holders?\b.{0,80}\b(declaration|intent|intend)\b|"
+                              # a question that opens on the condition: 'If you are not a U.S. citizen, national, permanent
+                              # resident or protected individual, are you eligible to work without visa sponsorship?' took his
+                              # sponsorship 'No' by substring and said he is not eligible (Federal Reserve, 2026-10-24)
+                              r"^\W*(\d+[.)]\s*)?(if|for (those|applicants|candidates)( who are)?) (you are )?not an? (u\.?\s?s\.?|united states|american) "
+                              r"(citizen|national|person)",
                               re.I)
 
 
