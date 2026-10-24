@@ -137,3 +137,42 @@ async def test_a_better_ranked_option_the_list_held_is_picked_over_the_fallback(
         assert db.connect().execute("SELECT 1 FROM events WHERE kind='choose:repicked'").fetchone()
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_an_other_inside_the_job_board_category_is_his_job_board_answer(store, tmp_path, monkeypatch):
+    """General Motors (Workday, 2026-10-24): the list's only 'Other' sits inside 'Internet Job Board / Job Search'. The chip
+    names only the leaf, so the pick read as a fallback, the re-pick of its own category failed on every draft and the judge
+    failed the draft for 'Other'."""
+    from goat.browser import fill
+    answers.save_answer("how_did_you_hear.preferred_option", "LinkedIn; Job Board; Agency / Search Firm; Other",
+                        answer_type="choice_chain", source="operator")
+    page = tmp_path / "gm4.html"
+    page.write_text(HEARD_PAGE, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if i.get("tag") == "select")
+        real_choose = fill.choose
+        calls = []
+
+        async def walks_into_the_category(ex_, ref_, wants, **kw):
+            calls.append(list(wants))
+            fill.note_seen(ref_, [{"text": t} for t in ("Career Fair", "Internet Job Board /  Job Search", "Other")])
+            fill.CATEGORY_PATH.setdefault(ref_, []).append("Internet Job Board / Job Search")
+            return await real_choose(ex_, ref_, ["Other"], **kw)
+        monkeypatch.setattr(fill, "choose", walks_into_the_category)
+        out, _ = await d.t_choose(ref, "how_did_you_hear.preferred_option", [], "How Did You Hear About Us?", "answer_key")
+        assert out.get("readback") == "Other", out
+        assert len(calls) == 1, calls                    # no re-pick of the category it already sits in
+        con = db.connect()
+        assert not con.execute("SELECT 1 FROM events WHERE kind IN ('choose:fallback','choose:repick_failed')").fetchone()
+        src = con.execute("SELECT source FROM decisions ORDER BY rowid DESC LIMIT 1").fetchone()[0]
+        assert "inside the category 'Internet Job Board / Job Search'" in src, src
+    finally:
+        await ex.close(close_browser=True)

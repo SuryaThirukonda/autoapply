@@ -1066,6 +1066,10 @@ def month_numbers(wants: list[str]) -> list[str]:
 # The option texts each picker showed while choose worked it, per ref: a Workday prompt cannot be peeked afterwards, and
 # GM's how-heard fallback to 'Other' needed what its list offered as evidence (2026-10-24).
 SEEN_OPTIONS: dict[str, list[str]] = {}
+# The categories a nested Workday prompt was walked through to reach its pick (ref -> ['Internet Job Board / Job Search']).
+# Its chip names only the leaf: General Motors' one 'Other' sits inside 'Internet Job Board / Job Search', and read as a
+# plain 'Other' it was re-picked in a loop and failed by the judge (2026-10-24).
+CATEGORY_PATH: dict[str, list[str]] = {}
 
 
 def note_seen(ref: str, options: list[dict]) -> None:
@@ -1697,6 +1701,7 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
                 if nxt and {o.get("text") for o in nxt} != {o.get("text") for o in options}:
                     # a category opened its next level (Job Board -> Indeed / LinkedIn / ...): stay in it
                     open_now = True
+                    CATEGORY_PATH.setdefault(ref, []).append(" ".join(str(pick["text"]).split()))
                     last_err = f"inside {pick['text']!r} the list shows: {[o['text'] for o in nxt[:12]]}; none matched the preference list"
                     continue
                 # a leaf that only showed its text: commit it through its own radio or the keyboard
@@ -1779,6 +1784,7 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
             if nxt and (not shown or PLACEHOLDER.match(shown) or LEVELISH.search(shown)):
                 # a category opened its next level (Job Board -> Indeed / LinkedIn / ...): stay in it
                 open_now = True
+                CATEGORY_PATH.setdefault(ref, []).append(" ".join(str(pick["text"]).split()))
                 options_seen_at_level = [o["text"] for o in nxt[:12]]
                 last_err = f"inside {pick['text']!r} the list shows: {options_seen_at_level}; none matched the preference list"
                 continue

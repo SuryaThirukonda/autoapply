@@ -119,3 +119,16 @@ async def test_his_phone_named_for_a_part_box_types_only_that_part(store, tmp_pa
         assert vals == ["281", "832-1205", "281-832-1205"], vals
     finally:
         await ex.close(close_browser=True)
+
+
+def test_an_extension_box_never_takes_his_number_and_clear_always_clears(store):
+    """General Motors (Workday, 2026-10-24): 'Phone Extension' was sent identity.phone_local with source 'clear' and got
+    '832-1205' typed into it; the judge failed the draft."""
+    _phone()
+    d, _ctx = _dispatcher(_job())
+    assert d._resolve_value("identity.phone_local", None, "clear", "Phone Extension") == ("", "cleared", None)
+    val, _src, err = d._resolve_value("identity.phone_local", None, "answer_key", "Phone Extension")
+    assert val is None and "no extension" in err
+    val, _src, err = d._resolve_value("identity.phone", None, "answer_key", "Phone Extension")
+    assert val is None and err
+    assert d._resolve_value("identity.phone", None, "answer_key", "Phone Number")[0] == "281-832-1205"

@@ -1842,6 +1842,14 @@ class ToolDispatcher:
     def _resolve_value(self, answer_key: str | None, value: str | None, source: str | None, label: str,
                        ref: str | None = None) -> tuple[str | None, str, str | None]:
         """-> (value, source_tag, error)"""
+        if (source or "").lower() == "clear" and str(value or "").strip().lower() in ("", "false"):
+            # 'clear' empties the box whatever answer_key comes with it: General Motors' Phone Extension was sent
+            # identity.phone_local with source 'clear', got '832-1205' typed into it, and the judge failed the draft (2026-10-24)
+            return str(value or ""), "cleared", None
+        if answer_key and answer_key.startswith("identity.phone"):
+            own = str(((self.ctx.last_snapshot.find(ref) if ref and self.ctx.last_snapshot is not None else None) or {}).get("label") or "")
+            if phone.part_of(own or label or "") == "ext":
+                return None, "", "his phone number has no extension: leave this box empty (source 'clear', value '')"
         if answer_key == "self_id.sexual_orientation":
             own_l = str(((self.ctx.last_snapshot.find(ref) if ref and self.ctx.last_snapshot is not None else None) or {}).get("label") or "")
             answer_key = self_id_redirect(answer_key, f"{label or ''} {own_l}")
@@ -2730,6 +2738,7 @@ class ToolDispatcher:
             return {"error": f"{answer_key} has no stored value for this question: lookup_answer it for the right key, or ask_user"}, None
         r = None
         fill.SEEN_OPTIONS.pop(ref, None)          # refs repeat across pages: only this call's lists count
+        fill.CATEGORY_PATH.pop(ref, None)
         if answer_key and his_wants and model_opts:
             # His answer first, alone: with the model's options mixed in, a stale wrong value that matches one of them
             # ("Yes" left by an earlier wrong key) was kept although the stored answer is "No" (Epic Games, 2026-10-19).
@@ -2771,6 +2780,13 @@ class ToolDispatcher:
                 # a fallback past his first two how-heard choices says what the list offered, so the checks before submit
                 # can see LinkedIn and a job board were not there (General Motors: five drafts held over 'Other', 2026-10-24)
                 rank = next((i for i, w in enumerate(stored_wants) if fill.best_option([{"text": shown}], [w]) is not None), 0)
+                parent = (fill.CATEGORY_PATH.get(r.ref or ref) or [""])[-1]
+                if parent:
+                    # a leaf inside a category is that category's answer: GM's only 'Other' is 'Internet Job Board / Job
+                    # Search > Other', a job board pick, and re-picking the category it already sits in failed every time
+                    rec_src = f"{rec_src} (picked inside the category {parent[:80]!r})"
+                    rank = min(rank, next((i for i, w in enumerate(stored_wants)
+                                           if fill.best_option([{"text": parent}], [w]) is not None), rank))
                 if rank >= 2:
                     try:
                         offered, _img = await fill.peek_options(self.ctx.ex, r.ref or ref)
@@ -2781,7 +2797,7 @@ class ToolDispatcher:
                         # a Workday prompt cannot be peeked once picked: the options choose saw while working it
                         real = [t for t in fill.SEEN_OPTIONS.get(r.ref or ref, []) if not fill.PLACEHOLDER.match(t)]
                     better = fill.best_option([{"text": t} for t in real], stored_wants[:rank]) if real else None
-                    if better is not None and answers.norm(better["text"]) != answers.norm(shown):
+                    if better is not None and answers.norm(better["text"]) not in (answers.norm(shown), answers.norm(parent)):
                         # the list held a better-ranked choice than the one the prompt settled on: GM's 'Internet Job Board /
                         # Job Search' was there and 'Other' was picked, seven drafts running (2026-10-24)
                         # the option may be a category of a nested Workday list ('Internet Job Board / Job Search' opens its

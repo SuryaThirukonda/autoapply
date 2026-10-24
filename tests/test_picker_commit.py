@@ -410,3 +410,48 @@ def test_a_bachelor_level_answer_never_picks_another_fields_bachelors():
     generic = [{"text": t} for t in ("Associate's Degree", "Bachelor's Degree", "Master's Degree")]
     assert fill.best_option(generic, wants)["text"] == "Bachelor's Degree"
     assert fill.best_option([{"text": "BS"}, {"text": "BA"}], wants)["text"] == "BS"
+
+
+GM_TREE = """<html><body style="font:14px sans-serif">
+<div data-automation-id="formField-source">
+  <label id="l5">How Did You Hear About Us?</label>
+  <div data-automation-id="multiSelectContainer">
+    <div id="chips5"></div>
+    <input id="q5" aria-labelledby="l5" role="combobox" style="width:300px;height:28px">
+    <span data-automation-id="promptIcon">v</span>
+  </div>
+</div>
+<ul id="lb5" role="listbox" style="display:none;list-style:none;padding:0;margin:0;width:420px"></ul>
+<script>
+  const q5 = document.getElementById('q5'), lb5 = document.getElementById('lb5'), chips5 = document.getElementById('chips5');
+  const TOP = ['Career Fair / Professional Organization Event', 'GM Careers Website', 'Internet Job Board /  Job Search',
+               'Referred by GM Employee'];
+  function show(items) {
+    lb5.innerHTML = items.map(t => '<li role="option" data-automation-id="promptOption" style="height:30px">' + t + '</li>').join('');
+    lb5.querySelectorAll('li').forEach(li => li.addEventListener('click', () => {
+      if (li.textContent.startsWith('Internet Job Board')) { show(['Other']); return; }
+      chips5.innerHTML = '<div data-automation-id="selectedItem">' + li.textContent + '</div>'; lb5.style.display = 'none'; }));
+    lb5.style.display = 'block';
+  }
+  q5.addEventListener('click', () => show(TOP));
+  q5.addEventListener('keydown', e => { if (e.key === 'Escape') lb5.style.display = 'none'; });
+</script></body></html>"""
+
+
+async def test_a_leaf_reached_inside_a_category_records_the_category(tmp_path):
+    """General Motors (Workday, 2026-10-24): 'Other' is the one leaf inside 'Internet Job Board / Job Search' and its chip
+    names only 'Other': the walk through the category is what says it is a job board answer."""
+    db.reset_for_tests(tmp_path / "t.db")
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page()
+        await ex.page.set_content(GM_TREE)
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if "How Did You Hear" in (i.get("label") or ""))
+        fill.CATEGORY_PATH.pop(ref, None)
+        r = await fill.choose(ex, ref, ["LinkedIn", "Job Board", "Agency / Search Firm", "Other"])
+        assert r.ok and r.readback == "Other", r
+        assert fill.CATEGORY_PATH.get(ref) == ["Internet Job Board / Job Search"]
+    finally:
+        await ex.close()
