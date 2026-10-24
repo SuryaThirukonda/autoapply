@@ -2536,6 +2536,8 @@ def test_an_eligibility_reason_that_says_it_is_satisfied_is_no_hold():
     # Nissan (2026-10-23): parked eligibility while saying the condition is met
     assert SELF_SATISFIED.search("At Summer 2027 start Surya is a rising senior, which meets the junior/senior condition? The posting")
     assert not SELF_SATISFIED.search("requires entering a Master's program; Surya does not meet the graduate condition")
+    assert SELF_SATISFIED.search("Surya will enter his junior year in Fall 2027 and is eligible.")
+    assert not SELF_SATISFIED.search("requires U.S. citizenship and is not eligible for sponsorship")
 
 
 @pytest.mark.asyncio

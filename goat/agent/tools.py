@@ -218,6 +218,17 @@ def _in_resume(value: str) -> bool:
 NEGATED = re.compile(r"^(not\b|no\b|none\b|i do not|i don['\u2019]t|i am not|i['\u2019]m not|unwilling|unable|never|decline|prefer not)", re.I)
 AFFIRMATIVE = {"yes", "true", "checked", "on", "y"}
 UNTICK_VALUES = {"false", "unchecked", "off", "untick", "uncheck", "clear"}
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+
+
+def selection_limit(text: str) -> int:
+    """The most picks a question allows ('select 1-3', 'up to three', 'no more than 2'), else 0."""
+    m = re.search(r"\b(?:up to|a maximum of|maximum of|max(?:imum)?|no more than|at most)\s*(\d|one|two|three|four|five)\b", text or "", re.I) \
+        or re.search(r"\b\d\s*(?:-|–|to)\s*(\d)\s*(?:selections?|choices|options|locations|offices|picks)?\b", text or "", re.I)
+    if not m:
+        return 0
+    g = m.group(1).lower()
+    return int(g) if g.isdigit() else _NUMBER_WORDS.get(g, 0)
 # an option label that says yes in its own words ("Yes, I am authorized", "I agree", "I am a U.S. citizen")
 AFFIRM_LABEL = re.compile(r"^(yes\b|i (agree|consent|accept|acknowledge|certify|confirm|understand)\b|i am (authori[sz]ed|eligible|a )|i have\b|i will\b|agree\b|accept\b)", re.I)
 
@@ -772,7 +783,9 @@ SELF_SATISFIED = re.compile(r"\b(this|that|it|the requirement|requirement) (is|w
                             r"\bcontinue,? (and )?not park\b|\bnot strict\b|\bshould not park\b|"
                             # Nissan (2026-10-23): "Surya is a rising senior, which meets the junior/senior condition?"
                             r"\bmeets the [\w/ -]{0,40}?\b(condition|requirement|criteria|criterion)s?\b|"
-                            r"\b(he|surya) (is|remains|appears|seems) (fully )?(eligible|qualified)\b", re.I)
+                            r"\b(he|surya) (is|remains|appears|seems) (fully )?(eligible|qualified)\b|"
+                            # Nissan (2026-10-23): "Surya will enter his junior year in Fall 2027 and is eligible."
+                            r"\band (he )?(is|remains) (fully )?(eligible|qualified)\b", re.I)
 
 
 def never_tick(item: dict | None, val) -> str:
@@ -2156,6 +2169,19 @@ class ToolDispatcher:
                     continue
             # Checkbox/radio with a text answer: check it when the option's own label matches the answer
             # ("Available May 2027" with answer "May 2027"); refuse when it plainly does not.
+            if is_choice and item and item.get("type") == "checkbox" and f.get("answer_key") \
+                    and not ((f.get("source") or "").lower() == "clear" or str(f.get("value") or "").strip().lower() in UNTICK_VALUES):
+                # a select-all answer ('All offered locations; ...') on a question that caps the picks (Palantir, 1-3)
+                a_sel = answers.get(f["answer_key"], self.ctx.job.get("company", ""), self.ctx.portal)
+                chain = [x.strip() for x in str(a_sel.answer).split(";") if x.strip()] if a_sel is not None and a_sel.has_value else []
+                limit = selection_limit(f"{item.get('group') or ''} {f.get('label') or ''}") if chain and answers.norm(chain[0]) in SELECT_ALL else 0
+                top = self._ranked_options(item, chain[1:], limit) if limit else []
+                if top and item.get("ref") not in {o.get("ref") for o in top}:
+                    results.append({"ref": f["ref"], "status": "failed", "error": (
+                        f"this question allows at most {limit} picks: by his location ranking tick only "
+                        + ", ".join(f"'{str(o.get('label') or '')[:30]}' [{o.get('ref')}]" for o in top)
+                        + "; leave the others unticked (untick with value false)")})
+                    continue
             if is_choice and item and item.get("type") in ("radio", "checkbox") and str(f.get("answer_key") or "").startswith("education.graduation") \
                     and re.fullmatch(r"\s*(?:19|20)\d{2}\s*", str(val)):
                 # a bare year among term options that share it: the term nearest his graduation month. Hex's 'Graduation Year'
@@ -2166,6 +2192,11 @@ class ToolDispatcher:
                         f"he graduates in {self._graduation_month_text()}: of this question's {str(val).strip()} terms the nearest is "
                         f"'{str(term.get('label') or '')[:40]}' [{term.get('ref')}]; tick that option with the same answer_key")})
                     continue
+            if is_choice and item and item.get("type") == "checkbox" and f.get("answer_key") \
+                    and ((f.get("source") or "").lower() == "clear" or str(f.get("value") or "").strip().lower() in UNTICK_VALUES):
+                # an explicit untick stays an untick: Palantir's 'Denver' box matched 'Denver' in his location ranking and
+                # every 'false' came back ticked (2026-10-23)
+                val = "false"
             label_matched = False
             if is_choice and item and item.get("type") in ("radio", "checkbox") and str(val).strip().lower() not in AFFIRMATIVE | {"false", "no", "off", "unchecked"}:
                 lab = answers.norm(item.get("label") or ""); nv = answers.norm(str(val))
@@ -2192,8 +2223,23 @@ class ToolDispatcher:
                 elif item.get("type") == "checkbox" and parts and (parts[0] in SELECT_ALL or re.match(r"^(select|pick|choose|tick|check) (every|all)\b", parts[0]))                         and not NEGATED.match((item.get("label") or "").strip()):
                     # ("Select every location offered (multi-select)..." in his bank answer: American Express, 2026-10-19)
                     # "All offered locations; ..." on a multi-select group: every box is ticked (Surya, 2026-10-18)
-                    val = "true"
+                    # ... unless the run unticks one, or the question caps the picks: Palantir's office groups said 1-3, got
+                    # five and four, and every untick came back ticked (2026-10-23)
                     label_matched = True
+                    limit = selection_limit(f"{item.get('group') or ''} {f.get('label') or ''}")
+                    if (f.get("source") or "").lower() == "clear" or str(f.get("value") or "").strip().lower() in UNTICK_VALUES:
+                        val = "false"
+                    elif limit:
+                        top = self._ranked_options(item, parts[1:], limit)
+                        if top and item.get("ref") not in {o.get("ref") for o in top}:
+                            results.append({"ref": f["ref"], "status": "failed", "error": (
+                                f"this question allows at most {limit} picks: by his location ranking tick only "
+                                + ", ".join(f"'{str(o.get('label') or '')[:30]}' [{o.get('ref')}]" for o in top)
+                                + "; leave the others unticked (untick with value false)")})
+                            continue
+                        val = "true"
+                    else:
+                        val = "true"
                 elif str(f.get("answer_key") or "").startswith("preferences.") and not NEGATED.match((item.get("label") or "").strip()):
                     # A team / organization / track pick is a delegated preference, not a fact: company-specific names
                     # ("Platform Services", "Foundations") never match the stored list, and the model picks the most
@@ -3150,6 +3196,20 @@ class ToolDispatcher:
                 if a is not None and a.has_value and answers.norm(str(a.answer)).split(" ")[0] not in ("no", "none", "false", "n"):
                     return str(others[g["ref"]].get("label") or g.get("label") or "")
         return ""
+
+    def _ranked_options(self, item: dict, ranking: list[str], limit: int) -> list[dict]:
+        """The first `limit` options of `item`'s checkbox group in his ranking order (options it does not name last)."""
+        snap = self.ctx.last_snapshot
+        group = next((g for g in (getattr(snap, "groups", None) or []) if any(o.get("ref") == item.get("ref") for o in g.get("options", []))), None)
+        opts = list((group or {}).get("options", []))
+        if not opts:
+            return []
+        names = [answers.norm(re.sub(r",.*$", "", r)) for r in ranking if r and answers.norm(r) not in SELECT_ALL]
+
+        def rank(o):
+            lab = answers.norm(o.get("label") or "")
+            return next((i for i, n in enumerate(names) if n and n in lab), len(names))
+        return sorted(opts, key=rank)[:limit]
 
     def _graduation_month_text(self) -> str:
         a = answers.get("education.graduation", self.ctx.job.get("company", ""), self.ctx.portal)
