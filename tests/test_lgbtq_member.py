@@ -18,6 +18,7 @@ PAGE = """<!doctype html><html><body style="margin:20px"><form>
 async def test_an_lgbtq_membership_question_takes_no_from_his_orientation(store, tmp_path):
     answers.save_answer("self_id.sexual_orientation", "Heterosexual; Straight; I do not identify as a member of the LGBTQ+ community",
                         answer_type="choice_chain", source="questionnaire")
+    answers.save_answer("self_id.transgender", "No", answer_type="choice_chain", source="seed:delegation.yaml")
     page = tmp_path / "sg.html"
     page.write_text(PAGE, encoding="utf-8")
     url = page.resolve().as_uri()
@@ -35,3 +36,16 @@ async def test_an_lgbtq_membership_question_takes_no_from_his_orientation(store,
         assert src.startswith("standing:self_id.lgbtq_member"), src
     finally:
         await ex.close(close_browser=True)
+
+
+def test_the_membership_no_gives_every_ground_and_needs_him_not_transgender(store):
+    """The judge failed a 'No' whose note named only his orientation (SeatGeek, Red Ventures, 2026-10-24)."""
+    from goat import judge
+    from goat.agent import tools
+    answers.save_answer("self_id.sexual_orientation", "Heterosexual; Straight", answer_type="choice_chain", source="operator")
+    assert tools.self_id_redirect("self_id.sexual_orientation", "LGBTQIA+ community") == "self_id.sexual_orientation"
+    answers.save_answer("self_id.transgender", "No", answer_type="choice_chain", source="seed:delegation.yaml")
+    assert tools.self_id_redirect("self_id.sexual_orientation", "LGBTQIA+ community") == tools.LGBTQ_MEMBER_KEY
+    note = answers.get(tools.LGBTQ_MEMBER_KEY).note
+    assert "not transgender" in note and "Newell Brands" in note
+    assert "self_id.lgbtq_member" in judge.JUDGE_INSTRUCTIONS

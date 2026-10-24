@@ -655,6 +655,10 @@ def start_soon_pick(options: list[str], today=None) -> str | None:
 # answer ('Heterosexual ...') says No, but no wording of it matches a Yes/No list (SeatGeek, Red Ventures, 2026-10-24).
 LGBTQ_MEMBER = re.compile(r"\b(lgbt\w*\+?|queer)\b", re.I)
 LGBTQ_MEMBER_KEY = "self_id.lgbtq_member"
+# the judge failed a 'No' grounded on his orientation alone (SeatGeek, Red Ventures, 2026-10-24): the note gives every ground
+LGBTQ_MEMBER_NOTE = ("he is heterosexual (self_id.sexual_orientation) and not transgender (self_id.transgender = No), and his "
+                     "own orientation answer includes 'I do not identify as a member of the LGBTQ+ community' (operator, "
+                     "Newell Brands, 2026-10-22): not a member of the LGBTQ+ community")
 
 
 def self_id_redirect(key: str | None, label: str) -> str | None:
@@ -668,9 +672,12 @@ def self_id_redirect(key: str | None, label: str) -> str | None:
     orient = answers.get("self_id.sexual_orientation")
     if orient is None or not orient.has_value or not re.search(r"\b(heterosexual|straight)\b", str(orient.answer), re.I):
         return key
+    trans = answers.get("self_id.transgender")
+    if trans is None or not trans.has_value or answers.norm(str(trans.answer).split(";")[0]) != "no":
+        return key
     answers.save_answer(LGBTQ_MEMBER_KEY, "No; I do not identify as a member of the LGBTQ+ community; I do not identify as LGBTQ+; "
                         "Not a member of the LGBTQ+ community", answer_type="choice_chain", source="derived",
-                        note="from his stored sexual orientation (heterosexual): not a member of the LGBTQ+ community")
+                        note=LGBTQ_MEMBER_NOTE)
     return LGBTQ_MEMBER_KEY
 
 
