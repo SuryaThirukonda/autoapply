@@ -2784,10 +2784,15 @@ class ToolDispatcher:
                     if better is not None and answers.norm(better["text"]) != answers.norm(shown):
                         # the list held a better-ranked choice than the one the prompt settled on: GM's 'Internet Job Board /
                         # Job Search' was there and 'Other' was picked, seven drafts running (2026-10-24)
-                        r2 = await fill.choose(self.ctx.ex, r.ref or ref, [better["text"]])
+                        # the option may be a category of a nested Workday list ('Internet Job Board / Job Search' opens its
+                        # boards): his better-ranked wordings come along, so the inner level finds LinkedIn or a board
+                        r2 = await fill.choose(self.ctx.ex, r.ref or ref, [better["text"], *stored_wants[:rank]])
+                        if not r2.ok:
+                            db.event(self.ctx.job_id, "choose:repick_failed", {"key": answer_key, "wanted": better["text"][:60],
+                                                                               "error": str(r2.error)[:300]})
                         if r2.ok:
                             # a multi-select prompt keeps the earlier chip beside the new one: only the better pick stays
-                            await fill._remove_wrong_chips(self.ctx.ex, r2.ref or r.ref or ref, keep=better["text"])
+                            await fill._remove_wrong_chips(self.ctx.ex, r2.ref or r.ref or ref, keep=str(r2.readback or better["text"]))
                             db.event(self.ctx.job_id, "choose:repicked", {"key": answer_key, "was": shown[:60], "now": str(r2.readback)[:60]})
                             r, shown = r2, str(r2.readback)
                             rank = next((i for i, w in enumerate(stored_wants) if fill.best_option([{"text": shown}], [w]) is not None), rank)
