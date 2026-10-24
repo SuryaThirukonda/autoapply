@@ -3579,12 +3579,18 @@ class ToolDispatcher:
                 if opts:
                     val = next((o for o in opts if answers.norm(o) == answers.norm(val)), "")
                 key = answers.key_from_question(question)
+                # a bare label ('Day', 'Other', 'Yes No No') says nothing about which question it is: its derived answer
+                # belongs to this job alone. Fenwick & West's 'Day' (of a start date) became the global q.day = 18
+                # (2026-10-24), ready for any later lone 'Day' box, a date of birth included.
+                bare = len(answers.norm(question).split()) <= 3
+                if bare:
+                    key = f"{key}.job{self.ctx.job_id}"
                 existing = answers.get(key, company, portal)
                 if val and not (existing is not None and existing.scope == "company"):
                     answers.save_answer(key, val, answer_type="choice" if opts else "text", source="derived",
                                         source_ref=f"job:{self.ctx.job_id}",
                                         note=f"{str(out.get('meaning') or '')[:120]} | evidence: {evidence[:240]}",
-                                        aliases=[question])
+                                        aliases=[] if bare else [question])
                     db.event(self.ctx.job_id, "answer:derived", {"key": key, "question": question[:200], "answer": val[:200],
                                                                  "evidence": evidence[:300], "confidence": conf})
                     a = answers.get(key, company, portal)

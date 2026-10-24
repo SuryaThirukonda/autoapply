@@ -193,3 +193,14 @@ def test_a_stored_none_is_shown_as_his_answer(tmp_path):
     knowledge._cache.clear()
     line = next(l for l in knowledge.knowledge_text("Aptiv", "workday").splitlines() if "q.list_countries_outside_the_u_s" in l)
     assert "his answer: nothing applies" in line
+
+
+async def test_a_derived_answer_to_a_bare_label_belongs_to_its_job_only(kb):
+    """Fenwick & West (Workday, 2026-10-24): 'Day' (of the available-to-work date) was derived as 18 and saved as the global
+    q.day: any later lone 'Day' box (a date of birth) would have taken it. q.other ('Other') and q.yes_no_no ('Yes') too."""
+    d, _ = _d(kb, {"meaning": "the day of the available-to-work date", "verdict": "derived", "key": None, "answer": "18",
+                   "evidence": "availability.earliest_start_date 05/18/2027", "confidence": 0.95})
+    out, _ = await d.t_lookup_answer("Day", [], None, None)
+    assert out["via"] == "derived" and out["answer"] == "18", out
+    assert answers.get("q.day") is None
+    assert out["key"] == f"q.day.job{kb['id']}", out
