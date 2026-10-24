@@ -201,3 +201,49 @@ async def test_choose_on_a_listbox_wrapper_types_into_its_input(tmp_path):
         assert await ex.page.inner_text("#shown") == "Texas", (r.ok, r.readback, r.error)
     finally:
         await ex.close(close_browser=True)
+
+
+AJAX_S2 = """<html><body style="font:14px sans-serif"><label id="lab">University/School</label>
+<div><select class="select2-hidden-accessible" aria-hidden="true" style="width:1px;height:1px"><option value="">Select an option</option></select>
+<span class="select2 select2-container"><span class="selection"><span class="select2-selection" role="combobox" aria-labelledby="lab"
+ tabindex="0" style="display:inline-block;width:300px;height:24px;border:1px solid #888"><span id="shown">Select an option</span></span></span></span></div>
+<div id="drop"></div>
+<script>
+  const SCHOOLS = ['Texas A&M University', 'Texas A&M University - Commerce', 'Texas State University', 'Texas Tech University'];
+  const sel = document.querySelector('select'), drop = document.getElementById('drop');
+  document.querySelector('.select2-selection').addEventListener('click', () => {
+    drop.innerHTML = '<input class="select2-search__field" style="width:280px"><ul role="listbox" style="list-style:none;padding:0"></ul>';
+    const inp = drop.querySelector('input'), ul = drop.querySelector('ul'); inp.focus();
+    inp.addEventListener('input', () => setTimeout(() => {          // results come from the server a moment later
+      ul.innerHTML = '';
+      for (const s of SCHOOLS.filter(s => inp.value.length >= 3 && s.toLowerCase().includes(inp.value.toLowerCase()))) {
+        const li = document.createElement('li'); li.setAttribute('role', 'option'); li.textContent = s; li.style.cssText = 'padding:6px;height:20px';
+        li.addEventListener('click', () => { const o = new Option(s, s, true, true); sel.appendChild(o); sel.value = s;
+          document.getElementById('shown').textContent = s; drop.innerHTML = ''; });
+        ul.appendChild(li);
+      } }, 300));
+  });
+</script></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_server_fed_select2_is_searched_not_read_from_its_empty_select(tmp_path):
+    """Intuit (Avature, 2026-10-24): the University/School Select2 loads schools from the server as you type; its hidden
+    <select> holds only the placeholder, and choose reported 'the select offers: []'."""
+    from goat.browser import snapshot
+    from goat.browser.executor import Executor, HostPolicy
+    db.reset_for_tests(tmp_path / "t.db")
+    page = tmp_path / "s2ajax.html"
+    page.write_text(AJAX_S2, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if "University" in (i.get("label") or "") and i.get("tag") != "select")
+        r = await fill.choose(ex, ref, ["Texas A&M University", "Texas A & M University"])
+        assert r.ok and "Texas A&M University" == r.readback, (r.readback, r.error)
+        assert await ex.page.inner_text("#shown") == "Texas A&M University"
+    finally:
+        await ex.close(close_browser=True)

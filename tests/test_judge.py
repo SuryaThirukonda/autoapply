@@ -382,3 +382,11 @@ def test_the_judge_knows_successfactors_personal_information_message_is_stale():
     Salutation that showed 'Mr'; the gate already treats that message as stale."""
     from goat.judge import JUDGE_INSTRUCTIONS
     assert "Please complete your personal information." in JUDGE_INSTRUCTIONS and "never fails the draft on its own" in JUDGE_INSTRUCTIONS
+
+
+def test_the_judge_takes_other_on_a_required_event_list_without_a_none_option():
+    """Gilead (2026-10-24): 'Career fair/event attended' (Keck ... Yale, Other) took Other and N/A as the event name; the judge
+    failed it as an event source he never had."""
+    from goat import judge
+    assert "career fair / event / university attended" in judge.JUDGE_INSTRUCTIONS
+    assert "Gilead" in judge.JUDGE_INSTRUCTIONS

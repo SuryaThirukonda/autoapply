@@ -1482,9 +1482,17 @@ async def _choose(ex: Executor, ref: str, wants: list[str], *, type_to_filter: b
         except Exception:
             twin = None
         if twin and twin != ref:
-            # pick on the hidden native select, which holds every option; its change event updates the Select2 box
-            r = await _choose(ex, str(twin), wants, type_to_filter=type_to_filter)
-            return FieldResult(ref, r.ok, r.readback, r.error)
+            # pick on the hidden native select, which holds every option; its change event updates the Select2 box. A
+            # Select2 fed from the server (Intuit's Avature school list, 2026-10-24) keeps only its placeholder there: its
+            # options come by typing into its own search box, the click-and-type path below.
+            try:
+                native = await ex.eval(js.JS_FIELD_CHOICES, str(twin))
+            except Exception:
+                native = []
+            real = [o for o in (native if isinstance(native, list) else []) if o and not PLACEHOLDER.match(str(o).strip())]
+            if real:
+                r = await _choose(ex, str(twin), wants, type_to_filter=type_to_filter)
+                return FieldResult(ref, r.ok, r.readback, r.error)
     if info.get("tag") == "select":
         # A native <select> has no DOM list to click (Lever's custom questions, 2026-10-18): pick by its options.
         native = await ex.eval(js.JS_FIELD_CHOICES, ref)
