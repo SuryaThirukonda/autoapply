@@ -414,3 +414,28 @@ def test_one_stored_website_on_review_is_enough(monkeypatch):
     page = "My Experience\nRelevant Websites\nhttps://www.linkedin.com/in/surya-thirukonda\nApplication Questions"
     assert not [g for g in ws.review_gaps(page) if g.startswith("website")]
     assert [g for g in ws.review_gaps("My Experience\nWebsites\nNo Response") if g.startswith("website")]
+
+
+@pytest.mark.asyncio
+async def test_an_undeletable_blank_first_block_takes_one_of_his_entries(stored):
+    """Apple Bank (Workday, 2026-10-24): a blank first Work Experience block with no Delete button sat above his five
+    entries, its required fields empty; the run asked Surya what to do with it. His last entry moves into it and the block
+    that held it is deleted."""
+    ex = await _open(FIX / "workday" / "sections.html")
+    try:
+        await ex.page.evaluate("""() => {
+          document.getElementById('work').innerHTML = '';
+          workBlock(n++);                                   // the tenant's first block: blank, no Delete
+          document.querySelector('#work .block button').remove();
+        }""")
+        for e in ENTRIES:                                    # his five entries already in blocks of their own
+            await ex.page.evaluate("([c, t]) => workBlock(n++, { company: c, title: t })", [e["company"], e["title"]])
+        f = _filler("workday", ex)
+        await f.fill_work()                                  # his five entries land below it
+        info = await f.scan()
+        work = _work(info["entries"])
+        comps = [(e["fields"].get("companyName") or {}).get("value", "") for e in work]
+        assert len(work) == 5 and "" not in comps, comps
+        assert sorted(comps) == sorted(e["company"] for e in ENTRIES), comps
+    finally:
+        await ex.close(close_browser=True)

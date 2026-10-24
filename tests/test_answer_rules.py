@@ -723,6 +723,12 @@ async def test_eligibility_local_is_satisfied_but_own_car_is_not(store):
     out, _ = await d.t_park("eligibility: Posting requires candidates to be local to Milwaukee, WI during the internship")
     assert "not parked" in out["error"]
     ctx.park_attempts = 0
+    # Midland States Bank (Workday, 2026-10-24, $18 an hour): held for living in Sugar Land
+    ctx.posting_text = "Intern - Security Analyst St. Louis, MO Rate of Pay: $18 an hour"
+    out, _ = await d.t_park("eligibility: The posting requires candidates to reside locally in the St. Louis, MO area and report "
+                            "to the St. Louis office; Surya lives in Sugar Land, Texas.")
+    assert "not parked" in out["error"], out
+    ctx.park_attempts = 0
     with pytest.raises(Parked):
         await d.t_park("eligibility: requires candidates in the St. Louis area who have their own transportation")
 

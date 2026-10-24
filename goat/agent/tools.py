@@ -4778,7 +4778,11 @@ class ToolDispatcher:
                               + ("the code gate PASSES on this page: call submit now." if passed else
                                  "What the page still needs is listed under blockers: fix it, then Save and Continue.")),
                     "blockers": reasons[:8]}, None
-        if low.startswith("eligibility") and re.search(r"within \d+ miles|commut|local (candidates|to)|relocation (assistance|help)", low)                 and not re.search(r"unpaid|no pay|volunteer", low) and self.ctx.park_attempts < 2:
+        # ... 'reside locally in the St. Louis area' too (Midland States Bank, $18 an hour, 2026-10-24)
+        if low.startswith("eligibility") and re.search(r"within \d+ miles|commut|local (candidates|to)|relocation (assistance|help)|"
+                                                       r"\b(reside|live|living|located|based)\s+(locally|nearby|in the (area|region)|near)\b|"
+                                                       r"\blocal (residents?|applicants?|area)\b", low) \
+                and not re.search(r"unpaid|no pay|volunteer", low) and self.ctx.park_attempts < 2:
             # A local-candidates requirement only matters when the role is unpaid (Surya, 2026-10-18).
             from ..answers import posting_pay
             if posting_pay(self.ctx.posting_text) or posting_pay(await self.ctx.ex.page_text(30000)):

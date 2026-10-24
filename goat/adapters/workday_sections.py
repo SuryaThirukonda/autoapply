@@ -314,6 +314,7 @@ class WorkdaySections:
         existing = [e for e in info["entries"] if e["kind"] in WORK_KINDS]
         seen = {f'{e["kind"]}-{e["idx"]}' for e in info["entries"]}
         matched: set[str] = set()
+        placed: dict[str, dict] = {}                 # block tag -> the stored entry it holds
         untouched: list[tuple[dict, dict]] = []      # (block, stored entry) left exactly as they were
         for ent in stored:
             comp = _field_value(existing, ent["company"])
@@ -324,6 +325,7 @@ class WorkdaySections:
             if comp is not None:
                 tag = f'{comp["kind"]}-{comp["idx"]}'
                 matched.add(tag)
+                placed[tag] = ent
                 ok = await self.fill_work_entry(comp, ent)
                 if self.changed or not ok:
                     self.report.updated.append(f'{ent["company"]}{"" if ok else " (partial)"}')
@@ -340,6 +342,7 @@ class WorkdaySections:
                 continue
             seen.add(f'{new["kind"]}-{new["idx"]}')
             matched.add(f'{new["kind"]}-{new["idx"]}')
+            placed[f'{new["kind"]}-{new["idx"]}'] = ent
             ok = await self.fill_work_entry(new, ent)
             self.report.added.append(f'{ent["company"]}{"" if ok else " (partial)"}')
         # A resumed Workday draft keeps, on Save, only the entries this visit added or changed and drops the untouched
@@ -378,8 +381,20 @@ class WorkdaySections:
             if _is_blank_work(e):
                 if await self._delete_entry(e):
                     self.report.updated.append(f"removed blank entry {tag}")
-                else:
-                    self.report.skipped.append(f"blank entry {tag} has no Delete button")
+                    continue
+                # A first block with no Delete button cannot stay blank (its fields are required): his last entry moves
+                # into it and the block that held it, which has a Delete button, goes (Apple Bank, 2026-10-24: the run
+                # asked Surya what to put in it).
+                donors = [x for x in info["entries"] if x["kind"] in WORK_KINDS and f'{x["kind"]}-{x["idx"]}' in placed
+                          and x.get("delete")]
+                donor = max(donors, key=lambda x: placed[f'{x["kind"]}-{x["idx"]}'].get("n", 0), default=None)
+                if donor is not None:
+                    ent = placed.pop(f'{donor["kind"]}-{donor["idx"]}')
+                    if await self.fill_work_entry(e, ent) and await self._delete_entry(donor):
+                        matched.add(tag)
+                        self.report.updated.append(f'moved {ent["company"]} into blank entry {tag} (it has no Delete button)')
+                        continue
+                self.report.skipped.append(f"blank entry {tag} has no Delete button")
                 continue
             c = _field(e, "companyName", "company")
             if c and any(_same_company(c["value"], s["company"]) for s in stored):
