@@ -4515,6 +4515,8 @@ class ToolDispatcher:
                                 r"need(s)? to be (completed|finished|filled|answered)|"
                                 # "... and signature fields remaining; continue filling required fields" (L3Harris, 2026-10-23)
                                 r"continue (filling|completing|answering)|"
+                                # "... education tiles must be corrected on other steps" (Dell, 2026-10-24): fixable entries
+                                r"must be (corrected|fixed|completed|updated)|(tiles?|entries)\b[^.;]{0,30}\b(incorrect|wrong|to fix)|"
                                 r"(fields?|questions?|sections?)\b[^.;]{0,40}\b(remain\w*|left|outstanding|pending|unanswered)|"
                                 r"(remain\w*|left|outstanding|unanswered)\b[^.;]{0,30}\b(fields?|questions?))\b", re.I)
     # Surya 2026-10-18: a car requirement is fine (he arranges one); "local / within N miles" is fine when the posting is

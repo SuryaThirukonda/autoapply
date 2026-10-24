@@ -112,7 +112,10 @@ def test_ways_of_saying_the_form_is_unfinished():
                    "remaining; continue filling required fields before submission.",
                    "ready_for_you: SuccessFactors form remains incomplete; required security-clearance questions need to be finished",
                    "needs_you: several required questions remain unanswered",
-                   "needs_you: remaining required fields: clearance and signature"):
+                   "needs_you: remaining required fields: clearance and signature",
+                   # Dell (Oracle, 2026-10-24): the gate named the tiles to fix on another step; the run parked instead
+                   "needs_you: Dell resume upload and education tiles must be corrected on other steps; required resume did "
+                   "not verify, and imported education entries are incorrect."):
         assert pat.search(reason), reason
     for reason in ("ready_for_you: hCaptcha then Submit", "eligibility: requires an active security clearance",
                    "needs_you: requires three professional references"):
