@@ -68,6 +68,7 @@ PORTAL_ERROR = re.compile(
 NOT_APPLICATION = "not an application page:"
 SUBMIT_LABEL = re.compile(r"\bsubmit\b|\bsend (my |your |the )?application\b|"
                           r"^(finish|complete|complete (my |your )?application|apply|apply now|apply for this (job|position|role))$", re.I)
+APPLY_LABEL = re.compile(r"^(apply|apply now|apply for this (job|position|role))$", re.I)
 
 
 ORACLE_ISSUES = re.compile(r"you have \d+ issues? that needs? to be fixed before you can submit( your application)?", re.I)
@@ -92,9 +93,14 @@ def has_submit_control(snapshot: Snapshot) -> bool:
     (the model may name a final button the snapshot's exact list does not know)."""
     if snapshot.submit_buttons():
         return True
+    # 'Apply Now' on a page with no field to fill opens the form: Interstates' posting page passed the gate on it (2026-10-23)
+    fields = any(i.get("tag") in ("input", "select", "textarea", "richtext") and (i.get("type") or "").lower() not in ("search", "hidden")
+                 and not re.search(r"\bsearch\b", str(i.get("label") or i.get("placeholder") or ""), re.I)
+                 for i in snapshot.items) or bool(getattr(snapshot, "groups", None))
     for i in snapshot.items:
         buttonish = "submitish" in i or i.get("tag") in ("button", "a") or (i.get("type") or "").lower() in ("submit", "button")
-        if buttonish and SUBMIT_LABEL.search(" ".join(str(i.get("label") or "").split())):
+        label = " ".join(str(i.get("label") or "").split())
+        if buttonish and SUBMIT_LABEL.search(label) and (fields or not APPLY_LABEL.match(label)):
             return True
     return False
 

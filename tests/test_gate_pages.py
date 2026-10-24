@@ -1207,3 +1207,33 @@ async def test_a_starred_select_nested_deep_under_its_label_is_required():
         assert not any("First Name" in l for l in labels), scan
     finally:
         await ex.close()
+
+
+INTERSTATES_POSTING = """<html><body>
+<h1>Cyber Security Intern</h1><p>Overview of the role.</p>
+<a id="apply-link" href="#apply" style="display:inline-block;margin:40px;padding:10px">Apply Now</a>
+<form id="px" style="position:absolute;left:0;top:0">
+""" + "".join(f'<input type="text" name="expv2[{n}]" value="abc" style="width:0;height:0;border:0;padding:0">' for n in range(8)) + """
+</form>
+<div id="apply"></div>
+</body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_posting_pages_apply_link_is_no_submit_because_of_zero_size_tracking_boxes():
+    """Interstates (2026-10-23): a Facebook-pixel form of zero-size text boxes with values counted as a filled application,
+    so 'Apply Now' was refused as a submit control, and the gate passed on the posting page."""
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(INTERSTATES_POSTING)
+        snap = await snapshot.take(ex)
+        apply = next(i for i in snap.items if (i.get("label") or "") == "Apply Now")
+        assert not apply.get("submitish"), apply
+        assert not has_submit_control(snap)
+        info = await ex.read_ref(apply["ref"])
+        assert not (await ex.element_at(int(info["x"]), int(info["y"]))).submit
+        await ex.click_ref(apply["ref"])            # not refused
+    finally:
+        await ex.close()

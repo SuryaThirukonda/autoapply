@@ -404,7 +404,7 @@ JS_SNAPSHOT = r"""
           }
           // a shadow-root button is named by its host: its aria-label and its visible text both count
           const names = [item.label].concat(shown ? [] : shadowHostNames(el)).filter((n, i, a) => n && a.indexOf(n) === i);
-          const nFilled = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]), textarea')).filter(i => (i.value || '').trim()).length;
+          const nFilled = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]), textarea')).filter(i => (i.value || '').trim() && i.getBoundingClientRect().width > 0 && i.getBoundingClientRect().height > 0).length;
           const onAccountPage = Array.from(document.querySelectorAll('input[type=password]')).some(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
           const submitName = names.some(n => /^(submit|submit application|submit my application|send application|finish|complete application|complete)$/i.test(n)
             || (/^(apply|apply now|apply for this job|apply to this job)$/i.test(n) && nFilled >= 3));
@@ -520,7 +520,7 @@ JS_ELEMENT_AT = r"""
   const SUBMIT = /^(submit|submit application|submit my application|send application|finish|complete application|complete|send)$/i;
   // "Apply" on a posting page opens the form; it is a submit control only once the form holds answers.
   const APPLY = /^(apply|apply now|apply for this job|apply to this job)$/i;
-  const filledInputs = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]), textarea')).filter(i => (i.value || '').trim()).length;
+  const filledInputs = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]), textarea')).filter(i => (i.value || '').trim() && i.getBoundingClientRect().width > 0 && i.getBoundingClientRect().height > 0).length;
   const formFilled = filledInputs >= 3;
   // A visible password box means a sign-in / create-account page: its "Submit" button (Workday lays a hidden
   // "Submit" exactly over "Sign In") signs in; it never submits an application.
@@ -557,7 +557,7 @@ JS_ELEMENT_AT = r"""
           && names.some(n => /^(send|save|ok|done|confirm|send code|send verification code)$/i.test(n))) break;
       // ... unless the account form IS the application (SuccessFactors quick apply: Safran's 'Apply' sent it, 2026-10-22)
       const quickApply = names.some(n => /^(apply|apply now|submit|submit application|submit my application|send application)$/i.test(n))
-        && Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=password]), textarea')).filter(i => (i.value || '').trim()).length >= 6;
+        && Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=password]), textarea')).filter(i => (i.value || '').trim() && i.getBoundingClientRect().width > 0 && i.getBoundingClientRect().height > 0).length >= 6;
       if (accountPage && !quickApply) break;
       if (quickApply) { submit = true; why = 'submit control (application on an account page): ' + label; break; }
       if (submitName || (type === 'submit' && formFilled)) { submit = true; why = 'submit control: ' + label; }
@@ -681,7 +681,7 @@ JS_TARGET_GUARD = r"""
   const ACCOUNT = /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|verify email|send code|resend|back|reset password|send reset link|submit)$/i;
   const t = findRef(ref);
   if (!t) return JSON.stringify({ found: false });
-  const filledInputs = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]), textarea')).filter(i => (i.value || '').trim()).length;
+  const filledInputs = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]), textarea')).filter(i => (i.value || '').trim() && i.getBoundingClientRect().width > 0 && i.getBoundingClientRect().height > 0).length;
   const formFilled = filledInputs >= 3;
   const accountPage = Array.from(document.querySelectorAll('input[type=password]')).some(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
     || /forgot (your )?password|reset (your )?password|password help|change (your )?password|create (an |your )?account|sign in|candidate login|please review before continuing/i.test(document.title + ' ' + Array.from(document.querySelectorAll('h1,h2,h3')).map(h => txt(h)).join(' '));
@@ -705,7 +705,7 @@ JS_TARGET_GUARD = r"""
       if (!submitName && names.some(n => /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|back)$/i.test(n))) break;
       // ... unless the account form IS the application (SuccessFactors quick apply: Safran's 'Apply' sent it, 2026-10-22)
       const quickApply = names.some(n => /^(apply|apply now|submit|submit application|submit my application|send application)$/i.test(n))
-        && Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=password]), textarea')).filter(i => (i.value || '').trim()).length >= 6;
+        && Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=password]), textarea')).filter(i => (i.value || '').trim() && i.getBoundingClientRect().width > 0 && i.getBoundingClientRect().height > 0).length >= 6;
       if (accountPage && !quickApply) break;
       if (quickApply) { submit = true; why = 'submit control (application on an account page): ' + label; break; }
       if (submitName || (type === 'submit' && formFilled)) { submit = true; why = 'submit control: ' + label; }
