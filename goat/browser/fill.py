@@ -2016,8 +2016,49 @@ async def set_date(ex: Executor, ref: str, value: str) -> FieldResult:
                 await _step_to(ex, ref, sec["part"], sec["ref"], int(target))
         await _blur(ex)
         ok, shown, got = await _date_state(ex, ref, parts)
+    if ok:
+        await _revalidate_order_errors(ex, ref)
     return FieldResult(ref, ok, shown or " ".join(f"{k}={v}" for k, v in got.items()),
                        "" if ok else f"date did not commit (widget reads {shown!r})")
+
+
+# Other Workday date widgets that show an end-before-start error: they were validated against this date's old value.
+JS_ORDER_ERR_YEARS = r"""
+(ref) => {
+  const own = document.querySelector('[data-goat-ref="' + ref + '"]');
+  const ownW = own && own.closest('[data-automation-id="dateInputWrapper"]');
+  const out = [];
+  document.querySelectorAll('[data-automation-id="dateInputWrapper"]').forEach((w, i) => {
+    if (w === ownW) return;
+    const box = w.closest('[data-automation-id^="formField"], fieldset') || w.parentElement;
+    const t = (box && box.innerText) || '';
+    if (!/must (end|be) (after|later than)|after (the )?start date|before (the )?start date|end date (must|cannot)/i.test(t)) return;
+    const y = w.querySelector('[data-automation-id="dateSectionYear-input"]');
+    if (!y || !y.value) return;
+    y.setAttribute('data-goat-reval', String(i));
+    out.push({ key: String(i), value: String(y.value) });
+  });
+  return out;
+}
+"""
+
+
+async def _revalidate_order_errors(ex: Executor, ref: str) -> None:
+    """Retype the year of every other date widget that still says it ends before its start: GlobalFoundries' certification
+    Expiration Date kept 'Must end after start date' after its Issued Date was fixed from 06/26/6262 (2026-10-23)."""
+    try:
+        stale = await ex.eval(JS_ORDER_ERR_YEARS, ref)
+    except Exception:
+        return
+    for s in stale if isinstance(stale, list) else []:
+        sel = f'[data-goat-reval="{s.get("key")}"]'
+        try:
+            await ex.page.focus(sel, timeout=2000)
+            await _select_all_text(ex)
+            await ex.type_text(str(s.get("value") or ""), real_keys=True, delay_ms=40)
+            await _blur(ex)
+        except Exception:
+            continue
 
 
 async def _blur(ex: Executor) -> None:
