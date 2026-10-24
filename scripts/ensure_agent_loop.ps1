@@ -30,7 +30,18 @@ if (Test-Path (Join-Path $root "logs\agent-loop.stop")) { return }
 # '\agent_loop.ps1' only: this script's own command line ends in 'ensure_agent_loop.ps1'
 $running = Get-CimInstance Win32_Process -Filter "name='powershell.exe'" |
     Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match '[\\/]agent_loop\.ps1' }
-if ($running) { return }
+if ($running) {
+    # a hung agent (a job mid-run, no event for 20 minutes) is killed; the loop starts it again (2026-10-24: a native crash
+    # in a model request left it idle 28 minutes)
+    & (Join-Path $root ".venv\Scripts\python.exe") (Join-Path $root "scripts\hang_check.py") | Out-Null
+    if ($LASTEXITCODE -eq 1) {
+        Get-CimInstance Win32_Process -Filter "name='python.exe'" | Where-Object { $_.CommandLine -like '*goat run*' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+        Add-Content -Path (Join-Path $root "logs\agent-loop.err") `
+            -Value ("{0} watchdog: the agent was hung (a job mid-run, no event for 20 minutes); killed it, the loop restarts it" -f (Get-Date -Format s))
+    }
+    return
+}
 Start-Process powershell.exe -WorkingDirectory $root -WindowStyle Hidden `
     -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "scripts\agent_loop.ps1")
 Add-Content -Path (Join-Path $root "logs\agent-loop.err") `
