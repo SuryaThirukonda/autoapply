@@ -1446,6 +1446,22 @@ async def test_an_hourly_rate_box_and_a_salary_text_box_keep_his_hourly_figure(s
     assert typed == ["20"]                                         # only one-line boxes change
 
 
+@pytest.mark.asyncio
+async def test_a_salary_box_beside_a_rate_basis_choice_keeps_his_hourly_figure(store, monkeypatch):
+    """HMH (Workday, 2026-10-24): 'Desired salary' sat beside 'Is your salary expectation an hourly, monthly or annual rate?'
+    (Hourly). The box got 41600 and the application asked $41,600 an hour."""
+    from goat.agent import tools as toolsmod
+    d, typed = _salary_dispatcher(monkeypatch, "What is your desired salary?*")
+    basis = {"ref": "e148", "tag": "dropdown", "label": "Is your salary expectation an hourly, monthly or annual rate?*", "value": ""}
+    d.ctx.last_snapshot.items.append(basis)
+    d.ctx.last_snapshot.refs["e148"] = basis
+    assert toolsmod.rate_basis_on_page(d.ctx.last_snapshot)
+    await d.t_fill_batch([{"ref": "e44", "answer_key": "bank.desired-hourly-rate", "value": None, "source": None, "label": "Desired salary"}])
+    assert typed == ["20"], typed
+    # the salary box alone still takes his yearly figure, and a 'Desired hourly rate' box is never a basis choice
+    assert not toolsmod.rate_basis_on_page(SimpleNamespace(items=[{"tag": "input", "label": "Desired hourly rate"}]))
+
+
 
 @pytest.mark.asyncio
 async def test_a_park_without_a_named_reason_never_stands(store, monkeypatch):

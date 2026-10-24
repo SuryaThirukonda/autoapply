@@ -1633,6 +1633,22 @@ def annual_pay_box(label: str) -> bool:
     return bool(ANNUAL_PAY_BOX.search(label or "")) and not HOURLY_PAY_WORDS.search(label or "")
 
 
+# "Is your salary expectation an hourly, monthly or annual rate?" beside a 'Desired salary' box (HMH, Workday, 2026-10-24):
+# the form states the period itself. His hourly 20 was swapped for the yearly 41600 while that choice said Hourly, and the
+# application went out asking $41,600 an hour. With such a choice on the page the box keeps his hourly figure.
+RATE_BASIS = re.compile(r"\b(hourly|monthly|annual(ly)?|yearly)\b.{0,40}\b(rate|basis)\b|\b(rate|pay|salary|wage)\s+(basis|type|period|"
+                        r"frequency|unit)\b|\bper (hour|year)\b.{0,20}\bper (hour|year)\b", re.I)
+
+
+def rate_basis_on_page(snap) -> bool:
+    """The page asks, as a choice of its own, whether his pay figure is hourly, monthly or annual."""
+    for i in (getattr(snap, "items", None) or []):
+        if (i.get("tag") in ("select", "dropdown") or i.get("type") == "radio") \
+                and RATE_BASIS.search(f"{i.get('label') or ''} {i.get('group') or ''}"):
+            return True
+    return False
+
+
 # "Did you find this opportunity through a campus event / a conference / a career fair? If yes, which ...?" (Cigna,
 # 2026-10-20): his source is online (stored How-did-you-hear: LinkedIn, then job boards), so the answer is No.
 OTHER_SOURCE_QUESTION = re.compile(
@@ -2179,7 +2195,8 @@ class ToolDispatcher:
                                   f"{f.get('label') or ''} {item.get('label') or ''}", re.I):
                 val = "None"
             salary_box = bool(item and item.get("tag") == "input" and item.get("type") not in ("radio", "checkbox")
-                              and annual_pay_box(f"{f.get('label') or ''} {item.get('label') or ''}"))
+                              and annual_pay_box(f"{f.get('label') or ''} {item.get('label') or ''}")
+                              and not rate_basis_on_page(snap))
             if salary_box and BARE_PAY_NUMBER.match(str(val)):
                 a_year = answers.get("compensation.desired_annual", self.ctx.job.get("company", ""), self.ctx.portal)
                 if a_year is not None and a_year.has_value:
