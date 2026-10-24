@@ -2617,3 +2617,17 @@ async def test_language_rating_labels_under_a_language_field_take_his_english_pr
     ctx.last_snapshot = Snapshot(url="u", title="t", headings=[], items=[], groups=[], errors={}, challenge={})
     out, _ = await d.t_lookup_answer("Overall", [], None, None)
     assert out.get("key") != "experience.english_proficiency", out          # no Language field: not a language rating
+
+
+@pytest.mark.asyncio
+async def test_english_rating_questions_in_full_sentences_are_never_asked(store):
+    """Midland States Bank (2026-10-24, second run): 'What is your English proficiency level for Comprehension?' went to
+    Surya (the resolver read the stored note as covering only overall / reading / speaking / writing) and the run timed out."""
+    from goat import answers
+    answers.save_answer("experience.english_proficiency", "Native; Fluent; Advanced", answer_type="choice_chain", source="seed")
+    d, ctx = _dispatcher(_job())
+    out, _ = await d.t_lookup_answer("What is your English proficiency level for Comprehension?", [], None, None)
+    assert out.get("key") == "experience.english_proficiency", out
+    out, _ = await d.t_ask_user([{"question": "What is your English proficiency level for Comprehension?", "options": [],
+                                  "field_type": "dropdown"}])
+    assert out.get("asked") == [] and out["auto_answered"][0]["key"] == "experience.english_proficiency", out

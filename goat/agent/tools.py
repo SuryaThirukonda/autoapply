@@ -620,6 +620,9 @@ def citizenship_block(snap) -> bool:
 
 CITIZENSHIP_DATE_KEY = "compliance.citizenship_obtained_date"
 LANGUAGE_RATING = re.compile(r"^\s*(comprehension|overall|reading|speaking|writing|listening)(\s+(proficiency|level|skills?))?\s*[*:]*\s*$", re.I)
+# ... and the same rating asked as a sentence about English ('What is your English proficiency level for Comprehension?')
+ENGLISH_RATING = re.compile(r"\benglish\b.{0,60}\b(proficiency|level|fluency|rating)\b.{0,40}\b(comprehension|overall|reading|speaking|writing|listening)\b|"
+                            r"\b(comprehension|overall|reading|speaking|writing|listening)\b.{0,40}\b(proficiency|level|rating)\b.{0,40}\benglish\b", re.I)
 START_SOON_QUESTION = re.compile(r"\bhow soon (could|can|would) you (start|begin|be available)\b|\bif (offered|hired)\b.{0,40}\bhow soon\b", re.I)
 _SPAN = re.compile(r"\b(\d+|one|two|three|four|six)\s*(day|week|month)s?\b", re.I)
 
@@ -646,6 +649,29 @@ def start_soon_pick(options: list[str], today=None) -> str | None:
         return next((o for o in options if re.search(r"\b(immediately|now|asap)\b", o or "", re.I)), None)
     hit = next((o for o, n in within if days <= n), None)
     return hit or later
+
+
+# 'Do you identify as / I consider myself a member of the LGBTQ+ community' (Yes / No / Prefer not to say): his orientation
+# answer ('Heterosexual ...') says No, but no wording of it matches a Yes/No list (SeatGeek, Red Ventures, 2026-10-24).
+LGBTQ_MEMBER = re.compile(r"\b(lgbt\w*\+?|queer)\b", re.I)
+LGBTQ_MEMBER_KEY = "self_id.lgbtq_member"
+
+
+def self_id_redirect(key: str | None, label: str) -> str | None:
+    """self_id.sexual_orientation on an LGBTQ+ membership question -> self_id.lgbtq_member ('No', derived from his stored
+    heterosexual answer and saved the first time); any other key unchanged."""
+    if key != "self_id.sexual_orientation" or not LGBTQ_MEMBER.search(label or ""):
+        return key
+    have = answers.get(LGBTQ_MEMBER_KEY)
+    if have is not None and have.has_value:
+        return LGBTQ_MEMBER_KEY
+    orient = answers.get("self_id.sexual_orientation")
+    if orient is None or not orient.has_value or not re.search(r"\b(heterosexual|straight)\b", str(orient.answer), re.I):
+        return key
+    answers.save_answer(LGBTQ_MEMBER_KEY, "No; I do not identify as a member of the LGBTQ+ community; I do not identify as LGBTQ+; "
+                        "Not a member of the LGBTQ+ community", answer_type="choice_chain", source="derived",
+                        note="from his stored sexual orientation (heterosexual): not a member of the LGBTQ+ community")
+    return LGBTQ_MEMBER_KEY
 
 
 # what a self-identification key's decline box names (a box of its own, apart from the question's options)
@@ -1816,6 +1842,9 @@ class ToolDispatcher:
     def _resolve_value(self, answer_key: str | None, value: str | None, source: str | None, label: str,
                        ref: str | None = None) -> tuple[str | None, str, str | None]:
         """-> (value, source_tag, error)"""
+        if answer_key == "self_id.sexual_orientation":
+            own_l = str(((self.ctx.last_snapshot.find(ref) if ref and self.ctx.last_snapshot is not None else None) or {}).get("label") or "")
+            answer_key = self_id_redirect(answer_key, f"{label or ''} {own_l}")
         if answer_key and answer_key.startswith("identity."):
             # his own details never answer a question about someone else: SWBC's run typed his email into 'What's their name
             # or email address?' (the referrer box) twice, the second time from its answer_key (2026-10-23)
@@ -2622,6 +2651,7 @@ class ToolDispatcher:
             return {"error": "a certification is picked only with answer_key background.certifications_variants (his AWS "
                              "Certified Cloud Practitioner); another credential is never chosen in its place. If the list "
                              "does not offer it, delete the certification block (certifications are optional)."}, None
+        answer_key = self_id_redirect(answer_key, f"{label or ''} {((self.ctx.last_snapshot.find(ref) if self.ctx.last_snapshot else None) or {}).get('label') or ''}")
         if answer_key and self.SENSITIVE_KEYS.match(answer_key) and options:
             # Surya's self-identification answers are his stored chain and nothing else; a model-supplied
             # fallback ("Asian (...)" next to "Decline to self-identify") is never tried.
@@ -2777,7 +2807,7 @@ class ToolDispatcher:
 
     async def _keep_computer_pick(self, f: dict, item: dict | None) -> dict:
         ref = f.get("ref", "")
-        key = f.get("answer_key")
+        key = self_id_redirect(f.get("answer_key"), f"{f.get('label') or ''} {(item or {}).get('label') or ''} {(item or {}).get('group') or ''}")
         a = answers.get(key, self.ctx.job.get("company", ""), self.ctx.portal) if key else None
         if a is None or not a.has_value:
             return {"ref": ref, "status": "failed", "error": "a pick made with the computer tool is recorded with the answer_key it came "
@@ -3636,8 +3666,8 @@ class ToolDispatcher:
                 out["note"] = ("this box takes only the area code of his phone number" if part == "area" else
                                "the box before this one takes his area code: this one takes the rest of his number")
                 return out, None
-        if LANGUAGE_RATING.match(question or "") and any(re.match(r"^\s*language\b", str(i.get("label") or ""), re.I)
-                                                          for i in snap_items):
+        if ENGLISH_RATING.search(question or "") or LANGUAGE_RATING.match(question or "") and any(
+                re.match(r"^\s*language\b", str(i.get("label") or ""), re.I) for i in snap_items):
             # a Workday Language block's rating boxes say only 'Comprehension', 'Reading', ...: his English proficiency
             # (Midland States Bank, 2026-10-24: five parks and a question to Surya)
             a_lang = answers.get("experience.english_proficiency", self.ctx.job.get("company", ""), self.ctx.portal)
@@ -3863,6 +3893,12 @@ class ToolDispatcher:
             if is_affiliation_question(text, opts):
                 auto.append(await self._settle_affiliation(text, opts))
                 continue
+            if ENGLISH_RATING.search(text):
+                # his English rating never goes to Surya (Midland States Bank, 2026-10-24)
+                pres_e, _ = await self.t_lookup_answer(text, opts)
+                if isinstance(pres_e, dict) and not pres_e.get("miss"):
+                    auto.append(pres_e)
+                    continue
             if VISA_HOLDER_ONLY.search(text):
                 # a question only for visa holders never goes to Surya (Federal Reserve, 2026-10-24)
                 pres_v, _ = await self.t_lookup_answer(text, opts)
