@@ -617,6 +617,34 @@ def citizenship_block(snap) -> bool:
 
 
 CITIZENSHIP_DATE_KEY = "compliance.citizenship_obtained_date"
+START_SOON_QUESTION = re.compile(r"\bhow soon (could|can|would) you (start|begin|be available)\b|\bif (offered|hired)\b.{0,40}\bhow soon\b", re.I)
+_SPAN = re.compile(r"\b(\d+|one|two|three|four|six)\s*(day|week|month)s?\b", re.I)
+
+
+def start_soon_pick(options: list[str], today=None) -> str | None:
+    """The option ('Immediately', 'Within 2 weeks', ..., 'Later than 1 month') that holds his earliest start date."""
+    import datetime as _dt
+    a = answers.get("availability.earliest_start_date")
+    d = fill.parse_date(str(a.answer)) if a is not None and a.has_value else None
+    if not isinstance(d, dict) or not d.get("year") or not d.get("month"):
+        return None
+    start = _dt.date(int(d["year"]), int(d["month"]), int(d.get("day") or 1))
+    days = (start - (today or _dt.date.today())).days
+    words = {"one": 1, "two": 2, "three": 3, "four": 4, "six": 6}
+    spans = []
+    for o in options:
+        m = _SPAN.search(o or "")
+        if m:
+            n = int(m.group(1)) if m.group(1).isdigit() else words[m.group(1).lower()]
+            spans.append((o, n * {"day": 1, "week": 7, "month": 31}[m.group(2).lower()]))
+    later = next((o for o in options if re.search(r"\b(later than|more than|over|after|longer than|beyond)\b", o or "", re.I)), None)
+    within = sorted((s for s in spans if not re.search(r"\b(later than|more than|over|after|longer than|beyond)\b", s[0], re.I)), key=lambda s: s[1])
+    if days <= 0:
+        return next((o for o in options if re.search(r"\b(immediately|now|asap)\b", o or "", re.I)), None)
+    hit = next((o for o, n in within if days <= n), None)
+    return hit or later
+
+
 # what a self-identification key's decline box names (a box of its own, apart from the question's options)
 SELF_ID_TOPIC = {"self_id.race_ethnicity": r"\b(race|racial|ethnic\w*)\b", "self_id.hispanic_latino": r"\b(hispanic|latin[ox]|ethnic\w*)\b"}
 # his internship start date's keys (redirected to his school start inside an education entry)
@@ -3573,6 +3601,16 @@ class ToolDispatcher:
                 out["note"] = ("this box takes only the area code of his phone number" if part == "area" else
                                "the box before this one takes his area code: this one takes the rest of his number")
                 return out, None
+        if options and START_SOON_QUESTION.search(question or ""):
+            # 'how soon could you start?' in spans from today: the span his earliest start date falls in (HMH, 2026-10-24)
+            pick = start_soon_pick(options)
+            if pick is not None:
+                k_ss = f"q.start_soon.job{self.ctx.job_id}"          # relative to today: never shared with another posting
+                answers.save_answer(k_ss, pick, answer_type="choice", source="derived",
+                                    note="the span from today his earliest start date (availability.earliest_start_date) falls in")
+                db.event(self.ctx.job_id, "answer:start_soon", {"question": question[:160], "answer": pick})
+                return {"key": k_ss, "answer": pick, "confidence": 1.0, "via": "start_date_rule",
+                        "note": f"he can start on his earliest start date, which falls in {pick!r} from today: choose it with this key"}, None
         if self.GOV_PUBLIC.search(text) and self.GOV_TOPIC.search(text):
             k = answers.key_from_question(question)
             mine = answers.get(k, self.ctx.job.get("company", ""), self.ctx.portal)

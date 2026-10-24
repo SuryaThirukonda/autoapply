@@ -2555,3 +2555,15 @@ async def test_a_wrong_class_year_for_fall_2027_is_no_eligibility_hold(store):
     assert "junior year" in out["error"], out
     from goat.agent.tools import CLASS_YEAR_WRONG
     assert not CLASS_YEAR_WRONG.search("requires enrollment in a Master's program; Surya is an undergraduate")
+
+
+@pytest.mark.asyncio
+async def test_how_soon_could_you_start_takes_the_option_his_start_date_falls_in(store):
+    """HMH (Workday, 2026-10-24): 'If offered this position, how soon could you start?' (Immediately ... Later than 1 month)
+    went to Surya; he starts 05/18/2027, months away."""
+    from goat import answers
+    answers.save_answer("availability.earliest_start_date", "05/18/2027", answer_type="short", source="surya_chat")
+    d, ctx = _dispatcher(_job())
+    opts = ["Immediately", "Within 1 week", "Within 2 weeks", "Within 3 weeks", "Within 1 month", "Later than 1 month"]
+    out, _ = await d.t_lookup_answer("If offered this position, how soon could you start?", opts)
+    assert out.get("answer") == "Later than 1 month", out
