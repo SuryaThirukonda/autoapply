@@ -61,6 +61,11 @@ async def watchdog(stop: asyncio.Event) -> None:
             if n:
                 log.info("watchdog: requeued %d job(s) whose application-cap window opened", n)
             ok = await chrome.is_healthy()
+            if ok:
+                # tabs left by held and finished jobs pile up until connect_over_cdp times out (42 tabs, 2026-10-24)
+                n = await chrome.close_stale_tabs()
+                if n:
+                    log.info("watchdog: closed %d stale tab(s)", n)
             if not ok and SETTINGS.browser.launch_if_missing:
                 log.warning("watchdog: Chrome CDP not answering; relaunching")
                 if await chrome.ensure_running():

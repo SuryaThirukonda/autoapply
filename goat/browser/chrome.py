@@ -106,6 +106,46 @@ async def close_unresponsive_tabs(cdp_url: str | None = None, timeout: float = 4
     return hung
 
 
+async def _list_targets(base: str | None = None) -> list[dict]:
+    base = (base or SETTINGS.browser.cdp_url).rstrip("/")
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.get(f"{base}/json/list")
+        return r.json() if r.status_code == 200 else []
+
+
+async def _close_target(tid: str, base: str | None = None) -> None:
+    base = (base or SETTINGS.browser.cdp_url).rstrip("/")
+    async with httpx.AsyncClient(timeout=10) as c:
+        await c.get(f"{base}/json/close/{tid}")
+
+
+TAB_CAP = 20
+LIVE_TAB_STATES = ("ready_for_you", "filling", "gated", "submitting", "awaiting_answer", "awaiting_code")
+
+
+async def close_stale_tabs(cap: int = TAB_CAP) -> int:
+    """Past `cap` open tabs, close every tab no live or ready-for-you job uses; returns how many were closed.
+
+    connect_over_cdp attaches to every page: 42 tabs left by held and finished jobs made it outlast its 15 s timeout and
+    every claim failed 'browser_down' (2026-10-24 10:11). A held job's tab is not needed: a rerun opens the apply link."""
+    from .. import db
+    pages = [t for t in await _list_targets() if t.get("type") == "page"]
+    if len(pages) <= cap:
+        return 0
+    marks = ",".join("?" for _ in LIVE_TAB_STATES)
+    keep = {r[0] for r in db.connect().execute(
+        f"SELECT tab_target_id FROM jobs WHERE status IN ({marks}) AND tab_target_id IS NOT NULL", LIVE_TAB_STATES)}
+    stale = [t for t in pages if t.get("id") not in keep]
+    if len(stale) == len(pages):
+        stale = stale[1:]              # Chrome quits with its last window: one tab stays
+    for t in stale:
+        try:
+            await _close_target(t["id"])
+        except Exception:  # noqa: BLE001 - a tab that will not close is tried on the next pass
+            pass
+    return len(stale)
+
+
 def launch_command(b=None, platform: str = sys.platform) -> tuple[list[str], dict[str, str] | None]:
     """argv and environment (None = inherit) for the dedicated Chrome on this platform."""
     b = b or SETTINGS.browser
