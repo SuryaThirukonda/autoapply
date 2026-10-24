@@ -766,6 +766,8 @@ SELF_SATISFIED = re.compile(r"\b(this|that|it|the requirement|requirement) (is|w
                             # a reason that argues itself out of the hold (Mastercard, 2026-10-23: "... Actually requirements are
                             # exposure, not strict. ... continue not park")
                             r"\bcontinue,? (and )?not park\b|\bnot strict\b|\bshould not park\b|"
+                            # Nissan (2026-10-23): "Surya is a rising senior, which meets the junior/senior condition?"
+                            r"\bmeets the [\w/ -]{0,40}?\b(condition|requirement|criteria|criterion)s?\b|"
                             r"\b(he|surya) (is|remains|appears|seems) (fully )?(eligible|qualified)\b", re.I)
 
 

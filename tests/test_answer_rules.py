@@ -2533,3 +2533,6 @@ def test_an_eligibility_reason_that_says_it_is_satisfied_is_no_hold():
     assert SELF_SATISFIED.search("requires a 3.0 GPA; Surya is eligible with a 4.0")
     assert not SELF_SATISFIED.search("requires an active Secret clearance before the start date; Surya is not eligible to start without one")
     assert not SELF_SATISFIED.search("open only to students who are not eligible for other programs")
+    # Nissan (2026-10-23): parked eligibility while saying the condition is met
+    assert SELF_SATISFIED.search("At Summer 2027 start Surya is a rising senior, which meets the junior/senior condition? The posting")
+    assert not SELF_SATISFIED.search("requires entering a Master's program; Surya does not meet the graduate condition")
