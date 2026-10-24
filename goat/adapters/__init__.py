@@ -428,7 +428,10 @@ class Adapter:
                     if item.get("tag") in ("dropdown", "select") or item.get("combo") or kind == "choose" and item.get("tag") != "input":
                         chooses.append((item["ref"], label, key, str(a.answer)))
                     else:
-                        plan.append({"ref": item["ref"], "value": str(a.answer), "_label": label, "_key": key})
+                        # a chain of wordings is for pickers; a text box takes its first entry (Panthalassa's 'Where are
+                        # you currently located?' got all seven 'Sugar Land, ...' wordings, 2026-10-24)
+                        typed = str(a.answer).split(";")[0].strip() if a.answer_type == "choice_chain" else str(a.answer)
+                        plan.append({"ref": item["ref"], "value": typed, "_label": label, "_key": key})
                     break
         # Résumé: attach deterministically when an empty Resume/CV file input exists (never the cover letter slot);
         # a slot that already shows the expected file is verified and sourced without re-uploading.

@@ -84,13 +84,34 @@ async def clear_sf_session(ex) -> bool:
         return False
 
 
+# A portal-wide outage page ('Workday is currently unavailable. We are experiencing a service interruption.'): eighteen
+# Workday jobs were claimed into it in half an hour on 2026-10-24, each spending an attempt.
+OUTAGE_TEXT = re.compile(r"currently unavailable|service interruption|scheduled maintenance|down for maintenance", re.I)
+OUTAGE_PAUSE_S = 45 * 60
+
+
+def outage_portals(now: int | None = None) -> set[str]:
+    """Portals with two or more outage holds in the last OUTAGE_PAUSE_S: not claimed until it passes."""
+    now = now or db.now()
+    rows = db.connect().execute(
+        "SELECT LOWER(COALESCE(l.ats,'')) AS ats, e.detail FROM events e JOIN jobs j ON j.id=e.job_id JOIN listings l ON l.id=j.listing_id "
+        "WHERE e.kind='job:hold' AND e.ts > ? AND e.detail LIKE '%portal_error%'", (now - OUTAGE_PAUSE_S,)).fetchall()
+    counts: dict[str, int] = {}
+    for r in rows:
+        if r["ats"] and OUTAGE_TEXT.search(str(r["detail"] or "")):
+            counts[r["ats"]] = counts.get(r["ats"], 0) + 1
+    return {a for a, n in counts.items() if n >= 2}
+
+
 def claim_next() -> dict | None:
     """Surya's explicit choices first (releases, pins, his drag order, answered questions), then the newest postings
     (rank_queue). One claim at a time."""
     lanes = SETTINGS.lanes_enabled or ["no_account"]
     marks = ",".join("?" for _ in lanes)
-    # portals the worker never claims (SKIP_ATS; iCIMS by default: an hCaptcha guards its account creation)
-    skip = [a.lower() for a in (SETTINGS.skip_ats or [])] or ["-"]
+    # portals the worker never claims (SKIP_ATS; iCIMS by default: an hCaptcha guards its account creation), and any portal
+    # in an outage right now
+    skip = [a.lower() for a in (SETTINGS.skip_ats or [])] + sorted(outage_portals())
+    skip = skip or ["-"]
     skip_marks = ",".join("?" for _ in skip)
     with db.tx() as con:
         rank_queue(con)
@@ -801,9 +822,15 @@ def requeue_portal_errors(now: int | None = None) -> int:
                            # never past the claim limit: a job at max_attempts sat 'queued' and was never claimed (GM
                            # Financial, 2026-10-22: PORTAL_RETRY_MAX_ATTEMPTS 4 against max_attempts 3)
                            (states.HOLD, now - PORTAL_RETRY_AFTER_S, min(PORTAL_RETRY_MAX_ATTEMPTS, SETTINGS.budgets.max_attempts))).fetchall()
+        # an outage hold gives its attempt back: the portal was down, the posting was never tried (2026-10-24)
+        outage_ids = {r["id"] for r in con.execute(
+            "SELECT id, hold_reason FROM jobs WHERE status=? AND hold_reason LIKE 'portal_error:%' AND updated_at < ?",
+            (states.HOLD, now - PORTAL_RETRY_AFTER_S)).fetchall() if OUTAGE_TEXT.search(str(r["hold_reason"] or ""))}
+        rows = list(rows) + [{"id": i} for i in outage_ids if i not in {r["id"] for r in rows}]
         for r in rows:
-            con.execute("UPDATE jobs SET status=?, hold_reason=NULL, tab_target_id=NULL, updated_at=? WHERE id=?",
-                        (states.QUEUED, now, r["id"]))
+            con.execute("UPDATE jobs SET status=?, hold_reason=NULL, tab_target_id=NULL, updated_at=?, "
+                        "attempts=MAX(attempts - ?, 0) WHERE id=?",
+                        (states.QUEUED, now, 1 if r["id"] in outage_ids else 0, r["id"]))
             con.execute("INSERT INTO events(job_id,ts,kind,detail) VALUES(?,?,?,?)",
                         (r["id"], now, "job:requeued", json.dumps({"reason": "portal_error retry"})))
             n += 1

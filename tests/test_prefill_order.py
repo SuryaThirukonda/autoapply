@@ -76,3 +76,31 @@ async def test_prefill_types_the_posting_locations_into_a_box_that_asks_for_them
         assert await ex.page.evaluate("() => document.getElementById('loc2').value") == "Aurora, CO", res.details
     finally:
         await ex.close()
+
+
+CHAIN_PAGE = """<html><body><form>
+<div class="field"><label for="loc">Where are you currently located?*</label><input id="loc" type="text" style="width:300px"></div>
+</form></body></html>"""
+
+
+async def test_a_text_box_gets_the_first_entry_of_a_choice_chain(tmp_path):
+    """Panthalassa (Greenhouse, 2026-10-24) went out with 'Sugar Land, Texas, United States; Sugar Land, TX, United States; ...'
+    typed into 'Where are you currently located?': the prefill typed his whole wording chain."""
+    db.reset_for_tests(tmp_path / "t.db")
+    answers.save_answer("identity.location_city", "Sugar Land, Texas, United States; Sugar Land, TX, United States; Sugar Land",
+                        answer_type="choice_chain", source="seed")
+    with db.tx() as con:
+        con.execute("INSERT INTO listings(id,company,title,url,ats) VALUES('L1','Acme','SWE Intern','https://boards.greenhouse.io/acme/jobs/1','greenhouse')")
+        jid = con.execute("INSERT INTO jobs(listing_id,status,lane,created_at,updated_at) VALUES('L1','filling','no_account',1,1)").lastrowid
+    job = {"id": jid, "listing_id": "L1", "company": "Acme", "title": "SWE Intern", "ats": "greenhouse",
+           "url": "https://boards.greenhouse.io/acme/jobs/1", "resume_variant": "swe"}
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(CHAIN_PAGE)
+        snap = await snapshot.take(ex)
+        res = await for_portal("greenhouse").prefill(ex, snap, job, 1)
+        assert await ex.page.evaluate("() => document.getElementById('loc').value") == "Sugar Land, Texas, United States", res.details
+    finally:
+        await ex.close()
