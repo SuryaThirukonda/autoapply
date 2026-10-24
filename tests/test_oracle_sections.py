@@ -250,6 +250,12 @@ def test_degree_lists_and_small_helpers():
     assert osec.degree_option(["Bachelor of Arts", "Bachelor of Science (BS)", "Bachelors"], "Bachelor of Science") == "Bachelor of Science (BS)"
     assert osec.degree_option(["Bachelor's Degree", "Master's Degree"], "Bachelor of Science") == "Bachelor's Degree"
     assert osec.degree_option(["Associates", "Masters"], "Bachelor of Science") is None
+    # BCBS Michigan (2026-10-24): the generic entry with a gloss, never a BA
+    assert osec.degree_option(["Associate's Degree", "Bachelor's Degree (BS/BA)", "Master's Degree"], "Bachelor of Science") \
+        == "Bachelor's Degree (BS/BA)"
+    assert osec.degree_option(["Associate's Degree", "Bachelors Degree - Undergraduate", "Master's Degree"], "Bachelor of Science") \
+        == "Bachelors Degree - Undergraduate"
+    assert osec.degree_option(["Bachelor of Arts", "Master of Arts"], "Bachelor of Science") is None
     assert osec.title_matches("Software Engineering Intern", "Software Engineering Intern, Quantitative Systems")
     assert osec.title_matches("Founding Software Engineer Part-time", "Founding Software Engineer (Part-time)")
     assert not osec.title_matches("Software Engineer", "Software Engineering Intern, Quantitative Systems")

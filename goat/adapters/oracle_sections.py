@@ -261,6 +261,13 @@ def degree_option(options: list[str], degree: str) -> str | None:
     for o in options:
         if GENERIC_BACHELOR.fullmatch(_norm(o)):
             return o
+    # the generic entry with a gloss: 'Bachelor's Degree (BA/BS)', 'Bachelors Degree - BS' (BCBS Michigan, 2026-10-24: the
+    # Degree pills held none of the bare wordings and the education entry stayed open)
+    for o in options:
+        n = _norm(o)
+        if re.match(r"(bachelor|bachelors|bachelor s|baccalaureate)\b", n) and not re.search(r"\b(master|doctor|associate|mba)\b", n) \
+                and (re.search(r"\b(bs|science)\b", n) or not re.search(r"\b(arts|ba)\b", n)):
+            return o
     return None
 
 
@@ -648,7 +655,7 @@ class OracleSections:
             # BNY's Degree is a row of single-select pills ('Bachelor's Degree', 'Master's Degree', ...), not a picker
             hit = degree_option([p["text"] for p in pills], degree)
             if hit is None:
-                return False, f"Degree: nothing like {degree!r} among its choices", done
+                return False, f"Degree: nothing like {degree!r} among its choices {[p['text'] for p in pills][:8]}", done
             pill = next(p for p in pills if p["text"] == hit)
             if not pill["checked"]:
                 self.dirty = True
