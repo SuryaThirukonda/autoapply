@@ -746,6 +746,10 @@ def combined_account_application(snap) -> bool:
 _NUM_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
 FORM_FIELD_TALK = re.compile(r"\b((date|form|required|input|education|answer|text) fields?|dropdowns?|pickers?|text ?box(es)?|"
                              r"checkbox(es)?|the form'?s?|month/year)\b", re.I)
+# A claim that he is a freshman or sophomore in Fall 2027 / the upcoming term (he enters his junior year then).
+CLASS_YEAR_WRONG = re.compile(
+    r"\b(freshman|sophomore|first[- ]year|second[- ]year)\b.{0,40}\b(fall|autumn) 2027\b|\b(fall|autumn) 2027\b.{0,40}\b(freshman|sophomore)\b|"
+    r"\b(will be|still be|will still be|be entering|enters|entering) (a |his )?(freshman|sophomore)\b", re.I)
 YEARS_CLAIM = re.compile(r"\b(\d{1,2})\+?\s*(?:years?|yrs?)\b", re.I)
 
 
@@ -1203,12 +1207,13 @@ def talent_community_allowed(company: str = "", portal: str = "") -> bool:
 
 # A box whose own label or placeholder asks for N/A when it does not apply ("(Enter 'N/A' if not applicable.)",
 # "If you did not answer 'Yes', please enter 'N/A'").
-NA_INSTRUCTION = re.compile(r"\b(enter|type|write|input|put|use|respond with|answer)\s+['\"\u201c\u201d\u2018\u2019]?n\s*/\s*a\b", re.I)
+NA_INSTRUCTION = re.compile(r"\b(enter|type|write|input|put|use|respond with|answer|indicate|state|list)\s+['\"\u201c\u201d\u2018\u2019]?n\s*/\s*a\b", re.I)
 
 
 # A box asked only when the question before it was answered Yes ("If yes, circumstances", "If so, please explain").
 # CenturyLink (2026-10-21): 'Are you a former employee of Lumen ...?' was answered No, then 'If yes, circumstances' got
 # his stored reason for leaving ('Internship ended') and the judge failed the draft.
+IF_OTHER_FOLLOWUP = re.compile(r"^[\s*]*(if\s+(you\s+)?(selected|chose|picked|answered|checked)?\s*['\"“‘]?other\b)", re.I)
 IF_YES_FOLLOWUP = re.compile(r"^[\s*]*(if\s+(yes|so)\b|if\s+you\s+(answered|selected|said|checked|chose|responded)\s+['\"“‘]?yes\b)", re.I)
 NOT_APPLICABLE_TEXT = re.compile(r"^\s*(n\s*/?\s*a|not applicable|none|does not apply)\s*\.?\s*$", re.I)
 _REF_NO = re.compile(r"^e(\d+)$")
@@ -1788,6 +1793,17 @@ class ToolDispatcher:
             a_cd = citizenship_date_answer()
             if a_cd is not None and a_cd.has_value:
                 return str(a_cd.answer), f"standing:{CITIZENSHIP_DATE_KEY}", None
+        if answer_key and re.search(r"sponsor", answer_key) and ref and self.ctx.last_snapshot is not None:
+            # a box that lists the places he needs sponsorship for, N/A when none: HPE's 'indicate all locations or countries
+            # ... If this does not apply, indicate N/A' got his yes/no 'No' (2026-10-23)
+            item = self.ctx.last_snapshot.find(ref) or {}
+            own = f"{item.get('label') or ''} {item.get('placeholder') or ''}"
+            if item.get("tag") in ("input", "textarea") and (item.get("type") or "text") in ("text", "") \
+                    and re.search(r"\b(locations?|countries|country)\b", own, re.I) \
+                    and (NA_INSTRUCTION.search(own) or re.search(r"\b(list|indicate|identify|specify|name)\b.{0,40}\b(locations?|countries)\b", own, re.I)):
+                a_sp = answers.get(answer_key, self.ctx.job.get("company", ""), self.ctx.portal)
+                if a_sp is not None and a_sp.has_value and answer_polarity(str(a_sp.answer)) == "no":
+                    return "N/A", f"standing:{answer_key} (needs sponsorship nowhere: the box asks for N/A)", None
         if answer_key and INTERNSHIP_START_KEY.match(answer_key) and ref and self.ctx.last_snapshot is not None:
             # a start date inside an education entry is when he started school: Epic Games' 'Start Date (Year)'
             # (educations[0].start_date.year) got 2027 from bank.start-date (2026-10-23)
@@ -2013,8 +2029,16 @@ class ToolDispatcher:
                     page_txt = ""
                 dictated = dictated_by_form(v0, "\n".join([page_txt, str((item or {}).get("label") or ""),
                                                            str((item or {}).get("placeholder") or "")]))
+            if_other_na = False
+            if not dictated and not is_choice and not f.get("answer_key") and v0.upper() in ("N/A", "NA") and IF_OTHER_FOLLOWUP.match(fq):
+                # 'If you selected other, please specify which one' after a pick that was not Other: SharkNinja's school box
+                # (Texas A&M picked) went to Surya as a question (2026-10-23)
+                page_vals = [str(d.get("value") or "") for d in records.decisions(self.ctx.job_id) if d.get("page") == self.ctx.page_no]
+                if_other_na = not any(re.match(r"^\s*other\b", v, re.I) for v in page_vals)
             if dictated:
                 val, src, err = v0, "form (the page tells the applicant to enter this)", None
+            elif if_other_na:
+                val, src, err = "N/A", "generated (an 'If other' box: nothing on this page was answered Other)", None
             elif followup_na or (not f.get("answer_key") and str(f.get("value") or "").strip().upper() in ("N/A", "NA") and not is_choice
                                and NA_INSTRUCTION.search(f"{(item or {}).get('label') or ''} {(item or {}).get('placeholder') or ''}")):
                 # The box itself asks for N/A when its question does not apply: CenturyLink's "If yes, please describe the
@@ -4870,6 +4894,16 @@ class ToolDispatcher:
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "years not in this posting"})
             return {"error": f"not parked: this posting does not state {m_years.group(0)!r} anywhere (a sibling posting may); an "
                              "eligibility hold quotes THIS posting's requirement. Continue the application."}, None
+        # His year in school for 2027-28 is Junior (Senior by graduation date): Nissan was held "Surya will be a sophomore in
+        # Fall 2027" against a junior-or-senior rule he meets (2026-10-23).
+        if low.startswith("eligibility") and CLASS_YEAR_WRONG.search(reason) \
+                and self.ctx.control_failures.get("park:class_year", 0) < 2:
+            self.ctx.control_failures["park:class_year"] = self.ctx.control_failures.get("park:class_year", 0) + 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "class year"})
+            return {"error": "not parked: he is a sophomore NOW (2026-27, his second year). In Fall 2027 he enters his junior year "
+                             "(education.class_standing_next_year), and as he graduates in May 2028 the 2027-28 year is also his "
+                             "final (senior) year: for a Summer 2027 internship he is a rising junior by years and a rising senior "
+                             "by graduation. A junior-or-senior rule includes him. Continue the application."}, None
         # A skill or technology the posting asks for is no eligibility rule (Motorola, 2026-10-20: "requires Android Studio and
         # Android SDK knowledge, which is not in Surya's stored profile"): he applies, and his résumé shows what he has.
         if low.startswith("eligibility") and self.SKILL_ONLY.search(reason) and not self.HARD_REQUIREMENT.search(reason) \

@@ -107,3 +107,14 @@ def test_a_category_with_another_named_source_is_not_his_fallback():
     assert best_option([{"text": "Job Board: Other"}], wants)["text"] == "Job Board: Other"
     # an issuer after a dash is still the credential
     assert _chip_matches("AWS Certified Cloud Practitioner - Amazon Web Services (AWS)", ["AWS Certified Cloud Practitioner"])
+
+
+def test_his_fallback_other_is_never_another_named_source():
+    """Watts Water (Workday, 2026-10-23): the chain's last 'Other' matched 'Other School', and the application went out
+    saying he heard of the job through a school."""
+    from goat.browser.fill import best_option
+    wants = ["LinkedIn", "Job Board", "Agency / Search Firm", "Other"]
+    assert best_option([{"text": t} for t in ["Career Fair", "Other School"]], wants) is None
+    assert best_option([{"text": t} for t in ["Other School", "Other"]], wants)["text"] == "Other"
+    assert best_option([{"text": "Other (please specify)"}], wants)["text"] == "Other (please specify)"
+    assert best_option([{"text": t} for t in ["Other School", "Other Website"]], wants)["text"] == "Other Website"

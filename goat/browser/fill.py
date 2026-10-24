@@ -675,6 +675,11 @@ def _foreign_qualifier(text: str, wants: list[str]) -> bool:
 ENUM_PREFIX = re.compile(r"^\s*(\d{1,2}|[a-zA-Z])[.)]\s+")
 
 
+# A plain 'Other' and its generic forms: 'Other (please specify)', 'Other:', 'Other website / online / job board'.
+OTHER_GENERIC = re.compile(r"^other\b\s*(\(.*\)|[:\-–—]\s*.*|please specify.*|sources?|websites?|online|internet|"
+                           r"job (boards?|sites?|postings?)|social media|not listed)?\s*$", re.I)
+
+
 # An option that states a fact ("Not Applicable, Graduated") is no plain No; a negated one ("I have never been employed
 # by the U.S. Federal Government.") is.
 _STATED_FACT = re.compile(r"\b(graduat\w*|completed|retired|employed|enrolled)\b", re.I)
@@ -696,6 +701,16 @@ def best_option(options: list[dict], wants: list[str]) -> dict | None:
         options = [o for o in options if o not in named]
         if not options:
             return None
+    # his fallback 'Other' is the plain Other, never 'Other School' or 'Other Event' (another named source): Watts Water's
+    # application said he heard of it through a school (2026-10-23)
+    if any(_norm(w) == "other" for w in wants if w):
+        named_other = [o for o in options if re.match(r"^\s*other\b", str(o.get("text") or ""), re.I)
+                       and not OTHER_GENERIC.match(str(o.get("text") or "").strip())
+                       and not any(_norm(w) == _norm(o.get("text")) for w in wants if w)]
+        if named_other:
+            options = [o for o in options if o not in named_other]
+            if not options:
+                return None
     hit = _best_option_core(options, wants)
     if hit is not None or not any(ENUM_PREFIX.match(str(o.get("text") or "")) for o in options):
         return hit

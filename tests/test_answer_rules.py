@@ -2536,3 +2536,20 @@ def test_an_eligibility_reason_that_says_it_is_satisfied_is_no_hold():
     # Nissan (2026-10-23): parked eligibility while saying the condition is met
     assert SELF_SATISFIED.search("At Summer 2027 start Surya is a rising senior, which meets the junior/senior condition? The posting")
     assert not SELF_SATISFIED.search("requires entering a Master's program; Surya does not meet the graduate condition")
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_class_year_for_fall_2027_is_no_eligibility_hold(store):
+    """Nissan (2026-10-23): held 'requires students entering their Junior or Senior year ... Surya will be a sophomore in
+    Fall 2027'; he is a sophomore NOW (2026-27) and enters his junior year in Fall 2027."""
+    job = _job()
+    d, ctx = _dispatcher(job)
+
+    async def page_text(n=0):
+        return "Financial AI Engineering Intern. Students entering their Junior or Senior year at the start of the upcoming term."
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("eligibility: Nissan requires students entering their Junior or Senior year at the start of the "
+                            "upcoming academic term; Surya will be a sophomore in Fall 2027.")
+    assert "junior year" in out["error"], out
+    from goat.agent.tools import CLASS_YEAR_WRONG
+    assert not CLASS_YEAR_WRONG.search("requires enrollment in a Master's program; Surya is an undergraduate")
