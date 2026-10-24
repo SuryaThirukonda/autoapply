@@ -2780,7 +2780,18 @@ class ToolDispatcher:
                     if not real:
                         # a Workday prompt cannot be peeked once picked: the options choose saw while working it
                         real = [t for t in fill.SEEN_OPTIONS.get(r.ref or ref, []) if not fill.PLACEHOLDER.match(t)]
-                    if real:
+                    better = fill.best_option([{"text": t} for t in real], stored_wants[:rank]) if real else None
+                    if better is not None and answers.norm(better["text"]) != answers.norm(shown):
+                        # the list held a better-ranked choice than the one the prompt settled on: GM's 'Internet Job Board /
+                        # Job Search' was there and 'Other' was picked, seven drafts running (2026-10-24)
+                        r2 = await fill.choose(self.ctx.ex, r.ref or ref, [better["text"]])
+                        if r2.ok:
+                            # a multi-select prompt keeps the earlier chip beside the new one: only the better pick stays
+                            await fill._remove_wrong_chips(self.ctx.ex, r2.ref or r.ref or ref, keep=better["text"])
+                            db.event(self.ctx.job_id, "choose:repicked", {"key": answer_key, "was": shown[:60], "now": str(r2.readback)[:60]})
+                            r, shown = r2, str(r2.readback)
+                            rank = next((i for i, w in enumerate(stored_wants) if fill.best_option([{"text": shown}], [w]) is not None), rank)
+                    if real and rank >= 2:
                         rec_src = f"{rec_src} (offered: {'; '.join(real)[:200]})"
                         db.event(self.ctx.job_id, "choose:fallback", {"key": answer_key, "picked": shown[:60], "offered": real[:30]})
             records.record_decision(self.ctx.job_id, self.ctx.page_no, label, shown, rec_src, r.ref or ref)

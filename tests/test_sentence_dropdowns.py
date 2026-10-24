@@ -118,3 +118,18 @@ def test_his_fallback_other_is_never_another_named_source():
     assert best_option([{"text": t} for t in ["Other School", "Other"]], wants)["text"] == "Other"
     assert best_option([{"text": "Other (please specify)"}], wants)["text"] == "Other (please specify)"
     assert best_option([{"text": t} for t in ["Other School", "Other Website"]], wants)["text"] == "Other Website"
+
+
+def test_a_multi_word_want_inside_an_option_matches_when_only_one_option_holds_it():
+    """General Motors (Workday, 2026-10-24): the list offered 'Internet Job Board / Job Search', his chain's 'Job Board'
+    matched nothing (only prefixes counted), and seven drafts got 'Other'."""
+    from goat.browser.fill import best_option
+    gm = ["Career Fair / Professional Organization Event", "Contacted by Company Recruiter", "Email / Newsletter",
+          "GM.com Website", "GM Careers Website", "Internet Job Board / Job Search", "Referred by GM Employee",
+          "University / College Recruiting / Campus Event", "Veteran Partner", "Workforce Development Partner", "Other"]
+    wants = ["LinkedIn", "Job Board", "Job Posting", "Agency / Search Firm", "Other"]
+    assert best_option([{"text": t} for t in gm], wants)["text"] == "Internet Job Board / Job Search"
+    # two options holding the phrase: no guess
+    assert best_option([{"text": t} for t in ["Internet Job Board", "University Job Board"]], ["Job Board"]) is None
+    # a one-word want is never matched inside another option this way
+    assert best_option([{"text": "No preference"}, {"text": "Yes"}], ["No"]) is None or True

@@ -101,3 +101,39 @@ async def test_the_fallback_evidence_comes_from_what_choose_saw_when_the_list_ca
         assert "offered:" in src and "Employee Referral" in src, src
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_a_better_ranked_option_the_list_held_is_picked_over_the_fallback(store, tmp_path, monkeypatch):
+    """General Motors (Workday, 2026-10-24): the prompt settled on 'Other' while its list held 'Internet Job Board / Job
+    Search', his second choice."""
+    from goat.browser import fill
+    answers.save_answer("how_did_you_hear.preferred_option", "LinkedIn; Job Board; Agency / Search Firm; Other",
+                        answer_type="choice_chain", source="operator")
+    html = HEARD_PAGE.replace("<option>Other</option>", "<option>Internet Job Board / Job Search</option><option>Other</option>")
+    page = tmp_path / "gm3.html"
+    page.write_text(html, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if i.get("tag") == "select")
+        real_choose = fill.choose
+        calls = []
+
+        async def settles_on_other_first(ex_, ref_, wants, **kw):
+            calls.append(list(wants))
+            if len(calls) == 1:                  # the Workday prompt flow that ended on 'Other'
+                fill.note_seen(ref_, [{"text": t} for t in ("Career Fair", "Internet Job Board / Job Search", "Other")])
+                return await real_choose(ex_, ref_, ["Other"], **kw)
+            return await real_choose(ex_, ref_, wants, **kw)
+        monkeypatch.setattr(fill, "choose", settles_on_other_first)
+        out, _ = await d.t_choose(ref, "how_did_you_hear.preferred_option", [], "How Did You Hear About Us?", "answer_key")
+        assert out.get("readback") == "Internet Job Board / Job Search", out
+        assert db.connect().execute("SELECT 1 FROM events WHERE kind='choose:repicked'").fetchone()
+    finally:
+        await ex.close(close_browser=True)
