@@ -380,6 +380,11 @@ class Adapter:
             a = answers.lookup(q, job.get("company", ""), self.portal) if q else None
             if not a or not a.has_value:
                 continue
+            from ..agent.tools import internship_here
+            if a.via in ("alias_substrings", "alias_core") and internship_here(q, job.get("company", "")):
+                # UL Solutions' 'internship at UL? / Yes', left pressed by an earlier attempt, was sourced from his general
+                # prior-internship Yes (2026-10-24): an internship at this company is the affiliation rule's to answer
+                continue
             ans = answers.norm(str(a.answer)); lab = answers.norm(item.get("label") or "")
             ok = (lab == ans) or (ans in ("yes", "true") and lab == "yes") or (ans == "no" and lab == "no")
             if ok:

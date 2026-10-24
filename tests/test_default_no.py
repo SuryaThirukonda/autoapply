@@ -301,3 +301,18 @@ async def test_an_internship_at_the_company_applied_to_is_an_affiliation_no(stor
     assert not internship_here("Have you completed an internship at a technology company?", "UL Solutions")
     assert not internship_here("Have you completed an internship?", "UL Solutions")
     assert not internship_here("Have you completed an internship at Google?", "UL Solutions")
+
+
+@pytest.mark.asyncio
+async def test_a_previously_applied_question_is_settled_from_the_ledger(store):
+    """BCBS Michigan (2026-10-24): 'Have you previously applied to Blue Cross Blue Shield of Michigan or any of its
+    subsidiaries or affiliates within the last 6 months?' was stored as a bare default No and failed as unsupported."""
+    answers.save_answer("preferences.applied_before", "Yes / No", answer_type="conditional:ledger_company", source="questionnaire",
+                        note="Applied to this company before? (answered from the application ledger)")
+    d, _ = _dispatcher(_job("Blue Cross Blue Shield of Michigan", "L7"))
+    q = ("Have you previously applied to Blue Cross Blue Shield of Michigan or any of its subsidiaries or affiliates within the "
+         "last 6 months?")
+    out = await d._settle_affiliation(q, ["Yes", "No"])
+    assert out["answer"] == "No" and out["via"] == "ledger", out
+    saved = answers.lookup(q)
+    assert saved.answer == "No" and "application ledger" in (saved.note or "") and saved.source == "derived"

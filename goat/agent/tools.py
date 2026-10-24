@@ -1099,6 +1099,11 @@ def membership_default_no(question: str, options: list[str] | None) -> bool:
     return not _profile_names_any(parts)
 
 
+# 'Have you previously applied to <company> ... within the last 6 months?': settled from his application ledger
+APPLIED_BEFORE = re.compile(r"\b(previously|ever|already|before)\b.{0,30}\bappl(y|ied)\b|\bappl(y|ied)\b.{0,80}\b(before|previously|"
+                            r"in the (past|last)|within the (past|last))\b", re.I)
+
+
 # 'Have you previously completed an internship at UL?' (UL Solutions, Oracle, 2026-10-24) took his general prior-internship
 # Yes (DeKalb) through a substring alias; an internship at the company he is applying to is an affiliation question
 PRIOR_INTERNSHIP_AT = re.compile(r"(?i:\b(internships?|co-?ops?|interned|intern)\b[^?]{0,40}?\b(at|with|for))\s+"
@@ -2912,6 +2917,11 @@ class ToolDispatcher:
         except Exception:
             info = {}
         typ = str(info.get("type") or "").lower()
+        if info.get("pressed") is False:
+            # a pill / toggle button (Oracle's <button role=radio aria-checked=false>) names its option whether or not it is
+            # picked: UL Solutions' 'No' read back as kept while 'Yes' stayed selected, and the gate blocked it (2026-10-24)
+            return {"ref": ref, "status": "failed", "error": "that option is not selected on the page (aria-checked / aria-pressed is "
+                                                             "false): click it once, then snapshot"}
         if typ in ("checkbox", "radio"):
             if info.get("value") != "checked":
                 return {"ref": ref, "status": "failed", "error": "that option is not ticked on the page"}
@@ -3638,6 +3648,21 @@ class ToolDispatcher:
     async def _settle_affiliation(self, question: str, options: list[str]) -> dict:
         """Employer / industry / affiliation / relationship yes-no questions: answered from the profile,
         default No (Surya, 2026-10-15), saved so the decision is remembered and reviewable."""
+        if APPLIED_BEFORE.search(question or ""):
+            # BCBS Michigan (2026-10-24): 'Have you previously applied to Blue Cross Blue Shield of Michigan ... within the last 6
+            # months?' was stored as a bare default No ('names nobody from the profile') and the judge failed it as unsupported;
+            # the answer and its reason come from his application ledger
+            ab = answers.get("preferences.applied_before", self.ctx.job.get("company", ""), self.ctx.portal)
+            if ab is not None and ab.has_value:
+                val, why = answers.concrete_value(ab, company=self.ctx.job.get("company", ""), listing_id=self.ctx.job.get("listing_id"))
+                if val:
+                    pick = default_no_choice(question, options) if answer_polarity(val) == "no" else None
+                    ans = pick or val
+                    key = answers.key_from_question(question)
+                    answers.save_answer(key, ans, answer_type="choice", source="derived", note=f"from the application ledger: {why}",
+                                        aliases=[question])
+                    db.event(self.ctx.job_id, "answer:applied_before", {"key": key, "answer": ans, "why": why[:160]})
+                    return {"key": key, "answer": ans, "confidence": 1.0, "via": "ledger", "note": f"from the application ledger: {why[:120]}"}
         facts = profile.affiliations_brief()
         choice = default_no_choice(question, options)
         hits = profile.mentions(question)
