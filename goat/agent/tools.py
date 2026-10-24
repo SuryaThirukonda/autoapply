@@ -619,6 +619,7 @@ def citizenship_block(snap) -> bool:
 
 
 CITIZENSHIP_DATE_KEY = "compliance.citizenship_obtained_date"
+LANGUAGE_RATING = re.compile(r"^\s*(comprehension|overall|reading|speaking|writing|listening)(\s+(proficiency|level|skills?))?\s*[*:]*\s*$", re.I)
 START_SOON_QUESTION = re.compile(r"\bhow soon (could|can|would) you (start|begin|be available)\b|\bif (offered|hired)\b.{0,40}\bhow soon\b", re.I)
 _SPAN = re.compile(r"\b(\d+|one|two|three|four|six)\s*(day|week|month)s?\b", re.I)
 
@@ -3622,6 +3623,13 @@ class ToolDispatcher:
                 out["note"] = ("this box takes only the area code of his phone number" if part == "area" else
                                "the box before this one takes his area code: this one takes the rest of his number")
                 return out, None
+        if LANGUAGE_RATING.match(question or "") and any(re.match(r"^\s*language\b", str(i.get("label") or ""), re.I)
+                                                          for i in snap_items):
+            # a Workday Language block's rating boxes say only 'Comprehension', 'Reading', ...: his English proficiency
+            # (Midland States Bank, 2026-10-24: five parks and a question to Surya)
+            a_lang = answers.get("experience.english_proficiency", self.ctx.job.get("company", ""), self.ctx.portal)
+            if a_lang is not None and a_lang.has_value:
+                return self._present(a_lang, via="language_rating"), None
         if options and START_SOON_QUESTION.search(question or ""):
             # 'how soon could you start?' in spans from today: the span his earliest start date falls in (HMH, 2026-10-24)
             pick = start_soon_pick(options)

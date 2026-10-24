@@ -2596,3 +2596,24 @@ async def test_ask_user_never_sends_a_visa_holder_only_question(store):
          "signing a declaration to become a permanent resident and then a U.S. citizen?")
     out, _ = await d.t_ask_user([{"question": q, "options": ["Yes", "No"], "field_type": "radio"}])
     assert out.get("asked") == [] and out["auto_answered"][0]["answer"] == "No", out
+
+
+@pytest.mark.asyncio
+async def test_language_rating_labels_under_a_language_field_take_his_english_proficiency(store):
+    """Midland States Bank (Workday, 2026-10-24): the Language block's 'Comprehension', 'Overall', 'Reading', 'Speaking' and
+    'Writing' looked up nothing on their own; the run parked five times and asked Surya for ratings."""
+    from goat import answers
+    from goat.browser.snapshot import Snapshot
+    answers.save_answer("experience.english_proficiency", "Native; Fluent; Advanced", answer_type="choice_chain", source="seed")
+    d, ctx = _dispatcher(_job())
+    snap = Snapshot(url="u", title="t", headings=["My Experience"], items=[
+        {"ref": "e111", "tag": "dropdown", "label": "Language*", "value": "English"},
+        {"ref": "e113", "tag": "dropdown", "label": "Comprehension*", "value": ""}], groups=[], errors={}, challenge={})
+    for i in snap.items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    out, _ = await d.t_lookup_answer("Comprehension", [], None, "e113")
+    assert out.get("key") == "experience.english_proficiency", out
+    ctx.last_snapshot = Snapshot(url="u", title="t", headings=[], items=[], groups=[], errors={}, challenge={})
+    out, _ = await d.t_lookup_answer("Overall", [], None, None)
+    assert out.get("key") != "experience.english_proficiency", out          # no Language field: not a language rating
