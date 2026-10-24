@@ -310,8 +310,13 @@ JS_SNAPSHOT = r"""
         else if (isFile) {
           item.value = el.files && el.files.length ? el.files[0].name : ''; item.hidden = !vis(el);
           item.name = el.getAttribute('name') || el.id || '';
+          // Greenhouse puts a file question's own words in 'upload-label-<id>' (Appian, 2026-10-24: both boxes read
+          // 'question_N (Attach)' and the transcript went into the writing-sample box)
+          const upq = el.id ? document.getElementById('upload-label-' + el.id) : null;
+          const upText = upq ? txt(upq).replace(/\s*\*\s*$/, '').slice(0, 160) : '';
+          if (upText) item.label = upText;
           // Portals label hidden file inputs with the button text ("Attach"); the input name says which slot it is.
-          if (item.name && !/resume|cv|cover|transcript/i.test(item.label)) item.label = item.name + ' (' + (item.label || 'file') + ')';
+          else if (item.name && !/resume|cv|cover|transcript/i.test(item.label)) item.label = item.name + ' (' + (item.label || 'file') + ')';
         }
         else if (type === 'checkbox' || type === 'radio') { item.checked = el.checked; }
         else {

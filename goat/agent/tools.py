@@ -871,11 +871,15 @@ JS_FILE_QUESTION = r"""
   if (!el) return '';
   const t = (n) => (n.innerText || n.textContent || '').replace(/\s+/g, ' ').trim();
   const CAPTION = /^(select files?|upload( file)?|attach|browse|choose file|drop files? here|or drop files? here|remove|delete)$/i;
+  // the box's own question first: Greenhouse's 'upload-label-<id>' (Appian, 2026-10-24)
+  const own = el.id ? document.getElementById('upload-label-' + el.id) : null;
+  if (own && t(own)) return t(own).slice(0, 300);
+  const HELP = /^(accepted file types|max(imum)? file size|drag and drop|dropbox|google drive)/i;
   let p = el.parentElement;
   for (let i = 0; i < 8 && p && p !== document.body; i++, p = p.parentElement) {
     if (p.querySelectorAll('input[type="file"]').length > 1) break;
     const qs = Array.from(p.querySelectorAll('label, legend, [data-automation-id*="formLabel" i], [class*="label" i], [class*="question" i], h3, h4, p'))
-      .map(t).filter(s => s && !CAPTION.test(s));
+      .map(t).filter(s => s && !CAPTION.test(s) && !HELP.test(s));
     if (qs.length) return qs.join(' | ').slice(0, 300);
   }
   return '';
@@ -3284,6 +3288,18 @@ class ToolDispatcher:
             if re.search(r"transcript", asked, re.I) and not re.search(r"\b(resume|résumé|cv|curriculum)\b", asked, re.I):
                 return {"error": f"this box asks for his transcript ('{asked[:90]}'): upload document 'transcript' here, and the "
                                  "résumé into the Resume/CV box"}, None
+        if document == "transcript" and self.ctx.last_snapshot is not None:
+            # a box asking for something else, when another box asks for the transcript (Appian's writing sample, 2026-10-24)
+            try:
+                asked = str(await self.ctx.ex.eval(JS_FILE_QUESTION, ref) or "")
+            except Exception:
+                asked = ""
+            if asked and not re.search(r"transcript", asked, re.I):
+                other = next((i for i in self.ctx.last_snapshot.items if i.get("type") == "file" and i.get("ref") != ref
+                              and re.search(r"transcript", str(i.get("label") or ""), re.I)), None)
+                if other is not None:
+                    return {"error": f"this box asks for '{asked[:90]}', not his transcript: upload the transcript into "
+                                     f"'{str(other.get('label') or '')[:60]}' [{other['ref']}]"}, None
         if document == "transcript":
             item = self.ctx.last_snapshot.find(ref) if self.ctx.last_snapshot else None
             lab = str((item or {}).get("label") or "")
