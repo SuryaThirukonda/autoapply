@@ -244,6 +244,16 @@ ACCOUNT_PAGE = re.compile(r"\b(please review before continuing|password help|for
                           r"(^|\| )(sign[- ]?in|log[- ]?in|register)( \||$))", re.I)
 
 
+def application_register_page(title: str, job: dict | None) -> bool:
+    """Avature titles every step of its application 'Register | <company> | <job title>': Intuit's last page was taken for an
+    account page, submit sent the model to click and click refused the submit control, and the run held (2026-10-24). A
+    'Register' title that carries this posting's own title is the application."""
+    if not re.match(r"\s*register\s*\|", title or "", re.I):
+        return False
+    words = re.findall(r"[a-z0-9]+", (job or {}).get("title", "").lower())[:4]
+    return len(words) >= 2 and " ".join(words) in " ".join(re.findall(r"[a-z0-9]+", (title or "").lower()))
+
+
 # Oracle's entry tiles must be his entries. Its résumé import (before 2026-10-21) wrote skill lines into Employer Name
 # ('Quantitative Systems, FastAPI, QuestDB, Docker' for his Mai Shan Yun role) and added education tiles he never had
 # ('Engineering Honors / Texas A&M University'); they stay in his candidate profile on that tenant (AutoZone, 2026-10-21).
@@ -418,7 +428,7 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
     # ...nor is a password-help page, which has no password box (CenturyLink's SuccessFactors 'Password Help', 2026-10-21:
     # the run pressed its Submit through submit and the gate passed; the judge caught it)
     heads = " | ".join([snapshot.title or ""] + list(snapshot.headings or [])[:4])
-    if ACCOUNT_PAGE.search(heads):
+    if ACCOUNT_PAGE.search(heads) and not application_register_page(snapshot.title or "", job):
         return GateResult("blocked", [f"this is an account page ({heads[:80]!r}), not the application form: finish signing in "
                                       "(credentials / the password reset), then fill the application"])
 

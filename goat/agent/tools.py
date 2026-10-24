@@ -1677,6 +1677,11 @@ def rate_basis_on_page(snap) -> bool:
 
 # "Did you find this opportunity through a campus event / a conference / a career fair? If yes, which ...?" (Cigna,
 # 2026-10-20): his source is online (stored How-did-you-hear: LinkedIn, then job boards), so the answer is No.
+EVENT_ATTENDED = re.compile(r"\b(career (fair|event|expo)s?|job fairs?|hiring events?|recruiting events?|campus events?|info(rmation)? "
+                            r"sessions?)\b.{0,40}\b(attended|you attended|did you attend|select|choose|which)\b|"
+                            r"\b(which|select the|name of the) (career (fair|event)|job fair|event|university event)\b", re.I)
+
+
 OTHER_SOURCE_QUESTION = re.compile(
     r"\b(did|do) you (find|hear about|learn about|discover|come across) (this|the) (opportunity|position|role|job|posting|internship)\b"
     r".{0,40}\b(through|via|at|from) (an? |the )?(campus|on-campus|university|college|school|conference|career fair|job fair|"
@@ -3035,13 +3040,14 @@ class ToolDispatcher:
         """A sign-in, password-help or create-account page: its 'Submit' button is an account action (SAP SuccessFactors'
         Password Help, Phillips 66, 2026-10-21: click refused it as a submit control and submit refused the page, so no reset
         email could be requested)."""
-        from ..gate import ACCOUNT_PAGE
+        from ..gate import ACCOUNT_PAGE, application_register_page
         snap = self.ctx.last_snapshot
         if snap is None:
             return False
         if any(i.get("type") == "password" for i in snap.items):
             return True
-        return bool(ACCOUNT_PAGE.search(" | ".join([snap.title or ""] + list(snap.headings or [])[:4])))
+        return bool(ACCOUNT_PAGE.search(" | ".join([snap.title or ""] + list(snap.headings or [])[:4]))) \
+            and not application_register_page(snap.title or "", self.ctx.job)
 
     async def t_click(self, ref: str, label: str):
         snap = self.ctx.last_snapshot
@@ -3933,6 +3939,21 @@ class ToolDispatcher:
             return {"key": k_src, "answer": neg, "confidence": 1.0, "via": "source_rule",
                     "note": "he found this posting online (his stored How-did-you-hear answer: LinkedIn, then job boards), "
                             "not at a campus event, conference or fair: answer No (a text box: type 'No')"}, None
+        yes_no = bool(options) and all(re.match(r"\s*(yes|no)\b", o or "", re.I) for o in options if o)
+        if EVENT_ATTENDED.search(question or "") and not yes_no and not is_free_response(question, options):
+            # Gilead (2026-10-24): a required 'Career fair/event attended' list (Keck ... Yale, Other) with no none option; the
+            # run called it untruthful to pick anything and held. He attended none: the list's 'none' wording, else Other.
+            none_opt = next((o for o in options or [] if re.search(r"\b(not applicable|n/?a|none|did not attend|didn.?t attend|"
+                                                                 r"no event|not listed)\b", o or "", re.I)), None)
+            pick = none_opt or next((o for o in options or [] if re.match(r"\s*other\b", o or "", re.I)), None) or "Other"
+            k_ev = answers.key_from_question(question)
+            answers.save_answer(k_ev, f"{pick}; Not applicable; N/A; None; Other", answer_type="choice_chain", source="derived",
+                                note="he found the posting online and attended no career fair or event: the list's none / not "
+                                     "applicable option, else Other (and N/A where an event name is asked)", aliases=[question])
+            db.event(self.ctx.job_id, "answer:no_event_attended", {"key": k_ev, "answer": pick})
+            return {"key": k_ev, "answer": pick, "confidence": 1.0, "via": "source_rule",
+                    "note": f"he attended no career fair or event (he found this posting online): pick {pick!r}; where the list "
+                            "has no none / not-applicable option, Other is the truthful choice, and an event-name box takes N/A"}, None
         sk = skills_question_key(question, options)
         if sk:
             a_sk = answers.get(sk, self.ctx.job.get("company", ""), self.ctx.portal)

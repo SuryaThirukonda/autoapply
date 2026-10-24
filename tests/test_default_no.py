@@ -316,3 +316,16 @@ async def test_a_previously_applied_question_is_settled_from_the_ledger(store):
     assert out["answer"] == "No" and out["via"] == "ledger", out
     saved = answers.lookup(q)
     assert saved.answer == "No" and "application ledger" in (saved.note or "") and saved.source == "derived"
+
+
+@pytest.mark.asyncio
+async def test_a_required_event_list_takes_its_none_option_else_other(store):
+    """Gilead (2026-10-24): 'Career fair/event attended' (Keck ... Yale, Other) with no none option; the run called every
+    choice untruthful and held."""
+    d, _ = _dispatcher(_job("Gilead Sciences", "L12"))
+    out, _ = await d.t_lookup_answer("Career fair/event attended", ["Keck Graduate Institute", "Stanford University", "Yale University", "Other"])
+    assert out["answer"] == "Other" and "attended no career fair" in out["note"], out
+    out, _ = await d.t_lookup_answer("Which career fair did you attend?", ["Spring Expo", "Not Applicable", "Other"])
+    assert out["answer"] == "Not Applicable", out
+    out, _ = await d.t_lookup_answer("Did you attend any of our campus events? Select one", ["Yes", "No"])
+    assert out.get("answer") != "Other", out

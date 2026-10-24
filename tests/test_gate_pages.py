@@ -1237,3 +1237,13 @@ async def test_a_posting_pages_apply_link_is_no_submit_because_of_zero_size_trac
         await ex.click_ref(apply["ref"])            # not refused
     finally:
         await ex.close()
+
+
+def test_an_avature_register_step_of_this_posting_is_the_application():
+    """Intuit (Avature, 2026-10-24): every application step is titled 'Register | Intuit Inc. | ... <job title>'; the last page
+    was taken for an account page, submit sent the model to click, click refused the submit control, and the run held."""
+    from goat.gate import application_register_page
+    job = {"title": "Summer 2027: Software Engineering Intern - Cybersecurity"}
+    assert application_register_page("Register | Intuit Inc. | Intuit Inc. | Summer 2027: Software Engineering Intern - Cyber", job)
+    assert not application_register_page("Register | Intuit Inc.", job)
+    assert not application_register_page("Sign In | Intuit Inc. | Summer 2027: Software Engineering Intern", job)
