@@ -2736,6 +2736,19 @@ class ToolDispatcher:
                 if len(real) == 1 and answers.norm(real[0]) == answers.norm(shown):
                     only, mine = True, False
                     rec_src = f"standing:{answer_key} (the only option offered)"
+            if answer_key and re.search(r"hear", answer_key) and not mine and stored_wants:
+                # a fallback past his first two how-heard choices says what the list offered, so the checks before submit
+                # can see LinkedIn and a job board were not there (General Motors: five drafts held over 'Other', 2026-10-24)
+                rank = next((i for i, w in enumerate(stored_wants) if fill.best_option([{"text": shown}], [w]) is not None), 0)
+                if rank >= 2:
+                    try:
+                        offered, _img = await fill.peek_options(self.ctx.ex, r.ref or ref)
+                    except Exception:
+                        offered = []
+                    real = [str(o) for o in (offered or []) if str(o).strip() and not fill.PLACEHOLDER.match(str(o).strip())]
+                    if real:
+                        rec_src = f"{rec_src} (offered: {'; '.join(real)[:200]})"
+                        db.event(self.ctx.job_id, "choose:fallback", {"key": answer_key, "picked": shown[:60], "offered": real[:30]})
             records.record_decision(self.ctx.job_id, self.ctx.page_no, label, shown, rec_src, r.ref or ref)
             self.ctx.control_failures.pop(ref, None)
             out = r.as_dict()
