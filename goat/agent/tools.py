@@ -365,7 +365,7 @@ def workday_mail_quiet(hours: float = 8.0) -> bool:
 # The portal's own "you applied" page: Workday's jobTasks/completed/application with "Application Submitted", or a page
 # that thanks him for applying.
 COMPLETED_URL = re.compile(r"/jobTasks/completed/application|/application[-_]?submitted|/applicationConfirmation|/confirmation\b", re.I)
-COMPLETED_TEXT = re.compile(r"\b(application (submitted|received|complete)|thank(s| you) for (applying|your application)|"
+COMPLETED_TEXT = re.compile(r"\b(application (submitted|received|complete)|thank(s| you) for (applying|your (job )?application)|"
                             r"your application (has been|was) (submitted|received))\b", re.I)
 
 
@@ -396,6 +396,8 @@ WORK_ENTRY_FIELD = re.compile(r"^\s*(current |most recent |previous )?(company( 
 
 AFFILIATION = re.compile(
     r"(employed (by|with|at)\b|\bwork(ed|ing)? (for|at)\b|\baffiliat|relationships? (with|to)\b|\brelatives?\b|family member|"
+    # 'previously employed as a fulltime or fixed duration Employee or prior Contractor at Elanco' (2026-10-23)
+    r"\b(previously|ever been|formerly) employed as an? \w+(?:[ \w-]{0,60}?)\b(employee|contractor|intern|temp\w*)\b.{0,40}\b(at|by|with)\b|"
     # 'related to' only about a person: TIAA's "information related to your political contributions" took the default No
     r"\b(are|is|be) (you|anyone|any(one)? \w+) related to\b|\brelated to (anyone|someone|an? (current |former )?(employee|officer|director|board member|member|person|individual))|"
     r"household member|immediate family|\bspouse\b|board member|\bofficers?\b|\bdirectors?\b|government official|public official|"
@@ -604,6 +606,8 @@ def citizenship_block(snap) -> bool:
 
 
 CITIZENSHIP_DATE_KEY = "compliance.citizenship_obtained_date"
+# what a self-identification key's decline box names (a box of its own, apart from the question's options)
+SELF_ID_TOPIC = {"self_id.race_ethnicity": r"\b(race|racial|ethnic\w*)\b", "self_id.hispanic_latino": r"\b(hispanic|latin[ox]|ethnic\w*)\b"}
 # his internship start date's keys (redirected to his school start inside an education entry)
 INTERNSHIP_START_KEY = re.compile(r"^(bank\.start-date|availability\.earliest_start_date|availability\.start_date)$")
 NEEDS_HOUSING = re.compile(r"\b(require|need|requesting|request)\w*\b.{0,40}\bhousing\b|\bhousing (accommodation|assistance)s?\b.{0,40}\?",
@@ -2163,6 +2167,12 @@ class ToolDispatcher:
                 elif item.get("type") == "checkbox" and parts and parts[0] in AFFIRMATIVE and not NEGATED.match((item.get("label") or "").strip()):
                     # "Yes; I agree; Accept" on a single consent checkbox: its first choice is a plain yes.
                     val = "true"
+                elif parts and parts[0] == "decline" and str(f.get("answer_key") or "").startswith("self_id.") \
+                        and fill.DECLINE_OPT.search(item.get("label") or ""):
+                    # a decline box in its own words ('I choose not to disclose my ethnicity or race', ADT 2026-10-23) is
+                    # the chain's first answer
+                    val = "true"
+                    label_matched = True
                 else:
                     results.append({"ref": f["ref"], "status": "failed",
                                     "error": f"stored answer {str(val)[:40]!r} does not match this option's label {item.get('label', '')[:40]!r}; pick the option whose label matches, or leave it"})
@@ -2666,6 +2676,19 @@ class ToolDispatcher:
                         "error": f"this question offers {dec[:60]!r} [{chosen.get('ref')}]: his self-identification answer is the "
                                  f"decline option wherever one is offered. Untick '{shown[:40]}', tick {dec[:60]!r} (fill_batch with "
                                  f"answer_key {key}), then record it."}
+            # ... or a decline box of its own beside the group: ADT's Oracle races list had none, its 'I choose not to
+            # disclose my ethnicity' box sat apart, and 'Asian' went out (2026-10-23)
+            topic = SELF_ID_TOPIC.get(key)
+            snap = self.ctx.last_snapshot
+            if topic and snap is not None:
+                box = next((i for i in snap.items if i.get("type") in ("checkbox", "radio") and i.get("ref") != ref
+                            and fill.DECLINE_OPT.search(str(i.get("label") or "")) and re.search(topic, f"{i.get('label') or ''} {i.get('group') or ''}", re.I)), None)
+                if box is not None:
+                    lab = str(box.get("label") or "")
+                    return {"ref": ref, "status": "failed",
+                            "error": f"the page offers {lab[:60]!r} [{box['ref']}]: his self-identification answer is the decline "
+                                     f"option wherever one is offered. Untick '{shown[:40]}', tick [{box['ref']}] (fill_batch with "
+                                     f"answer_key {key}), then record it."}
         records.record_decision(self.ctx.job_id, self.ctx.page_no, f.get("label") or (item or {}).get("label", ""), shown[:300],
                                 f"standing:{key}", ref)
         return {"ref": ref, "status": "kept", "readback": shown[:120]}
@@ -2761,6 +2784,18 @@ class ToolDispatcher:
         out = {"clicked": (item.get("label") if item else None) or info.get("label") or label, "url": new_url}
         if note:
             out["note"] = note
+        if self.ctx.auto_submitted and not self.ctx.submitted:
+            # the verified Submit was clicked and the portal asked for one more step (Oracle's emailed code and Verify): ADT
+            # went in on that Verify, landed on 'Thank you for your job application', and the run was held as stuck (2026-10-23)
+            done = await completed_application_page(self.ctx.ex)
+            if done:
+                from ..browser.submit import SubmitResult
+                res = SubmitResult("submitted", signal=f"completed_page: {done} (after {out['clicked']!s:.40})", url=new_url or "",
+                                   clicked_label=str(out["clicked"] or ""))
+                db.event(self.ctx.job_id, "submit:submitted", res.as_dict())
+                self.ctx.submitted = res.as_dict()
+                out.update({"status": "submitted", "signal": res.signal, "note": "done: the application is in; the worker records the ledger"})
+                return out, None
         # After a Sign In / Create Account click the harness reads the outcome itself: a failed sign-in with the
         # universal password means this tenant holds an older one, and the reset flow is the next step.
         clicked = (info.get("label") or label or "").strip()
@@ -3084,6 +3119,15 @@ class ToolDispatcher:
             dec = [o for o in options if fill.DECLINE_OPT.search(str(o.get("label") or ""))]
             if dec:
                 return dec[0]
+            # a race / ethnicity question whose decline is a box of its own beside the group (ADT's Oracle 'I choose not to
+            # disclose my ethnicity', 2026-10-23: 'Asian' went out)
+            topic = r"\b(race|racial|ethnic\w*|hispanic|latin[ox])\b"
+            if group and re.search(topic, str(group.get("label") or ""), re.I) and snap is not None:
+                own = {o.get("ref") for o in options}
+                box = next((i for i in snap.items if i.get("type") in ("checkbox", "radio") and i.get("ref") not in own
+                            and fill.DECLINE_OPT.search(str(i.get("label") or "")) and re.search(topic, str(i.get("label") or ""), re.I)), None)
+                if box is not None:
+                    return box
         opts = [(o, answers.norm(o.get("label") or "")) for o in options]
         for part in parts:
             for cand in (answers.norm(part), answers.norm(re.sub(r"\s*\([^)]*\)", "", part))):

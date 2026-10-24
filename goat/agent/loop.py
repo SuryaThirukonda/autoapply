@@ -309,7 +309,8 @@ class AgentLoop:
                         self.items.append({"role": "user", "content": [
                             {"type": "input_text", "text": f"Image from {item.name}:"},
                             {"type": "input_image", "image_url": "data:image/png;base64," + base64.b64encode(img).decode(), "detail": self.detail or "auto"}]})
-                    if item.name == "submit" and ctx.submitted and ctx.submitted.get("status") == "submitted":
+                    # ... or a click that finished it (Oracle's emailed-code Verify after Submit, ADT 2026-10-23)
+                    if item.name in ("submit", "click") and ctx.submitted and ctx.submitted.get("status") == "submitted":
                         return LoopResult("submitted", ctx.submitted.get("signal", ""), steps=self.steps)
                 elif typ == "message":
                     text = "".join(getattr(c, "text", "") for c in (getattr(item, "content", None) or []) if getattr(c, "type", "") == "output_text")
