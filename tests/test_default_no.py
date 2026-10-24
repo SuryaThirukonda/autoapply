@@ -337,3 +337,23 @@ async def test_an_event_name_box_takes_na(store):
     d, _ = _dispatcher(_job("Gilead Sciences", "L12"))
     out, _ = await d.t_lookup_answer("Please enter the name of the Career Event or University", [])
     assert out["answer"] == "N/A", out
+
+
+@pytest.mark.asyncio
+async def test_an_event_dropdown_looked_up_without_its_options_still_ends_on_other(store):
+    """Gilead (2026-10-24): the event dropdown was looked up with options [] and answered N/A, which its list does not hold;
+    the question was left empty and the judge failed the draft."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher(_job("Gilead Sciences", "L12"))
+    snap = Snapshot(url="u", title="t", headings=[], groups=[], errors={}, challenge={},
+                    items=[{"ref": "e134", "tag": "dropdown", "label": "Career Fair/Event attended"},
+                           {"ref": "e135", "tag": "input", "type": "text", "label": "Career Event or University"}])
+    for i in snap.items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    q = ("If you were first made aware of this career opportunity through a Career Fair/Event - University/Student, please "
+         "select the appropriate event that you attended.")
+    out, _ = await d.t_lookup_answer(q, [], ref="e134")
+    assert out["answer"].split(";")[0].strip() != "N/A" and out["answer"].rstrip().endswith("Other"), out
+    out, _ = await d.t_lookup_answer("Please enter the name of the Career Event or University", [], ref="e135")
+    assert out["answer"] == "N/A", out
