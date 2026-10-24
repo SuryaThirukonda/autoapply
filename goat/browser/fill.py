@@ -830,15 +830,18 @@ def proficiency_option(options: list[dict], wants: list[str]) -> dict | None:
     """The highest language-proficiency level among the options, for his native-English chain only."""
     if not wants or _norm(wants[0]) not in ("native", "native or bilingual"):
         return None
-    best, rank = None, len(_PROFICIENCY_SCALE)
+    best, rank, levels = None, len(_PROFICIENCY_SCALE), 0
     for o in options:
         t = _norm(o.get("text"))
         for i, w in enumerate(_PROFICIENCY_SCALE):
             if re.search(r"(?<![a-z])" + re.escape(w) + r"(?![a-z])", t):
+                levels += 1
                 if i < rank:
                     best, rank = o, i
                 break
-    return best
+    # 'the highest level offered' needs a scale: one level read back stands for his native English only when it is a top
+    # level itself (Watts Water's 'Elementary' was accepted as his wording for Native, 2026-10-23)
+    return best if levels >= 2 or rank <= _PROFICIENCY_SCALE.index("full professional") else None
 
 
 # His degree is a Bachelor of Science. A bare level answer ('Bachelors', "Bachelor's") prefix-matched Itron's 'Bachelors of
