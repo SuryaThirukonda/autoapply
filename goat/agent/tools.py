@@ -1204,6 +1204,19 @@ def acknowledgement_key(question: str, options: list[str] | None) -> str | None:
 # 1-3 years? Do not answer this question if you are a U.S. citizen" (Ecolab, 2026-10-20): the run mapped it to his
 # citizenship key and answered Yes, which opened a required 'explain your situation' box. A U.S. citizen's basis does not
 # change: No.
+# A question only for visa holders / non-citizens ('If you are a visa holder, have you signed a declaration of intent to
+# become a permanent resident ...?'): he is a U.S. citizen, so it does not apply (Federal Reserve, 2026-10-24).
+VISA_HOLDER_ONLY = re.compile(r"\b(if|for|as) (you are |applicants? (who are|on) )?an? (visa holder|non[- ]?citizen|foreign national|"
+                              r"(current )?(f-?1|h-?1b|j-?1|opt) (student|visa|holder))s?\b|\bvisa holders?\b.{0,80}\b(declaration|intent|intend)\b",
+                              re.I)
+
+
+def citizen_not_applicable(options: list[str]) -> str:
+    """His answer to a question only for visa holders: the list's 'Not applicable' when offered, else No."""
+    na = next((o for o in options or [] if re.search(r"\b(not applicable|n/?a|does not apply|i am a u\.?s\.? citizen)\b", o or "", re.I)), None)
+    return na or next((o for o in options or [] if answer_polarity(o) == "no"), "No")
+
+
 AUTH_BASIS_CHANGE = re.compile(r"basis (for|of) (your )?(employment |work )?(authori[sz]ation|eligibility).{0,80}\b(change|expire)", re.I)
 
 
@@ -3621,6 +3634,14 @@ class ToolDispatcher:
             return {"miss": True, "key": k, "hint": "this form counts public / state universities as government entities, and Surya worked in a "
                     "Texas A&M research group (a public university). His stored No to government employment covers federal government only: "
                     "call ask_user with this question and its choices."}, None
+        if VISA_HOLDER_ONLY.search(question or ""):
+            pick = citizen_not_applicable(options)
+            answers.save_answer("work_authorization.visa_holder_only", "Not applicable; No", answer_type="choice_chain",
+                                source="derived", note="U.S. citizen: a question only for visa holders does not apply",
+                                aliases=[question])
+            db.event(self.ctx.job_id, "answer:visa_holder_only", {"question": question[:160], "answer": pick})
+            return {"key": "work_authorization.visa_holder_only", "answer": pick, "confidence": 1.0, "via": "citizen_rule",
+                    "note": f"he is a U.S. citizen, not a visa holder: this question does not apply to him; answer {pick!r}"}, None
         if AUTH_BASIS_CHANGE.search(question or ""):
             neg = default_no_choice(question, options) or "No"
             answers.save_answer("work_authorization.basis_change", "No", answer_type="choice", source="derived",
@@ -3814,6 +3835,11 @@ class ToolDispatcher:
             # Employer / industry / affiliation yes-no questions settle from the profile, default No.
             if is_affiliation_question(text, opts):
                 auto.append(await self._settle_affiliation(text, opts))
+                continue
+            if VISA_HOLDER_ONLY.search(text):
+                # a question only for visa holders never goes to Surya (Federal Reserve, 2026-10-24)
+                pres_v, _ = await self.t_lookup_answer(text, opts)
+                auto.append(pres_v)
                 continue
             # The knowledge base first (the resolver result from lookup_answer is reused, not recomputed).
             pres, info = await self._kb_resolve(text, opts, ftype, None, q.get("ref"))

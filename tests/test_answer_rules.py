@@ -2567,3 +2567,26 @@ async def test_how_soon_could_you_start_takes_the_option_his_start_date_falls_in
     opts = ["Immediately", "Within 1 week", "Within 2 weeks", "Within 3 weeks", "Within 1 month", "Later than 1 month"]
     out, _ = await d.t_lookup_answer("If offered this position, how soon could you start?", opts)
     assert out.get("answer") == "Later than 1 month", out
+
+
+@pytest.mark.asyncio
+async def test_a_question_only_for_visa_holders_is_no_for_a_citizen(store):
+    """Federal Reserve (Workday, 2026-10-24): 'If you are a visa holder, have you signed a declaration of intent to become a
+    permanent resident and then a U.S. citizen?' went to Surya and the run timed out."""
+    d, ctx = _dispatcher(_job())
+    q = "If you are a visa holder, have you signed a declaration of intent to become a permanent resident and then a U.S. citizen?"
+    out, _ = await d.t_lookup_answer(q, ["Yes", "No"])
+    assert out.get("answer") == "No", out
+    out, _ = await d.t_lookup_answer(q, ["Yes", "No", "Not applicable"])
+    assert out.get("answer") == "Not applicable", out
+    from goat.agent.tools import VISA_HOLDER_ONLY
+    assert not VISA_HOLDER_ONLY.search("Will you now or in the future require visa sponsorship?")
+
+
+@pytest.mark.asyncio
+async def test_ask_user_never_sends_a_visa_holder_only_question(store):
+    d, ctx = _dispatcher(_job())
+    q = ("As a U.S. citizen who is not a visa holder, what should be selected for the conditional question about visa holders "
+         "signing a declaration to become a permanent resident and then a U.S. citizen?")
+    out, _ = await d.t_ask_user([{"question": q, "options": ["Yes", "No"], "field_type": "radio"}])
+    assert out.get("asked") == [] and out["auto_answered"][0]["answer"] == "No", out
