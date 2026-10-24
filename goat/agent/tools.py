@@ -2028,11 +2028,29 @@ class ToolDispatcher:
             self.ctx.free_text.append({"question": label, "answer": value})
         return value, src, None
 
+    def _internship_here_refusal(self, answer_key: str | None, text: str) -> str | None:
+        """A Yes-valued stored answer never says he interned or worked at the company he is applying to unless his profile
+        names it. UL Solutions went out with 'Have you previously completed an internship at UL? Yes' from his general
+        prior-internship Yes (DeKalb), after the final check misread that key as his answer to it (2026-10-24)."""
+        company = self.ctx.job.get("company", "")
+        if not answer_key or not internship_here(text, company) or profile.mentions(company):
+            return None
+        a = answers.get(answer_key, company, self.ctx.portal)
+        if a is None or not a.has_value or answer_polarity(str(a.answer).split(";")[0]) != "yes":
+            return None
+        return (f"this asks about an internship at {company} itself, and his profile names no role there: {answer_key} "
+                "(his answer about other employers) does not answer it. The answer is No: lookup_answer this question.")
+
     async def t_fill_batch(self, fields: list[dict]):
         plan, results = [], []
         snap = self.ctx.last_snapshot
         for f in fields:
             item = snap.find(f.get("ref", "")) if snap else None
+            here = self._internship_here_refusal(f.get("answer_key"), f"{f.get('label') or ''} {(item or {}).get('group') or ''} "
+                                                                       f"{(item or {}).get('label') or ''}")
+            if here and (f.get("source") or "").lower() != "clear":
+                results.append({"ref": f.get("ref"), "status": "failed", "error": here})
+                continue
             if f.get("answer_key") in POSITIVE_CLEARANCE_KEYS:
                 swapped = self._clearance_key_swap(f.get("ref", ""), f.get("answer_key"), str(f.get("label") or ""))
                 if swapped != f.get("answer_key"):
@@ -2702,6 +2720,10 @@ class ToolDispatcher:
                 "'Certifications: No Response' is correct. Continue with Save and Continue.")
 
     async def _t_choose(self, ref: str, answer_key: str | None, options: list[str], label: str, source: str | None):
+        item = self.ctx.last_snapshot.find(ref) if self.ctx.last_snapshot is not None else None
+        here = self._internship_here_refusal(answer_key, f"{label or ''} {(item or {}).get('group') or ''} {(item or {}).get('label') or ''}")
+        if here:
+            return {"error": here}, None
         if not answer_key and re.search(r"\bcertif|\blicen[cs]e", label or "", re.I) \
                 and not re.search(r"date|issued by|issuer|number|expir|state", label or "", re.I):
             # TIAA (2026-10-19): with no option for his AWS Certified Cloud Practitioner, the model picked "Cloud Guild:

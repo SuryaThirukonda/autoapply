@@ -59,3 +59,28 @@ async def test_the_prefill_never_sources_an_internship_here_from_his_general_ans
         assert not any("internship at UL" in r[0] for r in rows), rows
     finally:
         await ex.close(close_browser=True)
+
+
+@pytest.mark.asyncio
+async def test_his_general_prior_internship_yes_never_answers_an_internship_here(store, tmp_path):
+    """UL Solutions (2026-10-24) went out with 'Have you previously completed an internship at UL? Yes': the model named
+    bank.prior-internship (Yes, DeKalb) directly after the final check misread it as his answer to that question."""
+    from goat import judge
+    answers.save_answer("bank.prior-internship", "Yes", answer_type="choice", source="seed:answer_bank.json")
+    ex = await _page(tmp_path)
+    try:
+        d, ctx = _dispatcher(_job("UL Solutions", "L9"))
+        ctx.ex = ex
+        ctx.last_snapshot = snap = await snapshot.take(ex)
+        yes_ref = next(i["ref"] for i in snap.items if i.get("tag") == "toggle" and (i.get("label") or "").strip() == "Yes")
+        out, _ = await d.t_fill_batch([{"ref": yes_ref, "answer_key": "bank.prior-internship", "value": None, "source": "answer_key",
+                                        "label": "Have you previously completed an internship at UL?"}])
+        r = out["results"][0]
+        assert r["status"] == "failed" and "internship at UL Solutions itself" in r["error"], r
+        out, _ = await d.t_choose(yes_ref, "bank.prior-internship", [], "Have you previously completed an internship at UL?", "answer_key")
+        assert "internship at UL Solutions itself" in out.get("error", ""), out
+        # a general internship question still takes it
+        assert d._internship_here_refusal("bank.prior-internship", "Have you previously completed an internship?") is None
+        assert "bank.prior-internship" in judge.JUDGE_INSTRUCTIONS
+    finally:
+        await ex.close(close_browser=True)
