@@ -2130,6 +2130,16 @@ class ToolDispatcher:
                     continue
             # Checkbox/radio with a text answer: check it when the option's own label matches the answer
             # ("Available May 2027" with answer "May 2027"); refuse when it plainly does not.
+            if is_choice and item and item.get("type") in ("radio", "checkbox") and str(f.get("answer_key") or "").startswith("education.graduation") \
+                    and re.fullmatch(r"\s*(?:19|20)\d{2}\s*", str(val)):
+                # a bare year among term options that share it: the term nearest his graduation month. Hex's 'Graduation Year'
+                # (Summer / Winter 2027-2029) took 'Winter 2028' for May 2028 (2026-10-23).
+                term = self._graduation_term_pick(item, str(val).strip())
+                if term is not None and term.get("ref") != item.get("ref"):
+                    results.append({"ref": f["ref"], "status": "failed", "error": (
+                        f"he graduates in {self._graduation_month_text()}: of this question's {str(val).strip()} terms the nearest is "
+                        f"'{str(term.get('label') or '')[:40]}' [{term.get('ref')}]; tick that option with the same answer_key")})
+                    continue
             label_matched = False
             if is_choice and item and item.get("type") in ("radio", "checkbox") and str(val).strip().lower() not in AFFIRMATIVE | {"false", "no", "off", "unchecked"}:
                 lab = answers.norm(item.get("label") or ""); nv = answers.norm(str(val))
@@ -2593,11 +2603,26 @@ class ToolDispatcher:
                 and not any(answers.norm(w) and answers.norm(w) in answers.norm(shown) for w in his_wants) \
                 and not fill._chip_matches(shown, his_wants)
             rec_src = f"judgment:{answer_key}" if mine else src
+            only = False
+            if mine and stored_wants and answers.norm(stored_wants[0]) in SELECT_ALL:
+                # 'All offered locations; Dallas; ...' on a list that offers one location: that location is his answer.
+                # Anduril's 'top location preference' offered only 'Costa Mesa, CA (HQ)' and the judge failed it as
+                # unsupported (2026-10-23).
+                try:
+                    offered, _img = await fill.peek_options(self.ctx.ex, r.ref or ref)
+                except Exception:
+                    offered = []
+                real = [str(o) for o in (offered or []) if str(o).strip() and not fill.PLACEHOLDER.match(str(o).strip())]
+                if len(real) == 1 and answers.norm(real[0]) == answers.norm(shown):
+                    only, mine = True, False
+                    rec_src = f"standing:{answer_key} (the only option offered)"
             records.record_decision(self.ctx.job_id, self.ctx.page_no, label, shown, rec_src, r.ref or ref)
             self.ctx.control_failures.pop(ref, None)
             out = r.as_dict()
             first = next((w for w in his_wants if w), "") or next((w for w in wants if w), "")
-            if mine:
+            if only:
+                out["note"] = f"{shown[:60]!r} is the only option this list offers, so it is his answer: do not re-set it"
+            elif mine:
                 out["note"] = (f"{shown[:60]!r} came from your options, not from the stored answer {first[:60]!r}: it must mean the same, "
                                "and the check before submit will verify it. If it does not, pick the option that says the stored answer.")
             elif first and answers.norm(first) == "decline" and not fill.DECLINE_OPT.search(shown):
@@ -3099,6 +3124,30 @@ class ToolDispatcher:
                 if a is not None and a.has_value and answers.norm(str(a.answer)).split(" ")[0] not in ("no", "none", "false", "n"):
                     return str(others[g["ref"]].get("label") or g.get("label") or "")
         return ""
+
+    def _graduation_month_text(self) -> str:
+        a = answers.get("education.graduation", self.ctx.job.get("company", ""), self.ctx.portal)
+        return str(a.answer).split(";")[0].strip() if a is not None and a.has_value else ""
+
+    def _graduation_term_pick(self, item: dict, year: str) -> dict | None:
+        """The option of `item`'s group naming `year` with the season nearest his graduation month, when two or more
+        options name that year; else None."""
+        snap = self.ctx.last_snapshot
+        group = next((g for g in (getattr(snap, "groups", None) or []) if any(o.get("ref") == item.get("ref") for o in g.get("options", []))), None)
+        opts = [o for o in (group or {}).get("options", []) if re.search(rf"\b{year}\b", str(o.get("label") or ""))]
+        if len(opts) < 2:
+            return None
+        d = fill.parse_date(self._graduation_month_text()) if self._graduation_month_text() else None
+        month = d.get("month") if isinstance(d, dict) else None
+        if not month:
+            return None
+        season = {"spring": 4, "summer": 7, "fall": 10, "autumn": 10, "winter": 1}
+
+        def dist(o):
+            m = re.search(r"\b(spring|summer|fall|autumn|winter)\b", str(o.get("label") or ""), re.I)
+            return abs(season[m.group(1).lower()] - int(month)) if m else 99
+        best = min(opts, key=dist)
+        return best if dist(best) < 99 else None
 
     async def _chain_pick(self, ref: str, parts: list[str]) -> dict | None:
         """The option an ordered chain picks in the radio / checkbox group holding `ref`: the first chain entry (its
