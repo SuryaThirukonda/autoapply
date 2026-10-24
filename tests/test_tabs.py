@@ -65,6 +65,7 @@ async def test_a_new_tab_on_the_application_is_followed_and_tabs_can_be_switched
     ex = await _open(site)
     try:
         await ex.click_xy(*await _center(ex, "#apply"))
+        await ex.settle(quiet_ms=400)          # as t_click does: under full-suite load the popup event lands late
         note = await ex.follow_new_tab()
         assert "new tab" in note and ex.url.endswith("/apply")
         tabs = await ex.list_tabs()
