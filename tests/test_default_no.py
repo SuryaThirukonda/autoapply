@@ -29,6 +29,8 @@ Q10 = "Does any member of your immediate family, household, or similarly close p
     ("Do you know anyone who currently works here?", ["Yes", "No"], "No"),
     # Elanco (Workday, 2026-10-23): the words between 'employed' and 'at' hid it, and the question went to Surya
     ("Have you ever been previously employed as a fulltime or fixed duration Employee or prior Contractor at Elanco?", ["Yes", "No"], "No"),
+    # Federal Reserve (Workday, 2026-10-24): went to Surya and held the run
+    ("Have you ever been a contractor for the Federal Reserve System and/or CFPB?", ["Yes", "No"], "No"),
 ])
 def test_affiliation_questions_take_the_offered_negative(question, options, expect):
     assert is_affiliation_question(question, options)

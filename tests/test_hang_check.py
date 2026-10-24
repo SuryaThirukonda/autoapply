@@ -27,3 +27,11 @@ def test_recent_events_or_a_waiting_job_are_no_hang():
     assert hang_check.hung(_con("filling", now - 1700, now - 60), now=now) is None
     assert hang_check.hung(_con("awaiting_answer", now - 5000, now - 5000), now=now) is None
     assert hang_check.hung(_con("filling", now - 300, now - 300), now=now) is None
+
+
+def test_other_jobs_events_do_not_hide_a_hang():
+    """the supervisor's own 'job:requeued' events kept the newest event recent while the job in flight was silent"""
+    now = 100_000
+    con = _con("filling", now - 1700, now - 1600)
+    con.execute("INSERT INTO events VALUES(999, ?, 'job:requeued')", (now - 30,))
+    assert hang_check.hung(con, now=now) == 557

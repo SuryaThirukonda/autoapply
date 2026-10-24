@@ -23,7 +23,8 @@ def hung(con: sqlite3.Connection, now: int | None = None, hang_s: int = HANG_S) 
     row = con.execute(f"SELECT id, updated_at FROM jobs WHERE status IN ({marks}) ORDER BY updated_at DESC LIMIT 1", MID_RUN).fetchone()
     if row is None or (row[1] or 0) > now - hang_s:
         return None
-    last = con.execute("SELECT MAX(ts) FROM events").fetchone()[0] or 0
+    # that job's own events: the supervisor writes others (portal-error requeues) while the worker is stuck
+    last = con.execute("SELECT MAX(ts) FROM events WHERE job_id=?", (row[0],)).fetchone()[0] or 0
     return int(row[0]) if last < now - hang_s else None
 
 

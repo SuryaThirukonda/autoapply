@@ -409,6 +409,8 @@ AFFILIATION = re.compile(
     r"(employed (by|with|at)\b|\bwork(ed|ing)? (for|at)\b|\baffiliat|relationships? (with|to)\b|\brelatives?\b|family member|"
     # 'previously employed as a fulltime or fixed duration Employee or prior Contractor at Elanco' (2026-10-23)
     r"\b(previously|ever been|formerly) employed as an? \w+(?:[ \w-]{0,60}?)\b(employee|contractor|intern|temp\w*)\b.{0,40}\b(at|by|with)\b|"
+    # 'Have you ever been a contractor for the Federal Reserve System and/or CFPB?' (2026-10-24)
+    r"\b(been|worked as|served as) an? (contractor|consultant|subcontractor|vendor)s? (for|at|with|to)\b|"
     # 'related to' only about a person: TIAA's "information related to your political contributions" took the default No
     r"\b(are|is|be) (you|anyone|any(one)? \w+) related to\b|\brelated to (anyone|someone|an? (current |former )?(employee|officer|director|board member|member|person|individual))|"
     r"household member|immediate family|\bspouse\b|board member|\bofficers?\b|\bdirectors?\b|government official|public official|"
