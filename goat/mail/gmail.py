@@ -233,6 +233,12 @@ def company_sender_tokens(company: str) -> list[str]:
     # as 'Citizens' (citizensbank.com) and neither 'citizensfinancial' nor 'cfg' matched (2026-10-21).
     if len(words) > 1 and len(words[0]) >= 6 and words[0] not in _COMMON_FIRST and words[0] not in out:
         out.append(words[0])
+    # A short all-caps name that leads it: UL Solutions mails its Oracle code from mail.ta.comms.ul.com, 'ul' was too short to
+    # be a token, and the run waited 10 minutes and asked Surya for a code that was in the inbox (2026-10-24). It matches only a
+    # whole label of the sender's domain.
+    lead = next((w for w in re.split(r"[^A-Za-z0-9]+", (company or "").strip()) if w and w.lower() != "the"), "")
+    if 2 <= len(lead) <= 4 and lead.isupper() and lead.lower() not in out:
+        out.append(lead.lower())
     return out
 
 

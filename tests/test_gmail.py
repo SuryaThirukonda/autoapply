@@ -541,3 +541,17 @@ def test_a_letters_only_greenhouse_code_beats_the_word_after_code():
     body = ("Copy and paste this code into the security code field on your application:\n# qWErTyUi\n\n"
             "After you enter the code, resubmit your application.\n\n© 2026 Greenhouse")
     assert gmail.extract_code(body, "greenhouse") == "qWErTyUi"
+
+
+def test_an_oracle_code_from_a_short_acronym_domain_is_found():
+    """UL Solutions (2026-10-24): its Oracle code came from ULTalentAcquisition@mail.ta.comms.ul.com; 'ul' was too short to be
+    a token, and the run waited 10 minutes and asked Surya for a code that was in the inbox."""
+    from goat.mail import gmail as g
+    toks = g.company_sender_tokens("UL Solutions")
+    assert "ul" in toks
+    host = "fa-eups-saasfaprod1.fa.ocs.oraclecloud.com"
+    assert " ul" in g.build_code_query("oracle", host, 0, toks) or "OR ul" in g.build_code_query("oracle", host, 0, toks)
+    assert g.sender_allowed("UL Solutions Talent Acquisition <ULTalentAcquisition@mail.ta.comms.ul.com>", "oracle", host, toks)
+    assert not g.sender_allowed("Deals <promo@ultimate-deals.example.com>", "oracle", host, toks)
+    assert "iat" in g.company_sender_tokens("IAT Insurance Group")
+    assert g.company_sender_tokens("CSX Corporation") == ["csx"]           # no duplicate
