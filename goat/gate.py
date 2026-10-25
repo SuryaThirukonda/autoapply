@@ -569,7 +569,11 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         if not shown and expected_resume and any(str(d.get("source") or "") == "resume" and str(d.get("value") or "").lower() == expected_resume.lower()
                                                  and d.get("page") != page_no for d in decs):
             shown = expected_resume.lower()      # attached on an earlier step of this attempt
-        other = [n.strip() for n in re.findall(r"ATTACHED FILES: ([^\n]+)", page_text or "") for n in n.split(";")
+        named = [n for line in re.findall(r"ATTACHED FILES: ([^\n]+)", page_text or "") for n in line.split(";")]
+        # a résumé file the visible text names (DTCC's Supporting Documents showed 'Surya_Thirukonda_Resume_1.pdf' beside
+        # REMOVE RESUME, so it was never added as an ATTACHED FILES line, 2026-10-25)
+        named += re.findall(r"[\w.()-]*(?:resume|résumé|cv)[\w.()-]*\.(?:pdf|docx?|odt|rtf|txt)\b", page_text or "", re.I)
+        other = [n.strip() for n in named
                  if re.search(r"resume|résumé|\bcv\b", n, re.I) and exp_text and n.strip().lower() != exp_text.lower()]
         if not shown and other:
             # DTCC's Oracle form kept 'Surya_Thirukonda_Resume_1.pdf' from an earlier application; 'the slot is empty' sent the

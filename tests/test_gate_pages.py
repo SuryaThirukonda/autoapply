@@ -1296,3 +1296,16 @@ def test_another_resume_attached_is_named_with_how_to_replace_it(store, monkeypa
     g = run_gate(job=_job(), snapshot=_snap(items), page_text=text, expected_resume=None, free_text_answers=[], portal="oracle", page_no=4)
     msg = next(r for r in g.reasons if "resume not attached" in r)
     assert "Surya_Thirukonda_Resume_1.pdf" in msg and "REMOVE RESUME" in msg, g.reasons
+
+
+def test_another_resume_named_in_the_visible_text_is_named_with_how_to_replace_it(store, monkeypatch):
+    """DTCC (Oracle, 2026-10-25): 'Surya_Thirukonda_Resume_1.pdf' sat in the visible text beside REMOVE RESUME, so no ATTACHED
+    FILES line was added, and the gate still said the slot was empty."""
+    import goat.gate as gate_mod
+    monkeypatch.setattr(gate_mod, "job_resume_name", lambda job: "Surya_Thirukonda_Resume_SWE.pdf")
+    items = [{"ref": "e24", "tag": "input", "type": "file", "label": "Import your profile from resume", "value": ""},
+             {"ref": "e1", "tag": "button", "label": "SUBMIT", "submitish": True}]
+    text = "Supporting Documents and URLs\nSurya_Thirukonda_Resume_1.pdf\nREMOVE RESUME\nUpload Cover Letter\nSUBMIT"
+    g = run_gate(job=_job(), snapshot=_snap(items), page_text=text, expected_resume=None, free_text_answers=[], portal="oracle", page_no=4)
+    msg = next(r for r in g.reasons if "resume not attached" in r)
+    assert "Surya_Thirukonda_Resume_1.pdf" in msg and "REMOVE RESUME" in msg, g.reasons
