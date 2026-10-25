@@ -421,7 +421,12 @@ JS_SNAPSHOT = r"""
           const accountBtn = onAccountPage || (!submitName && names.some(n => /^(create account|create an account|sign in|sign-in|log in|login|continue|next|save and continue|save & continue|verify|verify email|send code|resend|back)$/i.test(n)));
           // a modal's own Save (ApplicantPro's contact-information popup, SimonComputing 2026-10-22) is no application submit
           const inDialog = !!(el.closest && el.closest('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"], [class*="modal" i], [class*="dialog" i], [class*="popup" i], [class*="popover" i]'));
-          item.submitish = !accountBtn && (submitName || (type === 'submit' && nFilled >= 3 && !inDialog));
+          // a message to the employer IS the application: Work at a Startup's 'Reach out to Akash at Dime' dialog was sent with
+          // a plain click, past the gate and the judge (2026-10-25)
+          const dlg = el.closest && el.closest('dialog, [role="dialog"], [aria-modal="true"], [class*="modal" i], form');
+          const sendMsg = names.some(n => /^(send|send message|send note|send intro|send introduction|send request)$/i.test(n))
+            && !!dlg && Array.from(dlg.querySelectorAll('textarea')).some(t => (t.value || '').trim().length >= 20);
+          item.submitish = !accountBtn && (submitName || sendMsg || (type === 'submit' && nFilled >= 3 && !inDialog));
           // Toggle buttons (Ashby Yes/No, segmented choices) carry aria-pressed/aria-checked: an answer, not navigation.
           const pressed = el.getAttribute('aria-pressed') ?? el.getAttribute('aria-checked');
           if (pressed !== null) {

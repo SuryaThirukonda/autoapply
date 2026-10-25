@@ -5610,7 +5610,8 @@ class ToolDispatcher:
         # A résumé to swap is the run's own work, not Surya's: DTCC's run held 'needs_you' over an earlier application's
         # résumé sitting in the Supporting Documents box, twice, with the steps in its own reason (2026-10-25)
         if low.startswith(("needs_you", "no_standing_answer", "portal_error")) and re.search(r"r[eé]sum[eé]", reason, re.I) \
-                and re.search(r"attach|upload|remove|slot", reason, re.I) and self.ctx.control_failures.get("park:resume_swap", 0) < 2:
+                and re.search(r"remove|existing r[eé]sum|another r[eé]sum|r[eé]sum[eé] filename|shows a r[eé]sum|\.pdf\b", reason, re.I) \
+                and self.ctx.control_failures.get("park:resume_swap", 0) < 2:
             self.ctx.control_failures["park:resume_swap"] = self.ctx.control_failures.get("park:resume_swap", 0) + 1
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "resume": "the run swaps it"})
             return {"error": "not parked: attaching his résumé is your job, not Surya's. Go to the section that holds the "

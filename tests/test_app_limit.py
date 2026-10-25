@@ -80,3 +80,24 @@ async def test_a_resume_swap_park_is_bounced_with_the_steps(store):
     out, _ = await d.t_park("needs_you: Oracle shows a résumé filename, but its upload helper says this is not the Resume/CV "
                             "slot. Return to the earlier step, remove the existing résumé, and attach the SWE résumé.")
     assert "REMOVE RESUME" in out["error"] and "upload_resume" in out["error"], out
+
+
+@pytest.mark.asyncio
+async def test_a_park_about_no_resume_upload_at_all_is_not_a_swap(store):
+    """DimeHealth (Work at a Startup, 2026-10-25): 'the required résumé-upload flow is not available' got the Oracle swap steps."""
+    from goat.budget import Parked
+    d, ctx = _dispatcher(_job("DimeHealth AI", "R2"))
+
+    async def page_text(n=0):
+        return "Work at a Startup Applied"
+
+    async def ev(*a, **k):
+        return None
+    ctx.ex.page_text = page_text
+    ctx.ex.eval = ev
+    try:
+        out, _ = await d.t_park("portal_error: The listing is already marked Applied and the required résumé-upload/application "
+                                "flow is not available from the job page.")
+    except Parked:
+        return
+    assert "REMOVE RESUME" not in str(out.get("error")), out
