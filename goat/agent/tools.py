@@ -1776,6 +1776,12 @@ class ToolDispatcher:
             except asyncio.TimeoutError:
                 self.ctx.consecutive_failures += 1
                 db.event(self.ctx.job_id, f"tool:{name}:timeout", {"args": args, "timeout_s": self.tool_timeout_s(name)})
+                if not await self._page_answers():
+                    # Netsmart's Workday froze on Sign In twice: a click and two snapshots timed out at 4 minutes each and the
+                    # run then sat for 20 minutes (2026-10-24). A page that no longer runs a one-line script is done with.
+                    db.event(self.ctx.job_id, "page:hung", {"after": name})
+                    raise Parked(f"portal_error: the page stopped responding after the {name} call (it no longer runs any "
+                                 "script); a rerun opens it fresh", "hold")
                 return json.dumps({"error": f"the {name} call did not finish within {int(self.tool_timeout_s(name))} s and was stopped. "
                                             "Take a snapshot; if the page is stuck, reload it with tabs action 'reload' and continue."}), None
             ok = not (isinstance(out, dict) and out.get("error"))
@@ -1793,6 +1799,19 @@ class ToolDispatcher:
             log.exception("tool %s failed", name)
             db.event(self.ctx.job_id, f"tool:{name}:error", {"args": args, "error": str(e)[:400]})
             return json.dumps({"error": f"{type(e).__name__}: {str(e)[:300]}"}), None
+
+    async def _page_answers(self, timeout_s: float = 5.0) -> bool:
+        """The job's page still runs a one-line script (a hung renderer answers nothing)."""
+        page = getattr(self.ctx.ex, "page", None) if self.ctx.ex is not None else None
+        if page is None:
+            return True
+        try:
+            await asyncio.wait_for(page.evaluate("1"), timeout_s)
+            return True
+        except asyncio.TimeoutError:
+            return False
+        except Exception:  # noqa: BLE001 - a closed or navigating page is not this case
+            return True
 
     # ------------------------------------------------------------------ tools
     async def t_snapshot(self, with_text: bool = False):

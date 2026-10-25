@@ -405,12 +405,14 @@ class Executor:
             # Playwright waits for web fonts before it captures; a busy page stalled that past 30 s and the exception
             # ended Walmart's run (2026-10-20). Chrome's own capture does not wait for fonts.
             try:
-                cdp = await self.page.context.new_cdp_session(self.page)
+                # bounded: on a page that stopped responding the capture never answers, and the run sat on it until its tab
+                # was closed by hand (Netsmart, 2026-10-24)
+                cdp = await asyncio.wait_for(self.page.context.new_cdp_session(self.page), 10)
                 try:
-                    res = await cdp.send("Page.captureScreenshot", {"format": "png"})
+                    res = await asyncio.wait_for(cdp.send("Page.captureScreenshot", {"format": "png"}), 15)
                 finally:
                     try:
-                        await cdp.detach()
+                        await asyncio.wait_for(cdp.detach(), 5)
                     except Exception:
                         pass
                 return base64.b64decode(res["data"])
