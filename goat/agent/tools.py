@@ -751,6 +751,23 @@ JS_DELETE_LANGUAGE_BLOCK = """(ref) => { const el = document.querySelector('[dat
 _OTHER_LANGUAGES = re.compile(r"\b(chinese|mandarin|spanish|french|german|hindi|japanese|korean|portuguese|dutch|arabic|italian|russian)\b", re.I)
 
 
+# Names of files a form shows as attached, hidden sections included (a file name with a Remove control beside it).
+JS_ATTACHED_FILES = r"""() => {
+  const out = new Set();
+  for (const el of document.querySelectorAll('button, a, span, div')) {
+    if (el.children.length > 2) continue;
+    const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!/^[\w .()\-]{1,120}\.(pdf|docx?|odt|rtf|txt)$/i.test(t)) continue;
+    // its Remove control sits beside it (Oracle: <button>name.pdf</button><button>Remove Resume</button>)
+    let box = el.parentElement;
+    for (let i = 0; i < 3 && box && !/remove|delete/i.test(box.textContent || ''); i++) box = box.parentElement;
+    const near = box ? (box.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    if (near.length <= t.length + 60 && /remove|delete/i.test(near)) out.add(t);
+  }
+  return Array.from(out).slice(0, 10);
+}"""
+
+
 WHOLE_DATE = re.compile(r"\d{1,4}\s*[/.-]\s*\d{1,2}(\s*[/.-]\s*\d{1,4})?|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d", re.I)
 JS_IS_DATE_SECTION = r"""(ref) => {
   const el = document.querySelector('[data-goat-ref="' + ref + '"]');
@@ -3964,6 +3981,17 @@ class ToolDispatcher:
     GOV_PUBLIC = re.compile(r"(public|state)[- ](funded |run )?(universit|college|institution|school)|universit\w* (owned|funded|operated|run) by (a |the )?state", re.I)
     GOV_TOPIC = re.compile(r"government|public entit|political", re.I)
 
+    async def _gate_text(self, page_text: str) -> str:
+        """The page text the gate reads, plus the names of files attached anywhere in the form: Oracle lists the attached
+        résumé beside 'Remove Resume' in an earlier section it hides once the run moves on, and Texas Instruments was held
+        'resume not attached' on its last section with the résumé in place (2026-10-25)."""
+        try:
+            names = await self.ctx.ex.eval(JS_ATTACHED_FILES)
+        except Exception:  # noqa: BLE001 - the visible text alone, as before
+            names = None
+        names = [str(n) for n in (names or []) if n and str(n).lower() not in (page_text or "").lower()]
+        return (page_text or "") + ("\nATTACHED FILES: " + "; ".join(names) if names else "")
+
     def _public_employment_question(self, text: str) -> bool:
         """Whether his Texas A&M research role counts as public / state employment is Surya's call: Booz Allen's 'employed
         by a state/local government entity or other public entity, including a public university' was derived as 'Current'
@@ -4936,7 +4964,7 @@ class ToolDispatcher:
                 return {"error": f"this is an account page ({heads[:80]!r}), not the application: its "
                                  f"'{str(btn.get('label') or '')[:40]}' [{btn['ref']}] is an account step. Press it with `click` "
                                  f"(ref {btn['ref']}), {then}. `submit` is only for the finished application."}, None
-        page_text = await ctx.ex.page_text(30000)
+        page_text = await self._gate_text(await ctx.ex.page_text(30000))
         gate = run_gate(job=ctx.job, snapshot=snap, page_text=page_text, expected_resume=ctx.resume_file,
                         free_text_answers=[f["answer"] for f in ctx.free_text], portal=ctx.portal, page_no=ctx.page_no)
         ctx.gate_result = gate.as_dict()
@@ -5194,7 +5222,7 @@ class ToolDispatcher:
             try:
                 snap = await snapmod.take(self.ctx.ex)
                 self.ctx.last_snapshot = snap
-                gate = run_gate(job=self.ctx.job, snapshot=snap, page_text=page_now or await self.ctx.ex.page_text(30000),
+                gate = run_gate(job=self.ctx.job, snapshot=snap, page_text=await self._gate_text(page_now or await self.ctx.ex.page_text(30000)),
                                 expected_resume=self.ctx.resume_file, free_text_answers=[f["answer"] for f in self.ctx.free_text],
                                 portal=self.ctx.portal, page_no=self.ctx.page_no)
                 reasons = list(gate.reasons or [])
@@ -5619,7 +5647,7 @@ class ToolDispatcher:
                 self.ctx.park_attempts += 1
             snap = await snapmod.take(self.ctx.ex)
             self.ctx.last_snapshot = snap
-            page_text = await self.ctx.ex.page_text(30000)
+            page_text = await self._gate_text(await self.ctx.ex.page_text(30000))
             gate = run_gate(job=self.ctx.job, snapshot=snap, page_text=page_text, expected_resume=self.ctx.resume_file,
                             free_text_answers=[f["answer"] for f in self.ctx.free_text], portal=self.ctx.portal, page_no=self.ctx.page_no)
             db.event(self.ctx.job_id, "park:checked", {"reason": reason[:200], "gate": gate.as_dict(), "counted": not free})

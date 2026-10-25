@@ -1247,3 +1247,39 @@ def test_an_avature_register_step_of_this_posting_is_the_application():
     assert application_register_page("Register | Intuit Inc. | Intuit Inc. | Summer 2027: Software Engineering Intern - Cyber", job)
     assert not application_register_page("Register | Intuit Inc.", job)
     assert not application_register_page("Sign In | Intuit Inc. | Summer 2027: Software Engineering Intern", job)
+
+
+def test_a_resume_attached_in_a_hidden_section_counts(store, monkeypatch):
+    """Texas Instruments (Oracle, 2026-10-25): the résumé sat beside 'Remove Resume' in an earlier section Oracle hides once
+    the run moves on, the visible text did not name it, and the run held 'resume not attached'. The gate's text carries the
+    names of files attached anywhere in the form."""
+    import goat.gate as gate_mod
+    monkeypatch.setattr(gate_mod, "job_resume_name", lambda job: "Surya_Thirukonda_Resume_SWE.pdf")
+    items = [{"ref": "e24", "tag": "input", "type": "file", "label": "Import your profile from resume", "value": ""},
+             {"ref": "e1", "tag": "button", "label": "SUBMIT", "submitish": True}]
+    text = "Disability Information\nE-Signature\nSUBMIT\nATTACHED FILES: Surya_Thirukonda_Resume_SWE.pdf"
+    g = run_gate(job=_job(), snapshot=_snap(items), page_text=text, expected_resume=None, free_text_answers=[], portal="oracle", page_no=4)
+    assert not any("resume not attached" in r for r in g.reasons), g.reasons
+
+
+ORACLE_HIDDEN_ATTACHMENT = """<html><body>
+<div class="apply-flow-section" style="display:none"><h3>Supporting Documents and URLs</h3>
+  <div class="attachment-upload-button__container"><div class="attachment-upload-button__filled">
+    <button type="button" class="attachment-upload-button__download">Surya_Thirukonda_Resume_SWE.pdf</button>
+    <button type="button" class="attachment-upload-button__bottom-button">Remove Resume</button></div></div>
+  <a href="/terms.pdf">terms.pdf</a></div>
+<div class="apply-flow-section"><h3>E-Signature</h3><button>SUBMIT</button></div>
+</body></html>"""
+
+
+async def test_the_attached_files_script_reads_hidden_sections():
+    from playwright.async_api import async_playwright
+    from goat.agent.tools import JS_ATTACHED_FILES
+    async with async_playwright() as p:
+        b = await p.chromium.launch(headless=True)
+        try:
+            page = await b.new_page()
+            await page.set_content(ORACLE_HIDDEN_ATTACHMENT)
+            assert await page.evaluate(JS_ATTACHED_FILES) == ["Surya_Thirukonda_Resume_SWE.pdf"]   # not the terms link
+        finally:
+            await b.close()
