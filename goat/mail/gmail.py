@@ -242,6 +242,21 @@ def company_sender_tokens(company: str) -> list[str]:
     return out
 
 
+# Employers that mail from an HR or careers domain of their own: Vanguard's Workday password resets come from
+# CrewCentral_noreply@vanguardhr.com, 'vanguard' is no whole label of it, and two resets sat in the inbox while the run
+# reported none received (2026-10-25).
+HR_DOMAIN_SUFFIXES = ("hr", "careers", "jobs", "recruiting")
+
+
+def with_hr_domains(tokens: list[str]) -> list[str]:
+    """The tokens plus each name token (five letters or more) joined to an HR / careers suffix ('vanguard' -> 'vanguardhr')."""
+    out = list(tokens)
+    for t in tokens:
+        if len(t) >= 5:
+            out += [t + s for s in HR_DOMAIN_SUFFIXES if t + s not in out]
+    return out
+
+
 def workday_tenant_tokens(portal: str | None, portal_host: str) -> list[str]:
     """A Workday tenant that mails from its own domain (Invesco: 'Verify your candidate account' from
     Workday@invesco.com, 2026-10-20, never found because only Workday's domains were searched): the tenant name from
@@ -777,7 +792,7 @@ def fetch_code(
     client = client or default_client()
     timeout_s = SETTINGS.budgets.code_wait_s if timeout_s is None else timeout_s
     poll_s = SETTINGS.mail.poll_interval_s if poll_s is None else poll_s
-    extra = company_sender_tokens(company)
+    extra = with_hr_domains(company_sender_tokens(company))
     query = build_code_query(portal, portal_host, after_ts, extra)
     msg = _poll_newest(client, query, portal, portal_host, after_ts, timeout_s, poll_s, _sleep, extra_senders=extra)
     if msg is None:
@@ -804,7 +819,7 @@ def fetch_verification_link(
     client = client or default_client()
     timeout_s = SETTINGS.budgets.code_wait_s if timeout_s is None else timeout_s
     poll_s = SETTINGS.mail.poll_interval_s if poll_s is None else poll_s
-    extra = workday_tenant_tokens(portal, portal_host)
+    extra = with_hr_domains(workday_tenant_tokens(portal, portal_host))
     query = build_code_query(portal, portal_host, after_ts, extra)
 
     def _has_portal_link(m: Message) -> bool:
@@ -859,6 +874,7 @@ def fetch_password_reset_link(
     poll_s = SETTINGS.mail.poll_interval_s if poll_s is None else poll_s
     extra = workday_tenant_tokens(portal, portal_host)
     extra += [t for t in company_sender_tokens(company) if t not in extra]
+    extra = with_hr_domains(extra)
     query = build_reset_query(portal, portal_host, after_ts, extra)
 
     def _has_portal_link(m: Message) -> bool:

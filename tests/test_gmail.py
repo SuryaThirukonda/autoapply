@@ -555,3 +555,18 @@ def test_an_oracle_code_from_a_short_acronym_domain_is_found():
     assert not g.sender_allowed("Deals <promo@ultimate-deals.example.com>", "oracle", host, toks)
     assert "iat" in g.company_sender_tokens("IAT Insurance Group")
     assert g.company_sender_tokens("CSX Corporation") == ["csx"]           # no duplicate
+
+
+def test_a_workday_reset_from_the_employers_hr_domain_is_found():
+    """Vanguard (2026-10-25): its Workday resets come from CrewCentral_noreply@vanguardhr.com; 'vanguard' is no whole label
+    of that domain, and two resets sat in the inbox while the run reported none received."""
+    host = "vanguard.wd5.myworkdayjobs.com"
+    link = "https://vanguard.wd5.myworkdayjobs.com/en-US/vanguard_external/passwordreset?token=abc"
+    m = _msg("v1", 1_700_000_100, "CrewCentral_noreply@vanguardhr.com", "Reset your password for your candidate account",
+             f'<a href="{link}">Reset Password</a>', html=True)
+    res = gmail.fetch_password_reset_link("workday", host, 1_700_000_000, timeout_s=0, poll_s=0,
+                                          client=FakeMailClient([[m]]), company="Vanguard")
+    assert res.status == "reset_link" and res.url == link
+    assert "vanguardhr" in gmail.build_reset_query("workday", host, 1_700_000_000, gmail.with_hr_domains(["vanguard"]))
+    # the suffix is joined to the name, so a domain that merely starts with it stays out
+    assert not gmail.sender_allowed("Offers <deals@vanguardoffers.example>", "workday", host, gmail.with_hr_domains(["vanguard"]))
