@@ -163,6 +163,11 @@ _COMMON = r"""
           .filter(o => ids.includes(String(o.getAttribute('value') || '')))
           .map(o => (o.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean) : [];
         if (names.length) return names.join('; ');
+        // a server-fed list drops its options once closed; the picks stay as chips (spl-tag label) in its tags list
+        const tl = (el.closest && el.closest('spl-tags-list')) || (h.shadowRoot && h.shadowRoot.querySelector('spl-tags-list'));
+        const chips = tl && tl.shadowRoot ? Array.from(tl.shadowRoot.querySelectorAll('spl-tag'))
+          .map(t => (t.getAttribute('label') || t.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean) : [];
+        if (chips.length) return chips.join('; ');
         n = h; continue;
       }
       if (v && typeof v === 'object') v = v.displayString || v.text || v.name || v.label || '';
@@ -919,10 +924,18 @@ JS_PAGE_ERRORS = r"""
           let n = el;
           for (let i = 0; i < 3 && empty; i++) {
             const rn = n && n.getRootNode ? n.getRootNode() : null; const h = rn && rn.host ? rn.host : null; if (!h) break;
-            let v = h.value; if (v && typeof v === 'object') v = v.displayString || v.text || v.name || v.label || '';
+            let v = h.value;
+            // a multiselect keeps the picked option ids as an array (SmartRecruiters' spl-multiselect-autocomplete: AbbVie's
+            // major and locations read empty with 'Computer Science' and 'Open to all locations' picked, 2026-10-24)
+            if (Array.isArray(v) && v.length) { empty = false; break; }
+            if (v && typeof v === 'object') v = v.displayString || v.text || v.name || v.label || '';
             if (typeof v === 'string' && v.trim()) empty = false;
             n = h;
           }
+        }
+        if (empty) {
+          const tl = el.closest('spl-tags-list');
+          if (tl && tl.shadowRoot && tl.shadowRoot.querySelector('spl-tag')) empty = false;
         }
         if (empty) {
           const ms = el.closest('[data-automation-id="multiSelectContainer"]');
