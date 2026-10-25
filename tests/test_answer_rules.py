@@ -2671,3 +2671,12 @@ async def test_a_free_text_salary_requirement_takes_his_stated_pay(store):
     d, _ = _dispatcher(_job("Dallas Fort Worth International Airport (DFW)", "L16"))
     out, _ = await d.t_lookup_answer("Please indicate your minimum salary requirement for this position.", [])
     assert out.get("key") == "compensation.negotiable_text" and out.get("answer") == "$20/hr", out
+
+
+def test_us_person_statements_answer_his_export_control_yes():
+    """Antares (2026-10-24): 'I am currently a "U.S. Person"' was refused for his stored Yes and the run held."""
+    from goat.agent.tools import key_option_polarity as k
+    assert k("compliance.export_control_us_person", 'I am currently a "U.S. Person"') == "yes"
+    assert k("compliance.export_control_us_person", 'I will soon become a "U.S. Person"') == "no"
+    assert k("compliance.export_control_us_person", 'I am not a "U.S. Person, but I am eligible for licensing') == "no"
+    assert k("work_authorization.us_citizen", "I am a U.S. citizen") == "yes"

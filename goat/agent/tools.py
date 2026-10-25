@@ -1312,6 +1312,15 @@ KEY_OPTION_POLARITY = {
 KEY_OPTION_POLARITY["consent.marketing_email"] = KEY_OPTION_POLARITY["consent.keep_profile_future_roles"]
 KEY_OPTION_POLARITY["policy.may_join_talent_community"] = KEY_OPTION_POLARITY["consent.keep_profile_future_roles"]
 
+# Export-control status worded as statements (Antares, 2026-10-24: 'I am currently a "U.S. Person"' / 'I will soon become a
+# "U.S. Person"' / 'I am not a "U.S. Person", but I am eligible for licensing'): his Yes was refused on the first and the run held.
+_US_PERSON_NO = re.compile(r"\bnot\s+(currently\s+)?an?\s+[\"'“‘]?u\.?\s?s\.?\s+(person|citizen|national)|\bwill\s+(soon\s+)?become\b|"
+                           r"\beligible\s+for\s+(an?\s+)?(export\s+)?licens", re.I)
+_US_PERSON_YES = re.compile(r"\b(i\s+am|i'm)\s+(currently\s+)?an?\s+[\"'“‘]?u\.?\s?s\.?\s+(person|citizen|national)\b|"
+                            r"\bcurrently\s+an?\s+[\"'“‘]?u\.?\s?s\.?\s+person\b", re.I)
+for _k in ("compliance.export_control_us_person", "work_authorization.us_citizen"):
+    KEY_OPTION_POLARITY[_k] = (_US_PERSON_YES, _US_PERSON_NO)
+
 
 # A profile-use choice that also enrolls him in the talent community (Qualcomm, 2026-10-21: "... My profile data may also
 # be used for recruiting initiatives (e.g., Talent Community and Events)" against "ONLY THE ROLE I AM APPLYING FOR. I will
