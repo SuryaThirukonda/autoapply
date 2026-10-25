@@ -127,3 +127,25 @@ def test_cli_proposals_lists_and_approves(fresh, capsys):
     out = capsys.readouterr().out
     assert "applied" in out
     assert answers.lookup("Are you a US person?").key == "defaults.us_citizen"
+
+
+def test_alias_promotion_scans_the_lookups_once(fresh, monkeypatch):
+    """934 aliases each re-scanning the lookup events held the GIL for ten minutes and stalled the worker (2026-10-25)."""
+    answers.save_answer("defaults.us_citizen", "Yes", answer_type="choice", source="questionnaire")
+    for i in range(30):
+        answers.record_classifier_alias(f"Question number {i} about citizenship?", "defaults.us_citizen", 0.9)
+    _lookup_event(1, "Question number 3 about citizenship?")
+    _lookup_event(2, "Question number 3 about citizenship?")
+    calls = []
+    real = nightly.lookup_jobs_by_question
+    monkeypatch.setattr(nightly, "lookup_jobs_by_question", lambda con=None: calls.append(1) or real(con))
+    assert nightly.promote_aliases(min_seen=2) == 1
+    assert len(calls) == 1
+
+
+def test_nightly_day_survives_a_restart(fresh):
+    db.meta_set("nightly_last_yday", 298)
+    assert db.meta_get("nightly_last_yday", None) == 298
+    from goat.supervisor import due_daily
+    lt = time.struct_time((2026, 10, 25, 2, 50, 0, 6, 298, 0))
+    assert due_daily(2, db.meta_get("nightly_last_yday", None), lt) is False

@@ -23,18 +23,25 @@ def _day(ts: float | None = None) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(ts if ts is not None else time.time()))
 
 
-def alias_seen_jobs(alias_norm: str, con=None) -> set[int]:
-    """Distinct jobs in which the agent looked this question up (tool:lookup_answer events)."""
+def lookup_jobs_by_question(con=None) -> dict[str, set[int]]:
+    """Distinct jobs per looked-up question (tool:lookup_answer events), in one pass over the events. Scanning them
+    once per alias (934 aliases x 4,415 lookups) held the GIL for ten minutes at 02:44 on 2026-10-25: the event loop
+    starved, Playwright's connect_over_cdp timed out and the worker stopped claiming jobs."""
     con = con or db.connect()
-    out: set[int] = set()
-    for r in con.execute("SELECT job_id, detail FROM events WHERE kind='tool:lookup_answer' AND job_id IS NOT NULL"):
+    out: dict[str, set[int]] = defaultdict(set)
+    for r in con.execute("SELECT job_id, detail FROM events WHERE kind='tool:lookup_answer' AND job_id IS NOT NULL").fetchall():
         try:
             q = (json.loads(r["detail"] or "{}").get("args") or {}).get("question") or ""
         except Exception:
             continue
-        if answers.norm(q) == alias_norm:
-            out.add(int(r["job_id"]))
+        if q:
+            out[answers.norm(q)].add(int(r["job_id"]))
     return out
+
+
+def alias_seen_jobs(alias_norm: str, con=None) -> set[int]:
+    """Distinct jobs in which the agent looked this question up."""
+    return set(lookup_jobs_by_question(con).get(alias_norm, set()))
 
 
 def _proposal_exists(con, title: str) -> bool:
@@ -46,9 +53,10 @@ def promote_aliases(min_seen: int = 2, now: float | None = None) -> int:
     con = db.connect()
     rows = con.execute("SELECT alias, kind, key, confidence, source FROM question_aliases WHERE approved=0 AND kind='exact'").fetchall()
     inserted = 0
+    seen = lookup_jobs_by_question(con) if rows else {}
     for r in rows:
         title = f"{r['alias']} -> {r['key']}"
-        jobs = alias_seen_jobs(r["alias"], con)
+        jobs = seen.get(r["alias"], set())
         if len(jobs) < min_seen or _proposal_exists(con, title):
             continue
         body = json.dumps({"alias": r["alias"], "key": r["key"], "confidence": r["confidence"], "source": r["source"]})

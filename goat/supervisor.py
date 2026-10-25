@@ -45,7 +45,8 @@ def due_daily(hour: int, last_day: int | None, lt: time.struct_time) -> bool:
 async def watchdog(stop: asyncio.Event) -> None:
     from .browser import chrome
     last_digest_day = None
-    last_nightly_day = None
+    # kept in meta: every restart in the 02:00 hour ran the nightly pass again (2026-10-25)
+    last_nightly_day = db.meta_get("nightly_last_yday", None)
     while not stop.is_set():
         try:
             from .worker import requeue_portal_errors
@@ -79,6 +80,7 @@ async def watchdog(stop: asyncio.Event) -> None:
                 await send_digest()
             if due_daily(2, last_nightly_day, lt):
                 last_nightly_day = lt.tm_yday
+                db.meta_set("nightly_last_yday", last_nightly_day)
                 from . import nightly
                 counts = await asyncio.to_thread(nightly.run_nightly)
                 log.info("nightly: %s", counts)
