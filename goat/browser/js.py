@@ -766,7 +766,7 @@ JS_PAGE_ERRORS = r"""
   // students ... Please provide your anticipated graduation date in order to access your eligibility" blocked every submit)
   // ... and an employer's policy note under a question (Crusoe, 2026-10-21: "Crusoe is not sponsoring visas for these
   // positions ... Candidates must be legally authorized to work" under the sponsorship question blocked every submit)
-  const INSTRUCTIONAL = /(if\s+applicable|e\.g\.|for\s+example|\(optional\)|as\s+it\s+appears|do\s+not\s+include|maximum\s+of|up\s+to\s+\d|characters?\s+remaining|format:|in\s+order\s+to|(are|is)\s+designed\s+for|for\s+(demographic|outreach|statistical|reporting)\s+purposes|(is|are)\s+not\s+(sponsoring|able\s+to\s+sponsor|offering\s+sponsorship)|(does|do|will)\s+not\s+(sponsor|provide\s+sponsorship)|(candidates|applicants)\s+must)/i;
+  const INSTRUCTIONAL = /(if\s+applicable|e\.g\.|for\s+example|\(optional\)|as\s+it\s+appears|do\s+not\s+include|maximum\s+of|up\s+to\s+\d|characters?\s+remaining|format:|in\s+order\s+to|(are|is)\s+designed\s+for|for\s+(demographic|outreach|statistical|reporting)\s+purposes|(is|are)\s+not\s+(sponsoring|able\s+to\s+sponsor|offering\s+sponsorship)|(does|do|will)\s+not\s+(sponsor|provide\s+sponsorship)|(candidates?|applicants?)\s+must|to\s+conform\s+(to|with)\s+(u\.?\s?s\.?\s+)?(government\s+)?(export|federal))/i;
   const alerts = [], errorText = [], emptyRequired = [], summaries = [];
   const seenRoots = new Set(), seenText = new Set();
   function vis(el) { try { const r = el.getBoundingClientRect(); const s = el.ownerDocument.defaultView.getComputedStyle(el);
