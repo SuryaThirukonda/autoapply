@@ -1368,7 +1368,7 @@ async def test_a_skill_hold_beside_a_met_requirement_is_bounced(store):
         return "Summer Games Cyber Security Intern Apply"
     ctx.ex.page_text = page_text
     out, _ = await d.t_park("eligibility: posting requires scheduled Bachelor’s degree by Summer 2028 or 2029 (satisfied); "
-                            "however job is cyber security and profile lacks cybersecurity/OSI/virtualization experience?")
+                            "however job is cyber security and profile lacks cybersecurity/OSI/virtualization experience")
     assert "not an eligibility rule" in out["error"]
 
 

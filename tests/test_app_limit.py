@@ -49,3 +49,20 @@ async def test_a_limit_hold_at_the_limit_stands(store):
     with pytest.raises(Exception) as e:
         await d.t_park(REASON)
     assert "eligibility" in str(getattr(e.value, "reason", e.value))
+
+
+@pytest.mark.asyncio
+async def test_an_unsure_eligibility_hold_is_bounced_once(store):
+    """McKesson (2026-10-25): 'eligibility: role is Colorado-based 10-week summer internship, but seasonal dates not
+    independently requirement?' named no requirement he fails."""
+    from goat.budget import Parked
+    d, ctx = _dispatcher(_job("McKesson", "M1"))
+
+    async def page_text(n=0):
+        return "Software Installation & IT Support Intern Apply"
+    ctx.ex.page_text = page_text
+    reason = "eligibility: role is Colorado-based 10-week summer internship, but seasonal dates not independently requirement? "
+    out, _ = await d.t_park(reason)
+    assert "unsure" in out["error"]
+    with pytest.raises(Parked):
+        await d.t_park(reason)

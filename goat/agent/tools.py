@@ -5451,6 +5451,16 @@ class ToolDispatcher:
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "no requirement named"})
             return {"error": "not parked: an eligibility hold must quote the posting's requirement he does not meet, and this "
                              "reason names none. If nothing in the posting rules him out, continue the application."}, None
+        # An eligibility hold that ends in a question names no requirement he fails: McKesson was held 'role is Colorado-based
+        # 10-week summer internship, but seasonal dates not independently requirement?' and Booz Allen '... experience?'
+        # (2026-10-25). One bounce; a hold restated as a plain requirement stands.
+        if low.startswith("eligibility") and reason.rstrip(" .").endswith("?") \
+                and self.ctx.control_failures.get("park:unsure_eligibility", 0) < 1:
+            self.ctx.control_failures["park:unsure_eligibility"] = 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "unsure"})
+            return {"error": "not parked: an eligibility hold quotes, as a statement, the posting's requirement he does not "
+                             "meet. A question mark says you are unsure: a requirement you cannot name is no reason to stop. "
+                             "Continue the application."}, None
         # A board's own application limit is counted in goat's ledger, not guessed: Coinbase (3 per 6 months) was held with
         # 'application ledger not checked' while the ledger held two (2026-10-25)
         if low.startswith("eligibility") and self.ctx.control_failures.get("park:app_limit", 0) < 2:
