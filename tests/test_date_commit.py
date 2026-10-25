@@ -45,3 +45,33 @@ async def test_a_date_that_types_but_does_not_commit_is_committed_with_the_arrow
         assert await ex.page.evaluate("() => document.querySelector('[aria-label=Year]').value") == "2026"
     finally:
         await ex.close()
+
+
+STALE = """<html><body style="font:14px sans-serif">
+<div data-automation-id="formField-dateSignedOn"><label id="lab">Date*</label>
+  <div data-automation-id="dateInputWrapper">
+    <input data-automation-id="dateSectionMonth-input" aria-label="Month" role="spinbutton" value="10" style="width:40px;height:24px">
+    <input data-automation-id="dateSectionDay-input" aria-label="Day" role="spinbutton" style="width:40px;height:24px">
+    <input data-automation-id="dateSectionYear-input" aria-label="Year" role="spinbutton" style="width:60px;height:24px">
+  </div>
+  <div>Error: Invalid Date: 10//</div>
+</div>
+<input id="next" aria-label="Next field" style="margin-top:20px">
+</body></html>"""
+
+
+async def test_a_stale_invalid_date_error_is_not_read_as_a_failed_date(tmp_path):
+    """Parsons (Workday, 2026-10-24): the disability-form date read 10/24/2026 but kept 'Error: Invalid Date: 10//' from an
+    earlier half-typed value until the next save; set_date reported it uncommitted five times and the run held."""
+    db.reset_for_tests(tmp_path / "t.db")
+    ex = Executor(policy=HostPolicy(["about:blank"]))
+    try:
+        await ex.start_launched(headless=True)
+        await ex.new_page()
+        await ex.page.set_content(STALE)
+        snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if (i.get("label") or "").lower().startswith("month"))
+        r = await fill.set_date(ex, ref, "10/24/2026")
+        assert r.ok, r.error
+    finally:
+        await ex.close()

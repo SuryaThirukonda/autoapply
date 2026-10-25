@@ -1435,8 +1435,14 @@ JS_DATE_SECTIONS = r"""
   const field = start.closest('[data-automation-id^="formField"], fieldset, .field, .form-group') || box;
   const fieldText = (field.innerText || '').replace(/\s+/g, ' ').trim();
   const ariaBad = out.some(o => { const el = findRef(o.ref); return el && el.getAttribute('aria-invalid') === 'true'; });
+  // Workday's error quotes the value it rejected ('Invalid Date: 10//') and keeps it until the next save: with every section
+  // filled and a different value now, it is stale (Parsons' disability-form date read 10/24/2026 and was reported
+  // uncommitted five times, 2026-10-24)
+  const quoted = (fieldText.match(/invalid date:\s*([0-9\/]*)/i) || [])[1];
+  const nowVal = out.map(o => o.value || '').join('/');
+  const stale = quoted !== undefined && out.length >= 2 && out.every(o => (o.value || '') !== '') && quoted !== nowVal;
   return JSON.stringify({ found: out.length > 0, sections: out, text: boxText.slice(0, 160),
-                          invalid: /invalid date/i.test(boxText) || /invalid date/i.test(fieldText) || ariaBad });
+                          invalid: !stale && (/invalid date/i.test(boxText) || /invalid date/i.test(fieldText) || ariaBad) });
 }
 """
 
