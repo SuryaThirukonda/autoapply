@@ -232,3 +232,17 @@ async def test_a_pick_from_the_employers_own_list_holds_for_that_employer_only(k
     key = answers.key_from_question(q)
     assert answers.get(key, "Acme") is not None and answers.get(key, "Acme").scope == "company"
     assert answers.get(key, "Some Other Employer") is None
+
+
+async def test_ask_user_finds_a_stored_answer_by_its_alias_before_asking(kb):
+    """Penn State (2026-10-25): lookup_answer found the stored SERS/PSERS No three times, then ask_user sent the same
+    question in other words to Surya: it consulted the resolver only, never his stored answers."""
+    import json as _json
+    answers.save_answer("q.have_you_ever_participated_in_sers_or_psers", "No", answer_type="choice", source="derived")
+    answers.add_alias(_json.dumps([["psers"], ["sers", "retirement"]]), "q.have_you_ever_participated_in_sers_or_psers",
+                      kind="substrings", source="operator")
+    d, clf = _d(kb, {"meaning": "?", "verdict": "unknown", "key": None, "answer": None, "evidence": "", "confidence": 0.1})
+    q = ("Have you ever participated in or made contributions to Pennsylvania's State Employees' Retirement System (SERS) "
+         "or Public School Employees' Retirement System (PSERS)?")
+    out, _ = await d.t_ask_user([{"question": q, "options": ["Yes", "No"], "field_type": "radio", "ref": "e110"}])
+    assert out["asked"] == [] and out["auto_answered"][0]["answer"] == "No", out

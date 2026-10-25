@@ -411,6 +411,8 @@ AFFILIATION = re.compile(
     r"\b(previously|ever been|formerly) employed as an? \w+(?:[ \w-]{0,60}?)\b(employee|contractor|intern|temp\w*)\b.{0,40}\b(at|by|with)\b|"
     # 'Have you ever been a contractor for the Federal Reserve System and/or CFPB?' (2026-10-24)
     r"\b(been|worked as|served as) an? (contractor|consultant|subcontractor|vendor)s? (for|at|with|to)\b|"
+    # 'Have you previously been offered employment by DTCC that was subsequently rescinded?' (2026-10-25)
+    r"\b(previously|ever|formerly) (been )?(offered|extended an offer of) (employment|a job|a position|an? (internship|offer))\b|"
     # 'related to' only about a person: TIAA's "information related to your political contributions" took the default No
     r"\b(are|is|be) (you|anyone|any(one)? \w+) related to\b|\brelated to (anyone|someone|an? (current |former )?(employee|officer|director|board member|member|person|individual))|"
     r"household member|immediate family|\bspouse\b|board member|\bofficers?\b|\bdirectors?\b|government official|public official|"
@@ -4358,6 +4360,12 @@ class ToolDispatcher:
                 # a question only for visa holders never goes to Surya (Federal Reserve, 2026-10-24)
                 pres_v, _ = await self.t_lookup_answer(text, opts)
                 auto.append(pres_v)
+                continue
+            # His stored answers first, as lookup_answer finds them: Penn State's SERS/PSERS question had a stored No (found
+            # three times by lookup_answer) and ask_user, which went to the resolver only, sent it to Surya (2026-10-25)
+            pres_l, _ = await self.t_lookup_answer(text, opts, None, q.get("ref"))
+            if isinstance(pres_l, dict) and not pres_l.get("miss") and str(pres_l.get("answer") or "").strip():
+                auto.append(pres_l)
                 continue
             # The knowledge base first (the resolver result from lookup_answer is reused, not recomputed).
             pres, info = await self._kb_resolve(text, opts, ftype, None, q.get("ref"))

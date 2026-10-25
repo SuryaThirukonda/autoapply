@@ -367,3 +367,10 @@ def test_public_institution_employment_is_never_a_default_no():
     assert not is_affiliation_question(q, ["Yes", "No"])
     # a plain federal-government question keeps its default No path
     assert is_affiliation_question("Are you a current or former employee of the U.S. Federal Government?", ["Yes", "No"])
+
+
+def test_an_earlier_rescinded_offer_from_the_employer_is_a_default_no():
+    """DTCC (2026-10-25): 'Have you previously been offered employment by DTCC that was subsequently rescinded?' went to Surya."""
+    from goat.agent.tools import default_no_choice, is_affiliation_question
+    q = "Have you previously been offered employment by DTCC that was subsequently rescinded?"
+    assert is_affiliation_question(q, ["Yes", "No"]) and default_no_choice(q, ["Yes", "No"]) == "No"
