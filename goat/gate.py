@@ -569,7 +569,14 @@ def run_gate(*, job: dict, snapshot: Snapshot, page_text: str, expected_resume: 
         if not shown and expected_resume and any(str(d.get("source") or "") == "resume" and str(d.get("value") or "").lower() == expected_resume.lower()
                                                  and d.get("page") != page_no for d in decs):
             shown = expected_resume.lower()      # attached on an earlier step of this attempt
-        if not shown:
+        other = [n.strip() for n in re.findall(r"ATTACHED FILES: ([^\n]+)", page_text or "") for n in n.split(";")
+                 if re.search(r"resume|résumé|\bcv\b", n, re.I) and exp_text and n.strip().lower() != exp_text.lower()]
+        if not shown and other:
+            # DTCC's Oracle form kept 'Surya_Thirukonda_Resume_1.pdf' from an earlier application; 'the slot is empty' sent the
+            # run looking for a slot that only appears after the old file is removed (2026-10-25)
+            reasons.append(f"resume not attached: another résumé ({other[0][:80]}) is attached; press its Remove (REMOVE RESUME) "
+                           f"control, then call upload_resume on the Resume/CV slot that appears ({exp_text})")
+        elif not shown:
             reasons.append("resume not attached: the Resume/CV slot is empty (call upload_resume on its ref)")
         elif expected_resume and expected_resume.lower() not in shown:
             reasons.append(f"resume slot holds {shown!r}, expected {expected_resume}")

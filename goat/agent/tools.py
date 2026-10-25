@@ -1178,6 +1178,10 @@ NOT_PICKED_HINT = ("source 'computer' only records an option you already clicked
                    "tick it, call fill_batch with that option's ref, its answer_key and source null.")
 
 
+# a NEGATIVE acknowledgement only: 'I understand and consent ...' is the right pick for a consent-type key (Cox, 2026-10-25)
+ACK_SENTENCE = re.compile(r"\b(i|you) (do not|don't|did not) (understand|acknowledge)\b|\bi have questions\b", re.I)
+
+
 WHEN_APPLIED = re.compile(r"\bif (yes|so)\b.{0,20}\bwhen\b|\bwhen did you (apply|submit)|\bdate of (your )?(previous|prior|earlier) "
                           r"application|\b(previous|prior|earlier) application.{0,20}\b(date|when)\b", re.I)
 
@@ -3127,6 +3131,14 @@ class ToolDispatcher:
                     if real and rank >= 2:
                         rec_src = f"{rec_src} (offered: {'; '.join(real)[:200]})"
                         db.event(self.ctx.job_id, "choose:fallback", {"key": answer_key, "picked": shown[:60], "offered": real[:30]})
+            if ACK_SENTENCE.search(shown) and not str(answer_key or "").startswith(("consent.", "policy.", "bank.terms", "q.")):
+                # an acknowledgement ('No, I do not understand. I have questions ...') is never a fact's Yes / No: Penn State's
+                # clearance-obstacles 'No' picked it when the model chose on the acknowledgement's ref (2026-10-25)
+                db.event(self.ctx.job_id, "choose:ack_refused", {"key": answer_key, "picked": shown[:80]})
+                return {"ref": r.ref or ref, "status": "failed", "readback": shown[:120],
+                        "error": (f"{shown[:60]!r} is an acknowledgement, not an answer to {answer_key}: this ref is the "
+                                  "'do you understand' list. Answer it with consent.privacy_notice (he understands), and put "
+                                  f"{answer_key} on its own question's ref.")}, None
             records.record_decision(self.ctx.job_id, self.ctx.page_no, label, shown, rec_src, r.ref or ref)
             self.ctx.control_failures.pop(ref, None)
             out = r.as_dict()

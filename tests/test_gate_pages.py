@@ -1283,3 +1283,16 @@ async def test_the_attached_files_script_reads_hidden_sections():
             assert await page.evaluate(JS_ATTACHED_FILES) == ["Surya_Thirukonda_Resume_SWE.pdf"]   # not the terms link
         finally:
             await b.close()
+
+
+def test_another_resume_attached_is_named_with_how_to_replace_it(store, monkeypatch):
+    """DTCC (Oracle, 2026-10-25): an earlier application's 'Surya_Thirukonda_Resume_1.pdf' was attached; the gate said the slot
+    was empty and the run held."""
+    import goat.gate as gate_mod
+    monkeypatch.setattr(gate_mod, "job_resume_name", lambda job: "Surya_Thirukonda_Resume_SWE.pdf")
+    items = [{"ref": "e24", "tag": "input", "type": "file", "label": "Import your profile from resume", "value": ""},
+             {"ref": "e1", "tag": "button", "label": "SUBMIT", "submitish": True}]
+    text = "E-Signature\nSUBMIT\nATTACHED FILES: Surya_Thirukonda_Resume_1.pdf"
+    g = run_gate(job=_job(), snapshot=_snap(items), page_text=text, expected_resume=None, free_text_answers=[], portal="oracle", page_no=4)
+    msg = next(r for r in g.reasons if "resume not attached" in r)
+    assert "Surya_Thirukonda_Resume_1.pdf" in msg and "REMOVE RESUME" in msg, g.reasons
