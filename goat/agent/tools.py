@@ -802,7 +802,10 @@ def no_english_offered(label: str, error: str) -> bool:
 
 
 VAGUE_ELIGIBILITY = re.compile(r"(i |we |the run )?(cannot|can't|can not|unable to|could not|couldn't) (proceed|continue|go on|finish|complete)"
-                               r"( (the |this )?(application|form))?|stuck|stopped|blocked|not possible|n/?a|none|unknown", re.I)
+                               r"( (the |this )?(application|form))?|stuck|stopped|blocked|not possible|n/?a|none|unknown|"
+                               # IAT Insurance (2026-10-25): 'eligibility: cannot park; fill remaining application.'
+                               r"(cannot|can't|can not) park\b.*|(fill|continue|complete|finish) (the )?(remaining|rest of the) "
+                               r"(application|form|fields)", re.I)
 
 
 ERROR_PAGE = re.compile(r"an error (has )?occurred|page not found|\b404\b|something went wrong|no longer (available|accepting)|"

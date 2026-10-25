@@ -2429,7 +2429,8 @@ async def test_the_empty_languages_block_is_deleted_when_no_english_is_offered(t
 def test_a_vague_eligibility_reason_names_no_requirement():
     """Creative Artists Agency (2026-10-22) parked 'eligibility: cannot proceed'."""
     from goat.agent.tools import VAGUE_ELIGIBILITY
-    for r in ("cannot proceed", "unable to continue the application", "stuck", "none"):
+    for r in ("cannot proceed", "unable to continue the application", "stuck", "none",
+              "cannot park; fill remaining application", "fill the remaining fields"):   # IAT Insurance, 2026-10-25
         assert VAGUE_ELIGIBILITY.fullmatch(r), r
     assert not VAGUE_ELIGIBILITY.fullmatch("the role requires pursuit of a graduate degree")
 
