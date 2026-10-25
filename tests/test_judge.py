@@ -390,3 +390,11 @@ def test_the_judge_takes_other_on_a_required_event_list_without_a_none_option():
     from goat import judge
     assert "career fair / event / university attended" in judge.JUDGE_INSTRUCTIONS
     assert "Gilead" in judge.JUDGE_INSTRUCTIONS
+
+
+def test_the_judge_accepts_computer_information_science_and_a_not_applicable_event_name():
+    """Parsons (2026-10-24): 'Computer Information Science' failed as not his catalog wording; Gilead: 'Not applicable' in the
+    event-name box failed for not being 'N/A'."""
+    from goat import judge
+    assert "'Computer Information Science'" in judge.JUDGE_INSTRUCTIONS
+    assert "'Not applicable' or 'None' as the event name" in judge.JUDGE_INSTRUCTIONS

@@ -84,3 +84,15 @@ async def test_his_general_prior_internship_yes_never_answers_an_internship_here
         assert "bank.prior-internship" in judge.JUDGE_INSTRUCTIONS
     finally:
         await ex.close(close_browser=True)
+
+
+def test_a_public_institution_question_never_takes_his_federal_government_no(store):
+    """HP (2026-10-24): 'government/public institution employment' took background.government_employee_current_or_former (No,
+    federal only) by answer_key while the same question for HPE waited on Surya."""
+    answers.save_answer("background.government_employee_current_or_former", "No", answer_type="choice", source="questionnaire")
+    d, _ = _dispatcher(_job("HP", "L13"))
+    err = d._public_institution_refusal("background.government_employee_current_or_former",
+                                        "Have you been employed by a government or public institution in the past 5 years?")
+    assert err and "public / state institutions" in err
+    assert d._public_institution_refusal("background.government_employee_current_or_former",
+                                         "Are you a current or former federal government employee?") is None

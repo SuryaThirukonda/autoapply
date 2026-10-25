@@ -2046,11 +2046,27 @@ class ToolDispatcher:
         return (f"this asks about an internship at {company} itself, and his profile names no role there: {answer_key} "
                 "(his answer about other employers) does not answer it. The answer is No: lookup_answer this question.")
 
+    def _public_institution_refusal(self, answer_key: str | None, text: str) -> str | None:
+        """His stored No to government employment covers federal government only: a question that counts public / state
+        institutions goes to lookup_answer (and to Surya). HP's 'government/public institution employment' took that No by
+        answer_key while the same question for HPE waited on him (2026-10-24)."""
+        if not answer_key or not answer_key.startswith("background.government_employee"):
+            return None
+        if not (self.GOV_PUBLIC.search(text or "") and self.GOV_TOPIC.search(text or "")):
+            return None
+        return ("this question counts public / state institutions (Texas A&M, where he holds a research role, is one): his "
+                f"{answer_key} answer covers federal government only. lookup_answer this question; it may need ask_user.")
+
     async def t_fill_batch(self, fields: list[dict]):
         plan, results = [], []
         snap = self.ctx.last_snapshot
         for f in fields:
             item = snap.find(f.get("ref", "")) if snap else None
+            ctx_text = f"{f.get('label') or ''} {(item or {}).get('group') or ''} {(item or {}).get('label') or ''}"
+            pub = self._public_institution_refusal(f.get("answer_key"), ctx_text)
+            if pub and (f.get("source") or "").lower() != "clear":
+                results.append({"ref": f.get("ref"), "status": "failed", "error": pub})
+                continue
             here = self._internship_here_refusal(f.get("answer_key"), f"{f.get('label') or ''} {(item or {}).get('group') or ''} "
                                                                        f"{(item or {}).get('label') or ''}")
             if here and (f.get("source") or "").lower() != "clear":
@@ -2726,7 +2742,8 @@ class ToolDispatcher:
 
     async def _t_choose(self, ref: str, answer_key: str | None, options: list[str], label: str, source: str | None):
         item = self.ctx.last_snapshot.find(ref) if self.ctx.last_snapshot is not None else None
-        here = self._internship_here_refusal(answer_key, f"{label or ''} {(item or {}).get('group') or ''} {(item or {}).get('label') or ''}")
+        here = self._internship_here_refusal(answer_key, f"{label or ''} {(item or {}).get('group') or ''} {(item or {}).get('label') or ''}") \
+            or self._public_institution_refusal(answer_key, f"{label or ''} {(item or {}).get('group') or ''} {(item or {}).get('label') or ''}")
         if here:
             return {"error": here}, None
         if not answer_key and re.search(r"\bcertif|\blicen[cs]e", label or "", re.I) \
