@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .. import answers, db, fit, phone, profile, records, states
+from .. import answers, db, fit, ledger, phone, profile, records, states
 from ..budget import Budget, BudgetExceeded, Parked
 from ..browser import fill, js, snapshot as snapmod
 from ..browser.captcha import detect_challenge
@@ -749,6 +749,26 @@ JS_DELETE_LANGUAGE_BLOCK = """(ref) => { const el = document.querySelector('[dat
   return null; }"""
 
 _OTHER_LANGUAGES = re.compile(r"\b(chinese|mandarin|spanish|french|german|hindi|japanese|korean|portuguese|dutch|arabic|italian|russian)\b", re.I)
+
+
+APP_LIMIT = re.compile(r"(?:maximum(?: of)?|max\.?|up to|no more than|limit(?:ed)?(?: of| to)?(?: is)?)\s*(\d+)\s*"
+                       r"(?:total\s*)?applications?\s*(?:with)?in\s*(?:a|any|the|a rolling)?\s*(?:last|past)?\s*(\d+)\s*"
+                       r"(day|week|month|year)s?", re.I)
+_UNIT_DAYS = {"day": 1, "week": 7, "month": 30, "year": 365}
+
+
+def application_limit_room(reason: str, company: str, now: int | None = None) -> tuple[int, int] | None:
+    """(applications sent to this company inside the window, the limit) for a hold quoting a board's limit
+    ('maximum 3 applications within 6 months'), else None."""
+    m = APP_LIMIT.search(reason or "")
+    key = ledger.company_key(company)
+    if not m or not key:
+        return None
+    limit, days = int(m.group(1)), int(m.group(2)) * _UNIT_DAYS[m.group(3).lower()]
+    since = (now or db.now()) - days * 86400
+    sent = {r["id"] for r in db.connect().execute("SELECT id, company, submitted_at FROM applications WHERE submitted_at >= ?", (since,))
+            if ledger.company_key(r["company"] or "") == key}
+    return len(sent), limit
 
 
 _STATE_PREFIX = re.compile(r"^\s*[A-Z]{2}\s*-\s*")
@@ -5392,6 +5412,16 @@ class ToolDispatcher:
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "no requirement named"})
             return {"error": "not parked: an eligibility hold must quote the posting's requirement he does not meet, and this "
                              "reason names none. If nothing in the posting rules him out, continue the application."}, None
+        # A board's own application limit is counted in goat's ledger, not guessed: Coinbase (3 per 6 months) was held with
+        # 'application ledger not checked' while the ledger held two (2026-10-25)
+        if low.startswith("eligibility") and self.ctx.control_failures.get("park:app_limit", 0) < 2:
+            room = application_limit_room(reason, str(self.ctx.job.get("company") or ""))
+            if room is not None and room[0] < room[1]:
+                self.ctx.control_failures["park:app_limit"] = self.ctx.control_failures.get("park:app_limit", 0) + 1
+                db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "application limit has room",
+                                                           "sent": room[0], "limit": room[1]})
+                return {"error": f"not parked: goat's application ledger shows {room[0]} application(s) to this company in "
+                                 f"that window and the limit is {room[1]}, so this one is allowed. Continue the application."}, None
         # A form field the run could not fill is no eligibility rule: Waymo was held 'eligibility: required education start/end
         # date fields only support month/year ... enrollment dates unknown' (2026-10-23); his dates are stored.
         if low.startswith("eligibility") and FORM_FIELD_TALK.search(reason) \
