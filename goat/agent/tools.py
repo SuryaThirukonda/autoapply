@@ -3927,6 +3927,7 @@ class ToolDispatcher:
                     pres.update({"meaning": out.get("meaning"), "choices": opts})
                     result = (pres, info)
             elif (verdict == "derived" and out.get("answer") and evidence and not NO_DERIVE.search(question)
+                  and not self._public_employment_question(f"{question} {meaning or ''} {' '.join(options or [])}")
                   and conf >= SETTINGS.models.resolver_min_confidence_derived):
                 val = str(out["answer"]).strip()
                 if opts:
@@ -3959,6 +3960,12 @@ class ToolDispatcher:
     # 2026-10-19). Only his own answer to that wording settles it.
     GOV_PUBLIC = re.compile(r"(public|state)[- ](funded |run )?(universit|college|institution|school)|universit\w* (owned|funded|operated|run) by (a |the )?state", re.I)
     GOV_TOPIC = re.compile(r"government|public entit|political", re.I)
+
+    def _public_employment_question(self, text: str) -> bool:
+        """Whether his Texas A&M research role counts as public / state employment is Surya's call: Booz Allen's 'employed
+        by a state/local government entity or other public entity, including a public university' was derived as 'Current'
+        from that role and filled without him (2026-10-25)."""
+        return bool(self.GOV_PUBLIC.search(text or "") and self.GOV_TOPIC.search(text or ""))
 
     async def t_lookup_answer(self, question: str, options: list[str], meaning: str | None = None, ref: str | None = None):
         text = " ".join([question or "", meaning or "", " ".join(options or [])])

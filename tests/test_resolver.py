@@ -204,3 +204,18 @@ async def test_a_derived_answer_to_a_bare_label_belongs_to_its_job_only(kb):
     assert out["via"] == "derived" and out["answer"] == "18", out
     assert answers.get("q.day") is None
     assert out["key"] == f"q.day.job{kb['id']}", out
+
+
+async def test_public_employment_is_never_derived(kb):
+    """Booz Allen (2026-10-25): 'employed by a state/local government entity or other public entity, including a public
+    university such as Texas A&M' was derived as 'Current' from his research role and filled without him."""
+    d, _ = _d(kb, {"meaning": "state or public employment", "verdict": "derived", "key": None, "answer": "Current",
+                   "evidence": "Texas A&M University, Rathinam Group (undergraduate research assistant)", "confidence": 0.93})
+    q = ("Have you been employed by a state/local government entity or other public entity, including a public university "
+         "such as Texas A&M?")
+    out, _ = await d.t_lookup_answer(q, ["Current", "Former", "Never", "Prefer not to answer"], None, None)
+    assert out.get("miss") is True
+    out, _ = await d.t_ask_user([{"question": q, "options": ["Current", "Former", "Never", "Prefer not to answer"],
+                                  "field_type": "dropdown", "ref": "e15"}])
+    assert not out.get("auto_answered") and len(out["asked"]) == 1
+    assert answers.lookup(q) is None
