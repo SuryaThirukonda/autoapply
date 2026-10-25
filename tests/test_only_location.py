@@ -252,3 +252,39 @@ async def test_a_single_office_question_takes_the_postings_office(store, tmp_pat
         assert out.get("readback") == "Raleigh", out
     finally:
         await ex.close(close_browser=True)
+
+
+MULTI_OFFICE_PAGE = """<!doctype html><html><body style="margin:20px"><form>
+<label for="of">Preferred Location *</label>
+<select id="of"><option value="">Select...</option><option>Jersey City</option><option>Tampa</option><option>Dallas</option>
+</select></form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_posting_with_several_offices_takes_his_ranking(store, tmp_path):
+    """DTCC (Oracle, 2026-10-25): its posting names Jersey City, Tampa and Dallas; the posting's first office (Jersey City) was
+    taken over his ranking's Dallas, and the judge failed it."""
+    from goat import db
+    answers.save_answer("availability.location_ranking", "All offered locations; Dallas; Houston; Austin; New York",
+                        answer_type="choice_chain", source="questionnaire")
+    page = tmp_path / "dtcc.html"
+    page.write_text(MULTI_OFFICE_PAGE, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        job = _job("DTCC", "L12")
+        with db.tx() as con:
+            con.execute("UPDATE listings SET locations=? WHERE id='L12'",
+                        ('["Jersey City, NJ, United States; Tampa, FL, United States; Dallas, TX, United States"]',))
+        job["locations"] = '["Jersey City, NJ, United States; Tampa, FL, United States; Dallas, TX, United States"]'
+        d, ctx = _dispatcher(job)
+        ctx.ex = ex
+        ctx.posting_text = "Infrastructure Engineer Intern\nLocations: Jersey City, NJ; Tampa, FL; Dallas, TX"
+        ctx.last_snapshot = snap = await snapshot.take(ex)
+        ref = next(i["ref"] for i in snap.items if i.get("tag") == "select")
+        out, _ = await d.t_choose(ref, "availability.location_ranking", [], "Preferred Location", "answer_key")
+        assert out.get("readback") == "Dallas", out
+    finally:
+        await ex.close(close_browser=True)

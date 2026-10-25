@@ -1743,6 +1743,12 @@ def other_state_answer():
     return a
 
 
+def posting_office_count(job: dict) -> int:
+    """How many offices the listing names ('Jersey City, NJ; Tampa, FL; Dallas, TX' is three)."""
+    from ..adapters import posting_locations
+    return sum(len([p for p in str(loc).split(";") if p.strip()]) for loc in posting_locations(job))
+
+
 def posting_city_state(job: dict, posting_text: str) -> tuple[str, str] | None:
     """The posting's first U.S. location as (city, full state name), from the listing or the posting text."""
     from ..adapters import posting_locations
@@ -3031,7 +3037,9 @@ class ToolDispatcher:
                 and not RANK_LABEL.search(label or ""):
             # one office on a single-choice list: the posting's own. 'Which IAT Office are you aiming to work from?' took Dallas
             # from his ranking after 'All offered locations', for a Raleigh internship, and the judge failed it (2026-10-24)
-            here = posting_city_state(self.ctx.job, self.ctx.posting_text)
+            # the posting's own office only when it names ONE: DTCC's Jersey City / Tampa / Dallas posting took Jersey City
+            # over his ranking's Dallas, and the judge failed it (2026-10-25)
+            here = posting_city_state(self.ctx.job, self.ctx.posting_text) if posting_office_count(self.ctx.job) <= 1 else None
             if here:
                 abbr = next((k for k, v in _US_STATES.items() if v == here[1] and len(k) == 2), "")
                 prefer = [here[0]] + ([f"{here[0]}, {abbr}"] if abbr else []) + [f"{here[0]}, {here[1]}"]
