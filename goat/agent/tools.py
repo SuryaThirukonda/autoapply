@@ -751,6 +751,13 @@ JS_DELETE_LANGUAGE_BLOCK = """(ref) => { const el = document.querySelector('[dat
 _OTHER_LANGUAGES = re.compile(r"\b(chinese|mandarin|spanish|french|german|hindi|japanese|korean|portuguese|dutch|arabic|italian|russian)\b", re.I)
 
 
+WHOLE_DATE = re.compile(r"\d{1,4}\s*[/.-]\s*\d{1,2}(\s*[/.-]\s*\d{1,4})?|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d", re.I)
+JS_IS_DATE_SECTION = r"""(ref) => {
+  const el = document.querySelector('[data-goat-ref="' + ref + '"]');
+  return !!el && /^dateSection(Month|Day|Year)-input$/.test(el.getAttribute('data-automation-id') || '');
+}"""
+
+
 APP_LIMIT = re.compile(r"(?:maximum(?: of)?|max\.?|up to|no more than|limit(?:ed)?(?: of| to)?(?: is)?)\s*(\d+)\s*"
                        r"(?:total\s*)?applications?\s*(?:with)?in\s*(?:a|any|the|a rolling)?\s*(?:last|past)?\s*(\d+)\s*"
                        r"(day|week|month|year)s?", re.I)
@@ -2155,6 +2162,25 @@ class ToolDispatcher:
         return ("this question counts public / state institutions (Texas A&M, where he holds a research role, is one): his "
                 f"{answer_key} answer covers federal government only. lookup_answer this question; it may need ask_user.")
 
+    async def _whole_date_into_section(self, f: dict) -> bool:
+        """A whole date bound for one section box of a Workday date (NJM, Parsons and Uline's disability-form date: the
+        model filled Month/Day/Year with fill_batch, the Month box took the whole date, and Workday kept 'Invalid Date:
+        10//' through every set_date after, 2026-10-23/25)."""
+        value = f.get("value")
+        if isinstance(value, str) and value.strip():
+            whole = bool(WHOLE_DATE.search(value))
+        else:
+            key = str(f.get("answer_key") or "")
+            a = answers.get(key) if key else None
+            whole = bool(a and (getattr(a, "answer_type", "") == "date" or key.endswith("_date")
+                                or WHOLE_DATE.search(str(getattr(a, "answer", "") or ""))))
+        if not whole:
+            return False
+        try:
+            return bool(await self.ctx.ex.eval(JS_IS_DATE_SECTION, str(f.get("ref") or "")))
+        except Exception:  # noqa: BLE001 - not a page we can ask: let the fill run as before
+            return False
+
     async def t_fill_batch(self, fields: list[dict]):
         plan, results = [], []
         snap = self.ctx.last_snapshot
@@ -2169,6 +2195,12 @@ class ToolDispatcher:
                                                                        f"{(item or {}).get('label') or ''}")
             if here and (f.get("source") or "").lower() != "clear":
                 results.append({"ref": f.get("ref"), "status": "failed", "error": here})
+                continue
+            if (f.get("source") or "").lower() != "clear" and await self._whole_date_into_section(f):
+                results.append({"ref": f.get("ref"), "status": "failed",
+                                "error": "this box is one section (Month, Day or Year) of a Workday date: set the whole date with "
+                                         "set_date on the date's Month box. A whole date typed into one section leaves Workday "
+                                         "holding 'Invalid Date: 10//', which no later entry clears."})
                 continue
             if f.get("answer_key") in POSITIVE_CLEARANCE_KEYS:
                 swapped = self._clearance_key_swap(f.get("ref", ""), f.get("answer_key"), str(f.get("label") or ""))
