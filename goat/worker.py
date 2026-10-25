@@ -375,6 +375,21 @@ def is_browser_failure(e: BaseException) -> bool:
     return browser_failure_text(f"{type(e).__name__}: {e}")
 
 
+NATIVE_CRASH = re.compile(r"access violation (writing|reading)|fatal python error|segmentation fault", re.I)
+
+
+def native_crash(reason: str) -> bool:
+    return bool(NATIVE_CRASH.search(reason or ""))
+
+
+def requeue_after_native_crash(job_id: int, why: str) -> None:
+    """The job a native crash interrupted goes back to the queue, its attempt given back."""
+    with db.tx() as con:
+        con.execute("UPDATE jobs SET status=?, hold_reason=NULL, attempts=MAX(attempts-1, 0), updated_at=? WHERE id=?",
+                    (states.QUEUED, db.now(), job_id))
+    db.event(job_id, "job:requeued", {"reason": "native_crash", "detail": why[:300]})
+
+
 def _browser_down(job_id: int, why: str) -> "RunOutcome":
     """Put a job that never reached the browser back in the queue, attempt not counted."""
     with db.tx() as con:
@@ -972,6 +987,14 @@ async def worker_loop(stop: asyncio.Event, idle_s: float = 20.0) -> None:
             set_status(int(job["id"]), states.HOLD, reason=f"error: {e}")
             out = RunOutcome(states.HOLD, str(e))
         log.info("worker: job %s -> %s (%s) in %.0fs", job["id"], out.status, out.reason[:120], time.monotonic() - t0)
+        if native_crash(out.reason):
+            # a native access violation leaves the process broken: the next job hung for 20 minutes until the loop's hang
+            # watchdog restarted it (2026-10-24 02:44, 2026-10-25 08:49 and 13:54). Put the job back and exit now; the agent
+            # loop starts a fresh process in seconds.
+            requeue_after_native_crash(int(job["id"]), out.reason)
+            log.error("worker: native crash (%s): exiting so the agent loop restarts goat", out.reason[:120])
+            import os
+            os._exit(70)
         if out.status == BROWSER_DOWN:
             CONTROL.browser_failures += 1
             wait_s = BROWSER_BACKOFF_S[min(CONTROL.browser_failures, len(BROWSER_BACKOFF_S)) - 1]
