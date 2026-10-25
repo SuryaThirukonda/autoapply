@@ -1188,8 +1188,16 @@ def internship_here(question: str, company: str) -> bool:
     return bool(org) and (org[0] == comp[0] or " ".join(org) in " ".join(comp))
 
 
+PUBLIC_INSTITUTION = re.compile(r"(public|state)[- ](funded |run )?(universit|college|institution|school)|"
+                                r"universit\w* (owned|funded|operated|run) by (a |the )?state", re.I)
+
+
 def is_affiliation_question(question: str, options: list[str] | None) -> bool:
     """A yes/no question in the employer/industry/affiliation family (options empty, or Yes/No-like)."""
+    if PUBLIC_INSTITUTION.search(question or "") and re.search(r"government|public entit|political", question or "", re.I):
+        # whether his Texas A&M research role counts as public / state employment is Surya's call: HP's 'employed by
+        # federal/state/local government or public institution' took the default No (2026-10-25)
+        return False
     if membership_default_no(question, options) and not NOT_AFFILIATION.search(question or ""):
         return True
     if not AFFILIATION.search(question or "") or NOT_AFFILIATION.search(question or ""):

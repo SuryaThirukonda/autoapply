@@ -357,3 +357,13 @@ async def test_an_event_dropdown_looked_up_without_its_options_still_ends_on_oth
     assert out["answer"].split(";")[0].strip() != "N/A" and out["answer"].rstrip().endswith("Other"), out
     out, _ = await d.t_lookup_answer("Please enter the name of the Career Event or University", [], ref="e135")
     assert out["answer"] == "N/A", out
+
+
+def test_public_institution_employment_is_never_a_default_no():
+    """HP (2026-10-25): 'Within the past 5 years, have you been employed by a federal, state or local government or public
+    institution?' took the default No, while whether his Texas A&M research role counts is Surya's call."""
+    from goat.agent.tools import is_affiliation_question
+    q = "Within the past 5 years, have you been employed by a federal, state or local government or public institution in any of the listed countries?"
+    assert not is_affiliation_question(q, ["Yes", "No"])
+    # a plain federal-government question keeps its default No path
+    assert is_affiliation_question("Are you a current or former employee of the U.S. Federal Government?", ["Yes", "No"])
