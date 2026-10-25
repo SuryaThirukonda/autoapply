@@ -53,3 +53,21 @@ async def test_an_answer_timeout_park_with_nothing_asked_is_refused(store):
     out, _ = await d.t_park("answer_timeout: required work-availability days and times question has no stored answer")
     assert out and "no question is waiting on Surya" in out["error"], out
     assert db.connect().execute("SELECT 1 FROM events WHERE kind='park:bounced' AND detail LIKE '%nothing asked%'").fetchone()
+
+
+@pytest.mark.asyncio
+async def test_a_question_left_from_an_earlier_attempt_does_not_back_an_answer_timeout_park(store):
+    """Penn State (2026-10-25): its SERS question was still unanswered from an earlier attempt, so a made-up answer_timeout
+    park after a Workday error page stood although nothing was asked in this attempt."""
+    job = _job()
+    with db.tx() as con:
+        con.execute("UPDATE jobs SET claimed_at=? WHERE id=?", (2_000, job["id"]))
+        con.execute("INSERT INTO pending_questions(job_id,key,question,asked_at,deadline_at) VALUES(?,?,?,?,?)",
+                    (job["id"], "q.sers", "Have you ever participated in SERS or PSERS?", 1_000, 1_900))
+    d, ctx = _dispatcher(job)
+
+    async def page_text(n=0):
+        return "Application Questions"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("answer_timeout: prior attempts were held for unanswered SERS/PSERS questions")
+    assert out and "no question is waiting on Surya" in out["error"], out

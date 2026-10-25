@@ -1168,6 +1168,29 @@ def membership_default_no(question: str, options: list[str] | None) -> bool:
 
 
 # 'Have you previously applied to <company> ... within the last 6 months?': settled from his application ledger
+# source 'computer' records a pick the model made with the computer tool; DTCC's run sent eighteen radios that way without
+# clicking any and read "not ticked" eighteen times (2026-10-25)
+NOT_PICKED_HINT = ("source 'computer' only records an option you already clicked with the computer tool. To have the harness "
+                   "tick it, call fill_batch with that option's ref, its answer_key and source null.")
+
+
+WHEN_APPLIED = re.compile(r"\bif (yes|so)\b.{0,20}\bwhen\b|\bwhen did you (apply|submit)|\bdate of (your )?(previous|prior|earlier) "
+                          r"application|\b(previous|prior|earlier) application.{0,20}\b(date|when)\b", re.I)
+
+
+def applied_when(company: str, listing_id: str | None = None) -> str:
+    """'October 2026': the month of his latest earlier application to this employer in the ledger, '' when none."""
+    import time as _t
+    key = ledger.company_key(company)
+    if not key:
+        return ""
+    rows = [r for r in db.connect().execute("SELECT company, listing_id, submitted_at FROM applications WHERE submitted_at IS NOT NULL")
+            if ledger.company_key(r["company"] or "") == key and not (listing_id and r["listing_id"] == listing_id)]
+    if not rows:
+        return ""
+    return _t.strftime("%B %Y", _t.localtime(max(int(r["submitted_at"]) for r in rows)))
+
+
 APPLIED_BEFORE = re.compile(r"\b(previously|ever|already|before)\b.{0,30}\bappl(y|ied)\b|\bappl(y|ied)\b.{0,80}\b(before|previously|"
                             r"in the (past|last)|within the (past|last))\b", re.I)
 
@@ -3146,10 +3169,10 @@ class ToolDispatcher:
             # a pill / toggle button (Oracle's <button role=radio aria-checked=false>) names its option whether or not it is
             # picked: UL Solutions' 'No' read back as kept while 'Yes' stayed selected, and the gate blocked it (2026-10-24)
             return {"ref": ref, "status": "failed", "error": "that option is not selected on the page (aria-checked / aria-pressed is "
-                                                             "false): click it once, then snapshot"}
+                                                             "false). " + NOT_PICKED_HINT}
         if typ in ("checkbox", "radio"):
             if info.get("value") != "checked":
-                return {"ref": ref, "status": "failed", "error": "that option is not ticked on the page"}
+                return {"ref": ref, "status": "failed", "error": "that option is not ticked on the page. " + NOT_PICKED_HINT}
             shown = str((item or {}).get("label") or info.get("label") or "")
         else:
             shown = str(info.get("value") or info.get("shown") or "")
@@ -4045,6 +4068,19 @@ class ToolDispatcher:
             a_lang = answers.get("experience.english_proficiency", self.ctx.job.get("company", ""), self.ctx.portal)
             if a_lang is not None and a_lang.has_value:
                 return self._present(a_lang, via="language_rating"), None
+        about_applying = bool(re.search(r"\bappl(y|ied|ication)", question or "", re.I)) or any(
+            APPLIED_BEFORE.search(f"{i.get('group') or ''} {i.get('label') or ''}") for i in snap_items)
+        if not options and about_applying and WHEN_APPLIED.search(question or ""):
+            # 'If yes, when?' after an applied-before Yes: the date his ledger holds for this employer (DTCC, 2026-10-25:
+            # the ledger had 2026-10-10 and the run asked Surya)
+            when = applied_when(self.ctx.job.get("company", ""), self.ctx.job.get("listing_id"))
+            if when:
+                k_w = f"q.applied_when.job{self.ctx.job_id}"
+                answers.save_answer(k_w, when, answer_type="text", source="derived",
+                                    note="the month of his earlier application to this employer, from the application ledger")
+                db.event(self.ctx.job_id, "answer:applied_when", {"question": question[:160], "answer": when})
+                return {"key": k_w, "answer": when, "confidence": 1.0, "via": "ledger",
+                        "note": "from the application ledger: his earlier application to this employer"}, None
         if options and START_SOON_QUESTION.search(question or ""):
             # 'how soon could you start?' in spans from today: the span his earliest start date falls in (HMH, 2026-10-24)
             pick = start_soon_pick(options)
@@ -5229,8 +5265,12 @@ class ToolDispatcher:
         # answer_timeout is the harness's hold after Surya leaves a question unanswered. SWBC's run (2026-10-23) parked it
         # itself with nothing asked, right after drafting and guardchecking its availability answer instead of filling it.
         if low.startswith("answer_timeout") and self.ctx.control_failures.get("park:answer_timeout", 0) < 2 \
-                and not db.connect().execute("SELECT 1 FROM pending_questions WHERE job_id=? AND answered_at IS NULL LIMIT 1",
-                                             (self.ctx.job_id,)).fetchone():
+                and not db.connect().execute(
+                    # asked in THIS attempt: Penn State's SERS question left unanswered from earlier attempts let a made-up
+                    # answer_timeout stand after a Workday error page (2026-10-25)
+                    "SELECT 1 FROM pending_questions WHERE job_id=? AND answered_at IS NULL"
+                    " AND asked_at >= COALESCE((SELECT claimed_at FROM jobs WHERE id=?), 0) LIMIT 1",
+                    (self.ctx.job_id, self.ctx.job_id)).fetchone():
             self.ctx.control_failures["park:answer_timeout"] = self.ctx.control_failures.get("park:answer_timeout", 0) + 1
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "answer_timeout": "nothing asked"})
             return {"error": "not parked: no question is waiting on Surya (answer_timeout is the harness's own hold when he leaves "
