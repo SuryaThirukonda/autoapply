@@ -404,4 +404,4 @@ def test_the_judge_counts_retained_by_the_government_under_the_default_no():
     """GDIT (2026-10-24): 'Have you ever been retained by the U.S. Government to provide assistance on any Particular Matter
     relating to GDIT?' = No was failed as unsupported."""
     from goat import judge
-    assert "retained by the U.S. Government on a matter relating to it" in judge.JUDGE_INSTRUCTIONS
+    assert "retained by the U.S. Government on a matter relating to it" in judge.FACT_CHECK_INSTRUCTIONS
