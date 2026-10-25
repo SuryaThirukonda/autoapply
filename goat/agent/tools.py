@@ -3039,6 +3039,14 @@ class ToolDispatcher:
                 stored_wants = prefer + [w for w in stored_wants if w not in prefer]
                 db.event(self.ctx.job_id, "choose:posting_office", {"ref": ref, "office": prefer[0]})
         model_opts = [o for o in (options or []) if o]
+        if answer_key and answer_key.startswith("compensation.") and stored_wants:
+            # a band the model read off the list that holds his figure goes first: BNY's Oracle 'Total compensation
+            # expectations' list took '41600' as a search, matched no band, and the box kept the typed text (2026-10-25)
+            # BNY's bands carry no '$' ('40,001 - 50,000'): under a compensation key a bare range is dollars
+            bands = [o for o in model_opts if fill.money_band_holds(o if "$" in o else "$" + o, [stored_wants[0]])]
+            if bands:
+                wants = bands + [w for w in wants if w not in bands]
+                stored_wants = bands + [w for w in stored_wants if w not in bands]
         his_wants = [w for w in wants if w not in model_opts or w in stored_wants]
         if answer_key and not stored_wants:
             # An empty stored answer settles nothing: Epic Games' Unreal Engine question got "Yes" from the model's own
@@ -5580,6 +5588,16 @@ class ToolDispatcher:
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "no requirement named"})
             return {"error": "not parked: an eligibility hold must quote the posting's requirement he does not meet, and this "
                              "reason names none. If nothing in the posting rules him out, continue the application."}, None
+        # A résumé to swap is the run's own work, not Surya's: DTCC's run held 'needs_you' over an earlier application's
+        # résumé sitting in the Supporting Documents box, twice, with the steps in its own reason (2026-10-25)
+        if low.startswith(("needs_you", "no_standing_answer", "portal_error")) and re.search(r"r[eé]sum[eé]", reason, re.I) \
+                and re.search(r"attach|upload|remove|slot", reason, re.I) and self.ctx.control_failures.get("park:resume_swap", 0) < 2:
+            self.ctx.control_failures["park:resume_swap"] = self.ctx.control_failures.get("park:resume_swap", 0) + 1
+            db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "resume": "the run swaps it"})
+            return {"error": "not parked: attaching his résumé is your job, not Surya's. Go to the section that holds the "
+                             "résumé box (Oracle: Supporting Documents, an earlier section: use its Back / section link), press "
+                             "REMOVE RESUME on any other résumé file listed there, then call upload_resume on the Resume/CV "
+                             "input that appears, and continue to submit."}, None
         # An eligibility hold that ends in a question names no requirement he fails: McKesson was held 'role is Colorado-based
         # 10-week summer internship, but seasonal dates not independently requirement?' and Booz Allen '... experience?'
         # (2026-10-25). One bounce; a hold restated as a plain requirement stands.

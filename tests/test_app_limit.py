@@ -66,3 +66,17 @@ async def test_an_unsure_eligibility_hold_is_bounced_once(store):
     assert "unsure" in out["error"]
     with pytest.raises(Parked):
         await d.t_park(reason)
+
+
+@pytest.mark.asyncio
+async def test_a_resume_swap_park_is_bounced_with_the_steps(store):
+    """DTCC (2026-10-25): 'needs_you: ... return there, remove the existing résumé if needed, and attach
+    Surya_Thirukonda_Resume_SWE.pdf before continuing' was the run's own work."""
+    d, ctx = _dispatcher(_job("DTCC", "R1"))
+
+    async def page_text(n=0):
+        return "E-Signature SUBMIT"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("needs_you: Oracle shows a résumé filename, but its upload helper says this is not the Resume/CV "
+                            "slot. Return to the earlier step, remove the existing résumé, and attach the SWE résumé.")
+    assert "REMOVE RESUME" in out["error"] and "upload_resume" in out["error"], out

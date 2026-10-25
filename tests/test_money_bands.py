@@ -45,3 +45,9 @@ async def test_a_salary_radio_whose_band_holds_his_figure_is_ticked(store, monke
     assert ticked == ["e4"], out
     out, _ = await d.t_fill_batch([{"ref": "e5", "answer_key": "compensation.desired_annual", "value": None, "source": None, "label": g}])
     assert "e5" not in ticked, out
+
+
+def test_a_bare_pay_range_is_dollars():
+    """BNY (Oracle, 2026-10-25): its bands read '40,001 - 50,000' with no '$'."""
+    assert fill.money_band_holds("40,001 - 50,000", ["41600"])
+    assert not fill.money_band_holds("50,001 - 60,000", ["41600"])
