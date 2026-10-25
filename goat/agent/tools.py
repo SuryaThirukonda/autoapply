@@ -2594,6 +2594,11 @@ class ToolDispatcher:
                     # the chain's first answer
                     val = "true"
                     label_matched = True
+                elif str(f.get("answer_key") or "").startswith("compensation.") and fill.money_band_holds(item.get("label") or "", [str(val)]):
+                    # a pay band that holds his figure ('$0 to $50,000.00' for 41600): DTCC's salary-range radios were
+                    # refused as no match and the run held (2026-10-25)
+                    val = "true"
+                    label_matched = True
                 else:
                     results.append({"ref": f["ref"], "status": "failed",
                                     "error": f"stored answer {str(val)[:40]!r} does not match this option's label {item.get('label', '')[:40]!r}; pick the option whose label matches, or leave it"})

@@ -787,7 +787,9 @@ def decline_option(options: list[dict], wants: list[str]) -> dict | None:
 
 # A pay answer (his stored 41600 a year) against dollar ranges: the narrowest range that holds it ("$40,000-$60,000"
 # on CACI's form, 2026-10-20); an hourly list (bounds under $1,000) is read against $20 an hour.
-_MONEY_NUM = r"\$?\s*(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*([kK]\b)?"
+# a whole number only: never the tail of one ("1.00" inside "$50,001.00" made DTCC's $50,001-$75,000 band read $1-$75,000,
+# and his $41,600 fit every band below $100,000, 2026-10-25); comma-grouped amounts keep their cents
+_MONEY_NUM = r"\$?\s*(?<![\d,.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d,])\s*([kK]\b)?"
 
 
 def _money_value(num: str, k: str | None) -> float:
@@ -806,7 +808,7 @@ def _money_bucket(text: str) -> tuple[float, float] | None:
     m = re.search(r"(?:up to|less than|under|below|<)\s*" + _MONEY_NUM, t, re.I)
     if m:
         return (0.0, _money_value(m.group(1), m.group(2)))
-    m = re.search(_MONEY_NUM + r"\s*(?:\+|or (?:more|above|higher)|and (?:above|up))", t, re.I)
+    m = re.search(_MONEY_NUM + r"\s*(?:\+|plus\b|or (?:more|above|higher)|and (?:above|up))", t, re.I)
     if m:
         return (_money_value(m.group(1), m.group(2)), float("inf"))
     m = re.search(r"(?:more than|over|above|greater than|>)\s*" + _MONEY_NUM, t, re.I)
