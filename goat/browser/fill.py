@@ -312,7 +312,9 @@ async def fill_batch_js(ex: Executor, fields: list[dict]) -> list[FieldResult]:
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+    # 'C++' and 'C#' are no 'C': Western Digital's language list took 'C' for his 'C++' (2026-10-25)
+    t = (s or "").lower().replace("c++", " cplusplus ").replace("c#", " csharp ").replace("f#", " fsharp ")
+    return re.sub(r"[^a-z0-9]+", " ", t).strip()
 
 
 AFFIRM_OPT = re.compile(r"^(yes\b|i (agree|consent|accept|authori[sz]e|acknowledge|understand|certify|confirm)\b|agree\b|accept\b|"
