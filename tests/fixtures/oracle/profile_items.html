@@ -13,6 +13,8 @@
      BNY's education form: Degree as single-select pills (role=radio buttons, no input), the school in an 'Educator'
      text box, no Graduated box (setup: degreePills, schoolName 'educator', noGraduated). Berkshire Hathaway Energy's
      forms require Employer Country on work entries and Country / City on the degree (setup: requireCountry).
+     Texas Instruments' forms require 'OK to Contact Supervisor' (No / Yes pills) and 'Reason for Leaving' on each work
+     entry and an 'Education Level' picker on the degree (setup: tiRequired).
      Save checks the required fields and keeps the form open with 'input-row--invalid' rows when one is missing. Delete
      acts at once. window.setup(state) renders a state; window.state() returns the saved entries. -->
 <html><head><meta charset="utf-8"><title>Intern - Data Science - Careers</title>
@@ -40,6 +42,7 @@ const YEARS = Array.from({ length: 45 }, (_, i) => String(2035 - i));
 const DEGREES = ['Associates', 'Bachelors', 'Doctorate', 'GED', 'High_Diploma', 'Juris_Doctorate', 'Masters', 'Other'];
 const SCHOOLS = ['Texas A&M University', 'Texas A&M University - Commerce', 'Texas A&M University - Kingsville', 'Texas Tech University', 'Other'];
 const COUNTRIES = ['Canada', 'Mexico', 'United Kingdom', 'United States'];
+const EDU_LEVELS = ['High School', "Associate's Degree", "Bachelor's Degree", "Master's Degree", 'Doctorate'];
 // BNY's Degree: single-select pills, no input
 const DEGREE_PILLS = ["Associate's Degree/College Diploma", "Bachelor's Degree", 'Doctorate Degree', 'High School Diploma/GED', 'Higher Degree',
                       "Master's Degree", 'Non-Degree Program', 'None', 'Other', 'Technical Diploma'];
@@ -159,12 +162,14 @@ function readForm() {
     const ended = !(r.current && r.current.input.checked);
     d.em = ended ? p(r.end.month) : ''; d.ey = ended ? p(r.end.year) : '';
     if (r.business) d.business = r.business.input.value.trim();
+    if (r.contact) { d.contact = r.contact.value(); d.leaving = r.leaving.input.value.trim(); }
   } else {
     const picker = r.school.input.getAttribute('role') === 'combobox';
     Object.assign(d, { major: r.major.input.value.trim(), school: picker ? p(r.school.input) : r.school.input.value.trim(), sm: p(r.start.month),
       sy: p(r.start.year), em: p(r.end.month), ey: p(r.end.year), graduated: r.graduated ? r.graduated.input.checked : d.graduated,
       country: p(r.ecountry.input), city: r.ecity.input.value.trim() });
     if (r.degree) d.degree = r.degree.value ? r.degree.value() : p(r.degree.input);
+    if (r.level) d.level = p(r.level.input);
   }
 }
 function save() {
@@ -175,11 +180,14 @@ function save() {
     if (!d.title) errs.title = 1;
     if (S.extraRequired && !d.business) errs.business = 1;
     if (S.requireCountry && !d.country) errs.country = 1;
+    if (S.tiRequired && !d.contact) errs.contact = 1;
+    if (S.tiRequired && !d.leaving) errs.leaving = 1;
   } else {
     if (S.degreeField && !d.degree) errs.degree = 1;
     if (!d.school) errs.school = 1;
     if (S.requireCountry && !d.country) errs.ecountry = 1;
     if (S.requireCountry && !d.city) errs.ecity = 1;
+    if (S.tiRequired && !d.level) errs.level = 1;
   }
   if (Object.keys(errs).length) { F.errors = errs; F.nodes = null; render(); return; }
   const list = F.kind === 'work' ? S.work : S.education;
@@ -208,6 +216,11 @@ function formNodes(footerCls) {
     rows.desc = textRow('responsibilities', 'Responsibilities', d.desc, { area: true });
     kids.push(rows.country.el, rows.city.el, rows.desc.el);
     if (S.extraRequired) { rows.business = textRow('businessType', 'Type of Business', d.business, { required: true, invalid: e.business }); kids.push(rows.business.el); }
+    if (S.tiRequired) {
+      rows.contact = pillsRow('OK to Contact Supervisor', ['No', 'Yes'], d.contact);
+      rows.leaving = textRow('reasonForLeaving', 'Reason for Leaving', d.leaving, { area: true, required: true, invalid: e.leaving });
+      kids.push(rows.contact.el, rows.leaving.el);
+    }
   } else {
     if (S.degreeField) {
       rows.degree = S.degreePills ? pillsRow('Degree', DEGREE_PILLS, d.degree) : pickRow('contentItemId', 'Degree', DEGREES, d.degree, { required: true, invalid: e.degree });
@@ -223,6 +236,7 @@ function formNodes(footerCls) {
     rows.ecountry = pickRow('countryCode', 'Country', COUNTRIES, d.country, { required: S.requireCountry, invalid: e.ecountry });
     rows.ecity = textRow('city', 'City', d.city, { required: S.requireCountry, invalid: e.ecity });
     kids.push(rows.major.el, rows.school.el, rows.start.el, rows.end.el, rows.ecountry.el, rows.ecity.el);
+    if (S.tiRequired) { rows.level = pickRow('educationLevel', 'Education Level', EDU_LEVELS, d.level, { required: true, invalid: e.level }); kids.push(rows.level.el); }
     if (!S.noGraduated) { rows.graduated = checkRow('graduatedFlag', 'Graduated', d.graduated); kids.push(rows.graduated.el); }
   }
   F.rows = rows;

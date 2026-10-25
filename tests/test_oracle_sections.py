@@ -358,3 +358,45 @@ async def test_an_upload_into_step_ones_hidden_import_box_is_refused(stored, att
         assert await ex.page.evaluate("() => document.querySelector('[data-goat-ref=e3]').files.length") == 0
     finally:
         await ex.close()
+
+
+TI_ANSWERS = {"background.contact_previous_employers": "Yes",
+              "background.reason_for_leaving": "Internship ended; Internship completed; Contract completed; End of contract; Program ended",
+              "background.reason_for_leaving_current": "NA; N/A; Currently employed; Still employed; Current role",
+              "background.reason_for_leaving_dekalb": "Internship ended",
+              "background.reason_for_leaving_mai_shan_yun": "Contract completed"}
+
+
+def test_each_entry_gets_its_own_reason_for_leaving():
+    keys = ["background.reason_for_leaving_current", "background.reason_for_leaving_dekalb", "background.reason_for_leaving_mai_shan_yun"]
+    get = lambda k: TI_ANSWERS.get(k, "")
+    by = {e["company"]: osec.leaving_reason(e, get, keys)[0] for e in ENTRIES}
+    assert by == {"Revio": "Currently employed", "DeKalb Capital Management": "Internship ended",
+                  "Mai Shan Yun (WaiterDock)": "Contract completed",
+                  "Rathinam Group, Texas A&M Department of Mechanical Engineering": "Currently employed",
+                  "Southwest Airlines": "Program ended"}
+
+
+@pytest.mark.asyncio
+async def test_contact_supervisor_reason_for_leaving_and_education_level_are_filled(stored, monkeypatch):
+    """Texas Instruments (2026-10-25): Save refused every work entry over 'OK to Contact Supervisor' and 'Reason for
+    Leaving', and his degree over 'Education Level'; the run held as needs_you."""
+    answers_map = {**EDU, **TI_ANSWERS}
+    monkeypatch.setattr(osec.OracleSections, "_answer", lambda self, key: answers_map.get(key, ""))
+    monkeypatch.setattr(osec.OracleSections, "_leaving_keys", lambda self: [k for k in TI_ANSWERS if k.startswith("background.reason_for_leaving_")])
+    ex = await _open(dict(GM, layout="timeline", tiRequired=True, currentFlag=True))
+    try:
+        rep = await _filler(ex).run()
+        assert rep.failed == [], rep.failed
+        st = await _state(ex)
+        by = _work_by_employer(st)
+        assert {k: (w["contact"], w["leaving"]) for k, w in by.items()} == {
+            "Revio": ("Yes", "Currently employed"), "DeKalb Capital Management": ("Yes", "Internship ended"),
+            "Mai Shan Yun (WaiterDock)": ("Yes", "Contract completed"),
+            "Rathinam Group, Texas A&M Department of Mechanical Engineering": ("Yes", "Currently employed"),
+            "Southwest Airlines": ("Yes", "Program ended")}
+        assert [d["level"] for d in st["education"]] == ["Bachelor's Degree"]
+        srcs = {r["source"] for r in records.decisions(1)}
+        assert "standing:background.contact_previous_employers" in srcs and "standing:background.reason_for_leaving_dekalb" in srcs
+    finally:
+        await ex.close()

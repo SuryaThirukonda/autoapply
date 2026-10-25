@@ -279,6 +279,32 @@ def first_equal(options: list[str], wants: list[str]) -> str | None:
     return None
 
 
+def leaving_reason(ent: dict, answer, keys: list[str]) -> tuple[str, str]:
+    """(reason for leaving, the stored key it comes from) for one of his work entries: a current role takes the
+    current-role wording, a role with its own stored reason (background.reason_for_leaving_dekalb) takes that, any other
+    ended role his general reason ('Program ended' for a challenge or program)."""
+    def parts(key: str) -> list[str]:
+        return [p.strip() for p in (answer(key) or "").split(";") if p.strip()]
+    if str(ent.get("current")).lower() == "true" or not ent.get("end"):
+        cur = parts("background.reason_for_leaving_current")
+        return next((p for p in cur if re.search(r"current|still", p, re.I)), cur[0] if cur else ""), \
+            "background.reason_for_leaving_current"
+    comp = _norm(ent.get("company")).split()
+    for key in keys:
+        words = key[len("background.reason_for_leaving_"):].split("_")
+        if key.endswith("_current") or not words or not all(w in comp for w in words):
+            continue
+        got = parts(key)
+        if got:
+            return got[0], key
+    general = parts("background.reason_for_leaving")
+    if re.search(r"challenge|competition|program|club", f"{ent.get('title', '')} {ent.get('company', '')}", re.I):
+        hit = next((p for p in general if re.search(r"program", p, re.I)), "")
+        if hit:
+            return hit, "background.reason_for_leaving"
+    return (general[0] if general else ""), "background.reason_for_leaving"
+
+
 def city_of(location: str) -> str:
     """'College Station, TX' -> 'College Station'; 'Remote' -> ''."""
     loc = (location or "").strip()
@@ -689,6 +715,11 @@ class OracleSections:
             done.append(("Graduated", "No", "graduation"))
         return True, "", done
 
+    def _leaving_keys(self) -> list[str]:
+        from .. import db
+        return [r[0] for r in db.connect().execute(
+            "SELECT DISTINCT key FROM answers WHERE key LIKE 'background.reason_for_leaving_%' AND superseded_by IS NULL")]
+
     def _place(self, kind: str, ent: dict | None) -> tuple[str, str, str, str]:
         """(city, state, country, stored key) for a work entry (its location; a remote role is in his own country) or for
         his school (education.city / .state / .country, else the location of his stored role at that school: 'Rathinam
@@ -714,10 +745,40 @@ class OracleSections:
         over Employer Country on a work entry and Country / City on his degree; the model then edited the degree by hand
         and left its start year blank): his entry's own place."""
         city, state, country, key = self._place(kind, ent)
-        fl = (await self.form()).get("fields") or {}
+        st = await self.form()
+        fl = st.get("fields") or {}
         done: list[tuple[str, str, str]] = []
+        what = "experience" if kind == "work" else "education"
+        # Texas Instruments (2026-10-25): Save refused every work entry over 'OK to Contact Supervisor' (No / Yes pills) and
+        # 'Reason for Leaving', and his degree over 'Education Level'; the run held as needs_you
+        if kind == "work":
+            want = self._answer("background.contact_previous_employers").split(";")[0].strip()
+            for label, pills in (st.get("pills") or {}).items():
+                if not want or not re.search(r"contact.{0,30}(supervisor|employer|manager|reference)|may we contact", label, re.I) \
+                        or any(p.get("checked") for p in pills):
+                    continue
+                pill = next((p for p in pills if _norm(p["text"]) == _norm(want)), None)
+                if pill is None:
+                    continue
+                self.dirty = True
+                await self._click(self.page.locator(f'[data-goat-ref="{pill["ref"]}"]'))
+                records.record_decision(self.job["id"], self.page_no, f"{what}: {label}", pill["text"],
+                                        "standing:background.contact_previous_employers", pill["ref"])
         for name, f in fl.items():
             if f.get("value") or f.get("type") == "checkbox" or not f.get("vis") or not (f.get("required") or f.get("invalid")):
+                continue
+            named = f"{name} {f.get('label') or ''}"
+            if kind == "work" and re.search(r"reason.?for.?leaving|leaving.?reason", named, re.I):
+                reason, rkey = leaving_reason(ent or {}, self._answer, self._leaving_keys())
+                if reason and await self._set_text(f, reason):
+                    records.record_decision(self.job["id"], self.page_no, f"{what}: {f.get('label') or name}", reason,
+                                            f"standing:{rkey}", f.get("ref", ""))
+                continue
+            if kind != "work" and f.get("combo") and re.search(r"education.?level|level.?of.?education|degree.?level", named, re.I):
+                degree = self._answer("education.degree")
+                got = await self._pick(f, [degree], search="Bach", chooser=lambda opts: degree_option(opts, degree)) if degree else ""
+                if got:
+                    done.append((f.get("label") or name, got, "degree"))
                 continue
             if re.fullmatch(r"(employer)?country(code)?", name, re.I):
                 want, wants = country, [country, "United States", "United States of America", "USA"]
