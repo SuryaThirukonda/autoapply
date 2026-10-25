@@ -3805,9 +3805,12 @@ class ToolDispatcher:
                             "note": "the résumé is already attached under Supporting Documents (an earlier step of this form): "
                                     "never upload into the 'Import your profile' box, it rewrites Work History wrongly"}, None
                 if slot.get("otherSlot"):
+                    # DTCC (2026-10-25): an earlier application's résumé sat in that box, so no résumé input showed there,
+                    # and the run held over 'only the import box is exposed'
                     return {"error": "this is Oracle's 'Import your profile' box: it parses the résumé into broken Work and "
                                      "Education History entries. Upload into the résumé box under Supporting Documents instead "
-                                     "(go back to its step if it is behind you)."}, None
+                                     "(go back to its step if it is behind you). If that box already lists another résumé file, "
+                                     "press its REMOVE RESUME button first: the résumé input appears once it is removed."}, None
                 if not slot.get("visible"):
                     return {"error": "that 'Import your profile' box is on another step of the form: never upload into it from "
                                      "here"}, None

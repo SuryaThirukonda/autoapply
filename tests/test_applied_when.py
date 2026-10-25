@@ -62,3 +62,11 @@ async def test_when_did_you_previously_apply_takes_the_ledger_month(store):
     ctx.last_snapshot = _snap(["Have you ever applied here before?"])
     out, _ = await d.t_lookup_answer("When did you previously apply to DTCC (month)?", [], None, None)
     assert out.get("answer") == "October 2026", out
+
+
+def test_the_import_box_refusal_says_to_remove_another_resume_first():
+    """DTCC (2026-10-25): an earlier application's résumé sat in the Supporting Documents box, no résumé input showed, and
+    the run held over 'only the import box is exposed'."""
+    import inspect
+    from goat.agent import tools
+    assert "press its REMOVE RESUME button first" in inspect.getsource(tools.ToolDispatcher.t_upload_resume)
