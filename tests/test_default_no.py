@@ -374,3 +374,10 @@ def test_an_earlier_rescinded_offer_from_the_employer_is_a_default_no():
     from goat.agent.tools import default_no_choice, is_affiliation_question
     q = "Have you previously been offered employment by DTCC that was subsequently rescinded?"
     assert is_affiliation_question(q, ["Yes", "No"]) and default_no_choice(q, ["Yes", "No"]) == "No"
+
+
+def test_an_earlier_interview_with_the_employer_is_a_default_no():
+    """LPL (2026-10-25): 'Have you previously interviewed at LPL?' was held as no_standing_answer."""
+    from goat.agent.tools import default_no_choice, is_affiliation_question
+    q = "Have you previously interviewed at LPL?"
+    assert is_affiliation_question(q, ["Yes", "No"]) and default_no_choice(q, ["Yes", "No"]) == "No"

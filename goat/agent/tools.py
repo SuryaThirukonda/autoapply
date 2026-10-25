@@ -413,6 +413,8 @@ AFFILIATION = re.compile(
     r"\b(been|worked as|served as) an? (contractor|consultant|subcontractor|vendor)s? (for|at|with|to)\b|"
     # 'Have you previously been offered employment by DTCC that was subsequently rescinded?' (2026-10-25)
     r"\b(previously|ever|formerly) (been )?(offered|extended an offer of) (employment|a job|a position|an? (internship|offer))\b|"
+    # 'Have you previously interviewed at LPL?' (2026-10-25)
+    r"\b(previously|ever|already) (been )?interview(ed)? (with|at|for)\b|"
     # 'related to' only about a person: TIAA's "information related to your political contributions" took the default No
     r"\b(are|is|be) (you|anyone|any(one)? \w+) related to\b|\brelated to (anyone|someone|an? (current |former )?(employee|officer|director|board member|member|person|individual))|"
     r"household member|immediate family|\bspouse\b|board member|\bofficers?\b|\bdirectors?\b|government official|public official|"
@@ -1182,7 +1184,7 @@ NOT_PICKED_HINT = ("source 'computer' only records an option you already clicked
 ACK_SENTENCE = re.compile(r"\b(i|you) (do not|don't|did not) (understand|acknowledge)\b|\bi have questions\b", re.I)
 
 
-WHEN_APPLIED = re.compile(r"\bif (yes|so)\b.{0,20}\bwhen\b|\bwhen did you (apply|submit)|\bdate of (your )?(previous|prior|earlier) "
+WHEN_APPLIED = re.compile(r"\bif (yes|so)\b.{0,20}\bwhen\b|\bwhen did you (\w+ )?(apply|submit)|\bdate of (your )?(previous|prior|earlier) "
                           r"application|\b(previous|prior|earlier) application.{0,20}\b(date|when)\b", re.I)
 
 

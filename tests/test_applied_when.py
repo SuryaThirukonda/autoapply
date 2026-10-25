@@ -51,3 +51,14 @@ def test_the_not_ticked_message_says_how_to_have_the_harness_tick_it():
     """DTCC (2026-10-25): eighteen radios sent with source 'computer' and never clicked, each read back 'not ticked'."""
     from goat.agent.tools import NOT_PICKED_HINT
     assert "source null" in NOT_PICKED_HINT and "fill_batch" in NOT_PICKED_HINT
+
+
+@pytest.mark.asyncio
+async def test_when_did_you_previously_apply_takes_the_ledger_month(store):
+    """DTCC (2026-10-25): 'When did you previously apply to DTCC (month)?' went to Surya."""
+    ledger.record_application(None, "DTCC", "Application Developer Intern", "https://dtcc.example/1", "hermes:tracker",
+                              submitted_at=OCT_10)
+    d, ctx = _dispatcher(_job("DTCC", "D3"))
+    ctx.last_snapshot = _snap(["Have you ever applied here before?"])
+    out, _ = await d.t_lookup_answer("When did you previously apply to DTCC (month)?", [], None, None)
+    assert out.get("answer") == "October 2026", out
