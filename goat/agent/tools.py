@@ -3178,7 +3178,13 @@ class ToolDispatcher:
             shown = str((item or {}).get("label") or info.get("label") or "")
         else:
             shown = str(info.get("value") or info.get("shown") or "")
-        wants = [w.strip() for w in str(a.answer).split(";") if w.strip()]
+        stored = str(a.answer)
+        if getattr(a, "is_conditional", False):
+            # 'Yes / No' resolved for this job: DTCC's 'Have you ever applied here before? Yes' (from his ledger) was refused
+            # against the raw conditional, and its 'If yes, when?' box with it (2026-10-25)
+            val_c, _why = answers.concrete_value(a, company=self.ctx.job.get("company", ""), listing_id=self.ctx.job.get("listing_id"))
+            stored = str(val_c or stored)
+        wants = [w.strip() for w in stored.split(";") if w.strip()]
         variants = answers.get(key + "_variants", self.ctx.job.get("company", ""), self.ctx.portal)
         if variants and variants.has_value:
             wants += [w.strip() for w in str(variants.answer).split(";") if w.strip()]
@@ -3190,7 +3196,7 @@ class ToolDispatcher:
         if not ok and typ in ("checkbox", "radio"):
             # an option that words his Yes / No in its own terms (Eightfold's profile-use consent)
             kp = key_option_polarity(key, shown)
-            want = answer_polarity(str(a.answer))
+            want = answer_polarity(stored)
             if key == "consent.keep_profile_future_roles" and TALENT_BUNDLE.search(shown) \
                     and not talent_community_allowed(self.ctx.job.get("company", ""), self.ctx.portal):
                 want = "no"
