@@ -2661,3 +2661,13 @@ async def test_english_rating_questions_in_full_sentences_are_never_asked(store)
     out, _ = await d.t_ask_user([{"question": "What is your English proficiency level for Comprehension?", "options": [],
                                   "field_type": "dropdown"}])
     assert out.get("asked") == [] and out["auto_answered"][0]["key"] == "experience.english_proficiency", out
+
+
+@pytest.mark.asyncio
+async def test_a_free_text_salary_requirement_takes_his_stated_pay(store):
+    """DFW (2026-10-24): 'Please indicate your minimum salary requirement for this position.' (a text box) missed in the
+    resolver and went to Surya."""
+    answers.save_answer("compensation.negotiable_text", "$20/hr", answer_type="text", source="questionnaire")
+    d, _ = _dispatcher(_job("Dallas Fort Worth International Airport (DFW)", "L16"))
+    out, _ = await d.t_lookup_answer("Please indicate your minimum salary requirement for this position.", [])
+    assert out.get("key") == "compensation.negotiable_text" and out.get("answer") == "$20/hr", out

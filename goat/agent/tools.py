@@ -3965,6 +3965,16 @@ class ToolDispatcher:
                                    f"{pick['text']!r} (choose with answer_key compensation.desired_annual picks it)")
                     db.event(self.ctx.job_id, "answer:salary_rule", {"question": question[:160], "pick": pick["text"]})
                     return out, None
+        if SALARY_QUESTION.search(question or "") and not options:
+            # a free-text pay box ('Please indicate your minimum salary requirement for this position.', DFW 2026-10-24: the
+            # resolver missed it and the run asked Surya): his stated pay; fill_batch turns it yearly where a salary box keeps
+            # only digits
+            a_txt = answers.get("compensation.negotiable_text", self.ctx.job.get("company", ""), self.ctx.portal)
+            if a_txt is not None and a_txt.has_value:
+                out = self._present(a_txt, via="salary_rule")
+                out["note"] = "his desired pay ($20 an hour, $41,600 a year): type it in this box with answer_key compensation.negotiable_text"
+                db.event(self.ctx.job_id, "answer:salary_rule", {"question": question[:160], "pick": str(a_txt.answer)[:40]})
+                return out, None
         if OTHER_SOURCE_QUESTION.search(question or ""):
             neg = default_no_choice(question, options) or "No"
             k_src = answers.key_from_question(question)
