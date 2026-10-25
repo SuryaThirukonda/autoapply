@@ -50,6 +50,29 @@ async def is_healthy() -> bool:
     return (await cdp_version()) is not None
 
 
+async def page_answers(ws_url: str, timeout: float = 4.0) -> bool:
+    """The tab runs a one-line script through its own DevTools endpoint. Only a timeout counts as hung; a refused or
+    closed connection says nothing about the page."""
+    import json
+
+    import websockets
+
+    try:
+        async with websockets.connect(ws_url, open_timeout=timeout, max_size=None) as ws:
+            await ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate", "params": {"expression": "1", "returnByValue": True}}))
+
+            async def reply() -> None:
+                while True:
+                    if json.loads(await ws.recv()).get("id") == 1:
+                        return
+            await asyncio.wait_for(reply(), timeout)
+        return True
+    except asyncio.TimeoutError:
+        return False
+    except Exception:  # noqa: BLE001
+        return True
+
+
 async def close_unresponsive_tabs(cdp_url: str | None = None, timeout: float = 4.0) -> list[dict]:
     """Close the tabs whose page no longer answers a DevTools call; return them ({id, url}).
 
@@ -96,6 +119,17 @@ async def close_unresponsive_tabs(cdp_url: str | None = None, timeout: float = 4
                 await call("Target.detachFromTarget", {"sessionId": session})
             except Exception:  # noqa: BLE001 - a hung page may not answer the detach either
                 pass
+    # A tab can answer through the browser's flattened session and still not through its own endpoint, which Playwright
+    # attaches by: CoStar's held Workday tab passed the check above while every connect_over_cdp timed out (2026-10-25)
+    flagged = {t["id"] for t in hung}
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            listed = (await c.get(f"{base}/json/list")).json()
+    except Exception:  # noqa: BLE001 - the first pass stands alone
+        listed = []
+    rest = [t for t in listed if t.get("type") == "page" and t.get("id") not in flagged and t.get("webSocketDebuggerUrl")]
+    answers = await asyncio.gather(*(page_answers(t["webSocketDebuggerUrl"], timeout) for t in rest))
+    hung += [{"id": t["id"], "url": t.get("url", "")} for t, ok in zip(rest, answers) if not ok]
     if not hung:
         return []
     async with httpx.AsyncClient(timeout=10) as c:
