@@ -2606,6 +2606,10 @@ def test_an_eligibility_reason_that_says_it_is_satisfied_is_no_hold():
     from goat.agent.tools import SELF_SATISFIED
     assert SELF_SATISFIED.search("requires U.S. person status; Surya is a U.S. citizen, so this is satisfied. Need inspect")
     assert not SELF_SATISFIED.search("The role requires pursuing a graduate degree, which Surya is not pursuing.")
+    # LPL (2026-10-25)
+    assert SELF_SATISFIED.search("internship is scheduled June 1 to August 6, 2027 (10 weeks), but Surya's stored availability "
+                                 "starts May 18 and ends August 14, so this is within his availability.")
+    assert not SELF_SATISFIED.search("the internship runs into September, which is not within his availability")
     # Westinghouse (2026-10-23)
     assert SELF_SATISFIED.search("This is a software role requiring C# or C++ coursework/project experience, and C++ is present, "
                                  "so eligible; wait can't park?")

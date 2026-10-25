@@ -912,6 +912,8 @@ SELF_SATISFIED = re.compile(r"\b(this|that|it|the requirement|requirement) (is|w
                             # Westinghouse (2026-10-23): "requiring C# or C++ coursework/project experience, and C++ is present,
                             # so eligible; wait can't park?" stood as an eligibility hold
                             r"\bso (he is |surya is |he's |he remains )?(eligible|qualified)\b|"
+                            # LPL (2026-10-25): "... starts May 18 and ends August 14, so this is within his availability."
+                            r"\b(this|that|it) (is|falls|fits|lies) (well )?(within|inside) (his|surya'?s|the stored) (availability|dates|window)\b|"
                             # a reason that argues itself out of the hold (Mastercard, 2026-10-23: "... Actually requirements are
                             # exposure, not strict. ... continue not park")
                             r"\bcontinue,? (and )?not park\b|\bnot strict\b|\bshould not park\b|"
