@@ -67,6 +67,17 @@ def _posting_locations(job: dict) -> list[str]:
     return posting_locations(job)
 
 
+def _resume_line(job: dict) -> str:
+    """The résumé this job attaches. Before the prefill uploads it the run's job carries none, and the brief said 'None':
+    Texas Instruments and Westinghouse were held 'the job brief provides no résumé file to upload' (2026-10-25)."""
+    if job.get("resume_file"):
+        return str(job["resume_file"])
+    from ..gate import job_resume_name
+    name = job_resume_name(job)
+    return (f"{name} (not attached yet in this run: upload_resume puts it in the Resume/CV slot; the harness holds the file)"
+            if name else "none configured for this job")
+
+
 def job_brief(job: dict, attempt_history: list[str]) -> str:
     lines = [
         "JOB",
@@ -75,7 +86,7 @@ def job_brief(job: dict, attempt_history: list[str]) -> str:
         f"portal: {job.get('ats')}  lane: {job.get('lane')}",
         f"posting: {job.get('url')}",
         f"posting locations: {'; '.join(_posting_locations(job)) or 'not listed'}",
-        f"resume file to attach: {job.get('resume_file')}",
+        f"resume file to attach: {_resume_line(job)}",
         f"attempt: {job.get('attempts', 0) + 1}",
     ]
     if attempt_history:
