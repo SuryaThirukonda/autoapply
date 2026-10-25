@@ -27,6 +27,9 @@ from .advisor import Advisor
 from .prompts import INSTRUCTIONS, answers_block, job_brief
 from .tools import FUNCTION_TOOLS, RunContext, ToolDispatcher, _answer_rows_for_prompt
 
+# a 1x1 white PNG: what the model is shown when the page cannot be captured (it can still take a snapshot)
+BLANK_PNG_URL = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=")
+
 # Form pages one attempt may pass through before it is held as stuck (TIAA finished in 15 pages, C&S Wholesale in 26 after
 # many trips back; at about 30 s a page, 40 pages is some 20 minutes).
 PAGE_CYCLE_LIMIT = 40
@@ -139,8 +142,17 @@ class AgentLoop:
         blocks.append({"role": "developer", "content": [{"type": "input_text", "text": job_brief(self.ctx.job, attempt_history)}]})
         return blocks
 
+    async def _shot_url(self) -> str:
+        """The page's screenshot for the model, or a blank image when both captures time out: Hy-Vee's Workday page timed
+        out the capture after a click and the run ended as 'error: Page.screenshot' (2026-10-25)."""
+        try:
+            return await self.ctx.ex.screenshot_data_url()
+        except Exception as e:  # noqa: BLE001
+            db.event(self.ctx.job_id, "screenshot:failed", {"shot": "model", "error": f"{type(e).__name__}: {e}"[:200]})
+            return BLANK_PNG_URL
+
     async def _screenshot_output(self, call_id: str, acks: list[dict]) -> dict:
-        data_url = await self.ctx.ex.screenshot_data_url()
+        data_url = await self._shot_url()
         out: dict = {"type": "computer_call_output", "call_id": call_id,
                      "output": {"type": "computer_screenshot", "image_url": data_url}}
         if self.detail:
@@ -266,7 +278,7 @@ class AgentLoop:
                     produced_tool = True
                     self.items.append({"role": "user", "content": [
                         {"type": "input_text", "text": "The page as it looks now (computer tool calls must carry an action)."},
-                        {"type": "input_image", "image_url": await ctx.ex.screenshot_data_url(), "detail": self.detail or "auto"}]})
+                        {"type": "input_image", "image_url": await self._shot_url(), "detail": self.detail or "auto"}]})
                     continue
                 if typ == "computer_call":
                     produced_tool = True
@@ -287,7 +299,7 @@ class AgentLoop:
                         # The screenshot above was the old tab: show the one it is on now.
                         self.items.append({"role": "user", "content": [
                             {"type": "input_text", "text": note},
-                            {"type": "input_image", "image_url": await ctx.ex.screenshot_data_url(), "detail": self.detail or "auto"}]})
+                            {"type": "input_image", "image_url": await self._shot_url(), "detail": self.detail or "auto"}]})
                 elif typ == "function_call":
                     produced_tool = True
                     page_before = ctx.page_no
