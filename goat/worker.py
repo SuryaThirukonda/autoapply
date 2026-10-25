@@ -603,8 +603,13 @@ async def run_job(job: dict, *, shadow_override: bool | None = None) -> RunOutco
             with db.tx() as con:
                 moved = archive_decisions(con, job_id)
             db.event(job_id, "decisions:archived", {"why": "released draft re-opened", "moved": moved})
-        png = await ex.screenshot_png()
-        records.save_screenshot(job_id, png, "opened")
+        # the opening screenshot is a record, not a step: LabCorp's Workday page timed out both captures and the run ended
+        # as 'error: Page.screenshot' before it filled anything (2026-10-25)
+        try:
+            png = await ex.screenshot_png()
+            records.save_screenshot(job_id, png, "opened")
+        except Exception as e:  # noqa: BLE001
+            db.event(job_id, "screenshot:failed", {"shot": "opened", "error": f"{type(e).__name__}: {e}"[:200]})
         # The posting text decides conditional answers (relocation at own expense: Yes only when pay is listed).
         try:
             ctx.posting_text = await ex.page_text(40000)
