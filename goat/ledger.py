@@ -119,6 +119,39 @@ def same_posting(title: str, url: str, other_title: str, other_url: str, *, same
     return same_key or (bool(lt) and loose_title(other_title) == lt)
 
 
+_TEST_BOARD = re.compile(r"^(test|sandbox|staging|demo)[a-z0-9-]*$")
+
+
+def board_slug(url: str) -> str:
+    """The employer's board name in a Greenhouse / Lever / Ashby link ('nisc' in job-boards.greenhouse.io/nisc/jobs/1)."""
+    host, _, rest = url_key(url).partition("/")
+    if _GREENHOUSE_HOST.match(host) or host in ("jobs.lever.co", "jobs.ashbyhq.com"):
+        return rest.split("/")[0]
+    return ""
+
+
+def on_test_board(url: str) -> bool:
+    """A board named test / sandbox / staging / demo: an employer's copy of its real board (NISC's 'testnisc', 2026-10-24)."""
+    slug = board_slug(url)
+    return bool(slug) and bool(_TEST_BOARD.match(slug))
+
+
+def company_aliases(name: str, url: str = "") -> set[str]:
+    """The keys one employer goes by: its company_key, an acronym it gives in parentheses, and its board name. 'NISC' and
+    'National Information Solutions Cooperative (NISC)' were two employers, and its cybersecurity internship was applied to
+    twice (2026-10-24)."""
+    out = {company_key(name)}
+    for inner in re.findall(r"\(([^)]+)\)", name or ""):
+        k = "".join(re.findall(r"[a-z0-9]+", inner.lower()))
+        if len(k) >= 3:
+            out.add(k)
+    slug = re.sub(r"^(test|sandbox|staging|demo)", "", board_slug(url))
+    slug = re.sub(r"[^a-z0-9]", "", slug)
+    if len(slug) >= 3:
+        out.add(slug)
+    return {k for k in out if k}
+
+
 def already_applied(company: str, title: str, url: str) -> bool:
     """The same posting is in the ledger: its link, its posting id, or the same company and title unless both links
     carry posting ids that differ. Two postings of one company that share a title but name different ids are
@@ -132,13 +165,18 @@ def already_applied(company: str, title: str, url: str) -> bool:
     rows = con.execute("SELECT key, company, title, url FROM applied_keys").fetchall()
     if pk and pk != uk and any(posting_key(row["url"] or "") == pk for row in rows):
         return True
-    ck = company_key(company)
-    if not ck:
+    mine = company_aliases(company, url)
+    if not mine:
         return False
     exact_c = f"c:{norm(company)}|{norm(title)}" if norm(title) else None
+    lt = loose_title(title)
     for row in rows:
-        if company_key(row["company"]) == ck and same_posting(title, url, row["title"] or "", row["url"] or "",
-                                                              same_key=bool(exact_c) and row["key"] == exact_c):
+        if not (company_aliases(row["company"], row["url"] or "") & mine):
+            continue
+        if same_posting(title, url, row["title"] or "", row["url"] or "", same_key=bool(exact_c) and row["key"] == exact_c):
+            return True
+        # a test board's copy of a posting carries its own id: the same title is the same job
+        if (on_test_board(url) or on_test_board(row["url"] or "")) and lt and loose_title(row["title"] or "") == lt:
             return True
     return False
 

@@ -76,3 +76,20 @@ def test_one_greenhouse_posting_under_both_its_links_and_a_shorter_company_name(
     assert ledger.company_key("Anduril Industries") == ledger.company_key("Anduril") == "anduril"
     assert ledger.company_key("The Aerospace Corporation") == "aerospace"
     assert ledger.company_key("Texas Instruments") != ledger.company_key("Texas")
+
+
+def test_an_acronym_company_and_its_test_board_copy_are_one_application(tmp_path):
+    """NISC (Greenhouse, 2026-10-24): 'Intern - Information Security (Cybersecurity)' was applied to on its real board (nisc,
+    job 8191724, company 'NISC') and again on its test board (testnisc, job 8191987, company 'National Information Solutions
+    Cooperative (NISC)'): the company keys differed and the ids differed."""
+    from goat import db
+    db.reset_for_tests(tmp_path / "t.db")
+    ledger.record_application("L1", "NISC", "Intern - Information Security (Cybersecurity)",
+                              "https://job-boards.greenhouse.io/nisc/jobs/8191724", "goat")
+    assert ledger.already_applied("National Information Solutions Cooperative (NISC)", "Intern - Information Security (Cybersecurity)",
+                                  "https://job-boards.greenhouse.io/testnisc/jobs/8191987")
+    assert ledger.company_aliases("National Information Solutions Cooperative (NISC)", "") >= {"nisc"}
+    assert ledger.on_test_board("https://job-boards.greenhouse.io/testnisc/jobs/8191987")
+    assert not ledger.on_test_board("https://job-boards.greenhouse.io/nisc/jobs/8191724")
+    # a different role at the same employer is still its own application
+    assert not ledger.already_applied("NISC", "Intern - Software Developer", "https://job-boards.greenhouse.io/nisc/jobs/8191999")
