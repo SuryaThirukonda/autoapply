@@ -219,3 +219,16 @@ async def test_public_employment_is_never_derived(kb):
                                   "field_type": "dropdown", "ref": "e15"}])
     assert not out.get("auto_answered") and len(out["asked"]) == 1
     assert answers.lookup(q) is None
+
+
+async def test_a_pick_from_the_employers_own_list_holds_for_that_employer_only(kb):
+    """Equifax (2026-10-25): 'Are you currently attending one of the following schools?' (Kennesaw State ... Other) was
+    derived as 'Other' and saved for every employer, ready for a list that names Texas A&M."""
+    d, _ = _d(kb, {"meaning": "which listed school he attends", "verdict": "derived", "key": None, "answer": "Other",
+                   "evidence": "Texas A&M University, College Station", "confidence": 0.95})
+    q = "Are you currently attending one of the following schools?"
+    out, _ = await d.t_lookup_answer(q, ["Kennesaw State University", "Georgia Institute of Technology", "Other"], None, None)
+    assert out.get("answer") == "Other"
+    key = answers.key_from_question(q)
+    assert answers.get(key, "Acme") is not None and answers.get(key, "Acme").scope == "company"
+    assert answers.get(key, "Some Other Employer") is None

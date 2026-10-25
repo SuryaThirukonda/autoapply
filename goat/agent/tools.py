@@ -768,6 +768,10 @@ JS_ATTACHED_FILES = r"""() => {
 }"""
 
 
+LISTED_CHOICES = re.compile(r"\b(one|any|which|each) of the (following|listed|below)\b|\bthe following (schools|universities|"
+                            r"colleges|programs|locations|events|organizations)\b|\blisted (below|above)\b", re.I)
+
+
 WHOLE_DATE = re.compile(r"\d{1,4}\s*[/.-]\s*\d{1,2}(\s*[/.-]\s*\d{1,4})?|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d", re.I)
 JS_IS_DATE_SECTION = r"""(ref) => {
   const el = document.querySelector('[data-goat-ref="' + ref + '"]');
@@ -3960,9 +3964,14 @@ class ToolDispatcher:
                 if bare:
                     key = f"{key}.job{self.ctx.job_id}"
                 existing = answers.get(key, company, portal)
+                # a pick from this employer's own list ('one of the following schools': Kennesaw State ... Other) holds for
+                # that list only: Equifax's 'Other' was saved for every employer, ready for a list that names Texas A&M
+                # (2026-10-25)
+                listed = bool(LISTED_CHOICES.search(question))
                 if val and not (existing is not None and existing.scope == "company"):
                     answers.save_answer(key, val, answer_type="choice" if opts else "text", source="derived",
                                         source_ref=f"job:{self.ctx.job_id}",
+                                        scope="company" if listed else "global", scope_value=company if listed else "",
                                         note=f"{str(out.get('meaning') or '')[:120]} | evidence: {evidence[:240]}",
                                         aliases=[] if bare else [question])
                     db.event(self.ctx.job_id, "answer:derived", {"key": key, "question": question[:200], "answer": val[:200],
