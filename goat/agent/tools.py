@@ -751,6 +751,23 @@ JS_DELETE_LANGUAGE_BLOCK = """(ref) => { const el = document.querySelector('[dat
 _OTHER_LANGUAGES = re.compile(r"\b(chinese|mandarin|spanish|french|german|hindi|japanese|korean|portuguese|dutch|arabic|italian|russian)\b", re.I)
 
 
+_STATE_PREFIX = re.compile(r"^\s*[A-Z]{2}\s*-\s*")
+_CAMPUS_SUFFIX = re.compile(r"^(.*?)\s*(?:[-–—,]+|\()\s*([A-Za-z .']+?)\)?\s*$")
+
+
+def campus_wording_of(shown: str, wants: list[str]) -> bool:
+    """A school list's wording of a wanted school: a state prefix ('TX-') and a campus his profile names ('-College
+    Station') set aside. Another campus ('-Commerce', '-Corpus Christi') never matches."""
+    s = _STATE_PREFIX.sub("", shown or "").strip()
+    wanted = {answers.norm(w) for w in wants if w}
+    if answers.norm(s) in wanted:
+        return True
+    m = _CAMPUS_SUFFIX.match(s)
+    if not m or answers.norm(m.group(1)) not in wanted:
+        return False
+    return answers.norm(m.group(2)) in answers.norm(profile.text())
+
+
 def no_english_offered(label: str, error: str) -> bool:
     """A Language picker whose options (named in the failed choose's error) list other languages and no English."""
     return bool(re.match(r"\s*language\b", label or "", re.I)) and bool(_OTHER_LANGUAGES.search(error or "")) \
@@ -1791,6 +1808,10 @@ class ToolDispatcher:
                     db.event(self.ctx.job_id, "page:hung", {"after": name})
                     raise Parked(f"portal_error: the page stopped responding after the {name} call (it no longer runs any "
                                  "script); a rerun opens it fresh", "hold")
+                if name == "choose" and args.get("ref"):
+                    after = await self._after_choose_timeout(args)
+                    if after is not None:
+                        return json.dumps(after, default=str), None
                 return json.dumps({"error": f"the {name} call did not finish within {int(self.tool_timeout_s(name))} s and was stopped. "
                                             "Take a snapshot; if the page is stuck, reload it with tabs action 'reload' and continue."}), None
             ok = not (isinstance(out, dict) and out.get("error"))
@@ -1808,6 +1829,35 @@ class ToolDispatcher:
             log.exception("tool %s failed", name)
             db.event(self.ctx.job_id, f"tool:{name}:error", {"args": args, "error": str(e)[:400]})
             return json.dumps({"error": f"{type(e).__name__}: {str(e)[:300]}"}), None
+
+    async def _after_choose_timeout(self, args: dict) -> dict | None:
+        """A Workday school picker can make its pick and then hold choose until the tool timeout. Allegion and Sun Life were
+        submitted with a school no decision recorded (2026-10-23/25). Read the field: a pick that matches the wanted options
+        is recorded through choose's own already-shown path; any other value goes back to the model by name."""
+        ref = str(args.get("ref"))
+        try:
+            info = await asyncio.wait_for(self.ctx.ex.read_ref(ref), 10)
+        except Exception:  # noqa: BLE001 - the generic timeout message still applies
+            return None
+        shown = str((info or {}).get("shown") or (info or {}).get("value") or "").strip()
+        if not shown or fill.PLACEHOLDER.match(shown):
+            return None
+        wants = [str(o) for o in (args.get("options") or []) if o]
+        if wants and (fill._chip_matches(shown, wants) or fill.best_option([{"text": shown}], wants) is not None
+                      or campus_wording_of(shown, wants)):
+            try:
+                out, _ = await asyncio.wait_for(self.t_choose(ref, args.get("answer_key"), [shown] + wants,
+                                                              str(args.get("label") or ""), args.get("source")), 30)
+            except Exception as e:  # noqa: BLE001 - fall through to the named-value message
+                out = {"error": f"{type(e).__name__}"}
+            if isinstance(out, dict) and out.get("status") in ("set", "kept"):
+                db.event(self.ctx.job_id, "choose:recovered", {"ref": ref, "shown": shown})
+                return {**out, "note": f"the picker was slow but the field holds '{shown}', the wanted option: recorded. Continue."}
+        db.event(self.ctx.job_id, "choose:unrecorded", {"ref": ref, "shown": shown})
+        return {"ref": ref, "status": "failed", "readback": shown,
+                "error": f"the choose call did not finish and was stopped; the field now shows '{shown}', which no decision "
+                         "records. If that is the stored answer in this portal's wording, call choose again with that exact "
+                         "text first in options; otherwise clear the field and choose again."}
 
     async def _page_answers(self, timeout_s: float = 5.0) -> bool:
         """The job's page still runs a one-line script (a hung renderer answers nothing)."""
