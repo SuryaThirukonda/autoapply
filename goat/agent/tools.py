@@ -3007,7 +3007,10 @@ class ToolDispatcher:
         if variants and variants.has_value:
             wants += [w.strip() for w in str(variants.answer).split(";") if w.strip()]
         ok = bool(shown) and (fill.best_option([{"text": shown}], wants) is not None
-                              or any(answers.norm(w) and answers.norm(w) in answers.norm(shown) for w in wants))
+                              or any(answers.norm(w) and answers.norm(w) in answers.norm(shown) for w in wants)
+                              # a pay band that holds his figure: Northmarq's '$40,000 - $50,000 ($19.23 - $24.04)' for 41600
+                              # was refused and the run asked Surya to tick it himself (2026-10-24)
+                              or (key.startswith("compensation.") and fill.money_band_holds(shown, wants)))
         if not ok and typ in ("checkbox", "radio"):
             # an option that words his Yes / No in its own terms (Eightfold's profile-use consent)
             kp = key_option_polarity(key, shown)

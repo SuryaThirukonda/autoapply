@@ -84,3 +84,36 @@ async def test_the_race_chain_ticks_a_separate_decline_box_not_his_fallback(stor
         assert await ex.page.is_checked("#nd")
     finally:
         await ex.close(close_browser=True)
+
+
+PAY_BANDS = """<!doctype html><html><body style="margin:20px"><form>
+<fieldset><legend>What is your desired salary range? (You may select a maximum of 2)</legend>
+<label><input type="checkbox" id="b0"> Commission</label><br>
+<label><input type="checkbox" id="b1"> $40,000 - $50,000 ($19.23 - $24.04)</label><br>
+<label><input type="checkbox" id="b2"> $50,000 - $60,000 ($24.04 - $28.85)</label>
+</fieldset></form></body></html>"""
+
+
+@pytest.mark.asyncio
+async def test_a_hand_ticked_pay_band_that_holds_his_figure_is_kept(store, tmp_path):
+    """Northmarq (2026-10-24): '$40,000 - $50,000 ($19.23 - $24.04)' ticked with the computer tool for compensation.desired_annual
+    (41600) was refused as not saying '41600', and the run asked Surya to tick it himself."""
+    from goat.browser.executor import Executor, HostPolicy
+    answers.save_answer("compensation.desired_annual", "41600", answer_type="text", source="questionnaire")
+    page = tmp_path / "pay.html"
+    page.write_text(PAY_BANDS, encoding="utf-8")
+    url = page.resolve().as_uri()
+    ex = Executor(policy=HostPolicy([url]))
+    await ex.start_launched(headless=True)
+    try:
+        await ex.new_page(); ex.policy.hosts.add(""); await ex.page.goto(url); await ex.settle(quiet_ms=100)
+        await ex.page.check("#b1")
+        d, ctx = _dispatcher(_job())
+        ctx.ex = ex
+        ctx.last_snapshot = await snapshot.take(ex)
+        ref = next(o["ref"] for g in ctx.last_snapshot.groups for o in g["options"] if "40,000" in o["label"])
+        out, _ = await d.t_fill_batch([{"ref": ref, "answer_key": "compensation.desired_annual", "value": None,
+                                        "source": "computer", "label": "Desired salary range"}])
+        assert out["results"][0]["status"] == "kept", out
+    finally:
+        await ex.close(close_browser=True)

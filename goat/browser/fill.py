@@ -836,6 +836,16 @@ def money_option(options: list[dict], wants: list[str]) -> dict | None:
     return None
 
 
+def money_band_holds(text: str, wants: list[str]) -> bool:
+    """One pay band ('$40,000 - $50,000 ($19.23 - $24.04)') holds his yearly figure (the first want, '41600')."""
+    m = re.fullmatch(r"\s*\$?\s*(\d{1,3}(?:,\d{3})+|\d{4,7})(?:\.\d+)?\s*", (wants or [""])[0] or "")
+    b = _money_bucket(text or "")
+    if not m or b is None:
+        return False
+    annual = float(m.group(1).replace(",", ""))
+    return annual >= 1000 and b[0] <= annual <= b[1]
+
+
 _PROFICIENCY_SCALE = ["native", "bilingual", "mother tongue", "fluent", "expert", "superior", "distinguished", "advanced",
                       "proficient", "full professional", "professional", "upper intermediate", "intermediate", "conversational",
                       "working", "limited", "elementary", "basic", "beginner", "novice"]
