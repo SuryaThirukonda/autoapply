@@ -405,3 +405,11 @@ def test_the_judge_counts_retained_by_the_government_under_the_default_no():
     relating to GDIT?' = No was failed as unsupported."""
     from goat import judge
     assert "retained by the U.S. Government on a matter relating to it" in judge.FACT_CHECK_INSTRUCTIONS
+
+
+def test_a_certificate_date_is_not_read_as_a_citizenship_date():
+    """Westinghouse (2026-10-25): 'Date Obtained 1' under Professional Certifications & Licenses held his AWS certificate's
+    06/26/2026 and the judge failed it as a citizenship date."""
+    from goat.judge import FACT_CHECK_INSTRUCTIONS, JUDGE_INSTRUCTIONS
+    text = JUDGE_INSTRUCTIONS + FACT_CHECK_INSTRUCTIONS
+    assert "background.certification_" in text and "no citizenship date" in text
