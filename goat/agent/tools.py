@@ -2321,7 +2321,10 @@ class ToolDispatcher:
                             continue
                         item = sibling
                         f = {**f, "ref": sibling["ref"]}
-                    f = {**f, "value": "true", "_force_true": True}
+                    # a toggle takes the whole stored answer: Westinghouse's SuccessFactors Yes/No radios were sent with
+                    # source 'part' and 'true' was then refused as no part of 'Yes' (2026-10-25)
+                    f = {**f, "value": "true", "_force_true": True,
+                         "source": None if (f.get("source") or "").lower() == "part" else f.get("source")}
                     if item.get("group") and answers.norm(item.get("group") or "") != answers.norm(item.get("label") or ""):
                         f["label"] = f"{item.get('group')[:80]} / {item.get('label') or ''}"
             if is_choice and not f.get("answer_key") and (f.get("source") or "").lower() == "generated":

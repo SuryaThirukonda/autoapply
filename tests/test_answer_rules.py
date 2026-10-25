@@ -1082,6 +1082,32 @@ async def test_a_ranked_chain_presses_the_first_offered_toggle(store, monkeypatc
     assert pressed == ["e22"], pressed
 
 
+@pytest.mark.asyncio
+async def test_a_yes_no_toggle_sent_with_source_part_takes_the_whole_answer(store, monkeypatch):
+    """Westinghouse (SuccessFactors, 2026-10-25): its Yes/No radios were sent with source 'part' and value 'Yes'; the toggle
+    path set 'true', which was refused as no part of the stored 'Yes', and the run held over unselected radios."""
+    from goat.browser.snapshot import Snapshot
+    d, ctx = _dispatcher({"id": 25, "company": "Westinghouse", "ats": "successfactors"})
+    g = "Are you 18 years of age or older?"
+    items = [{"ref": "e147", "tag": "toggle", "label": "Yes", "group": g, "pressed": False},
+             {"ref": "e148", "tag": "toggle", "label": "No", "group": g, "pressed": False}]
+    snap = Snapshot(url="u", title="t", headings=[], items=items, groups=[], errors={}, challenge={})
+    for i in items:
+        snap.refs[i["ref"]] = i
+    ctx.last_snapshot = snap
+    pressed = []
+
+    async def fake_fill(ex, plan):
+        from goat.browser.fill import FieldResult
+        pressed.extend(p["ref"] for p in plan)
+        return [FieldResult(p["ref"], True, "pressed", "") for p in plan]
+    import goat.browser.fill as fillmod
+    monkeypatch.setattr(fillmod, "fill_batch", fake_fill)
+    answers.save_answer("identity.age_18_plus", "Yes", answer_type="text", source="questionnaire")
+    out, _ = await d.t_fill_batch([{"ref": "e147", "answer_key": "identity.age_18_plus", "value": "Yes", "source": "part", "label": "18 or older"}])
+    assert pressed == ["e147"], out
+
+
 
 @pytest.mark.asyncio
 async def test_a_certification_is_never_picked_without_his_certification_key(store):
