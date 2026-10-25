@@ -2910,6 +2910,17 @@ class ToolDispatcher:
                 note = None
             if note:
                 out = {**out, "note": note}
+        if answer_key and answer_key.startswith("background.certification") and self.ctx.portal == "oracle" \
+                and isinstance(out, dict) and out.get("status") == "failed":
+            # BNY's Oracle 'License or Certificate' list does not offer his AWS Certified Cloud Practitioner: the open entry
+            # form blocked the page and the run held (2026-10-25). Certificates are optional: the entry goes.
+            host = re.sub(r"^https?://([^/]+).*$", r"\1", self.ctx.ex.url or "").lower()
+            db.event(self.ctx.job_id, "cert:unavailable", {"host": host, "portal": "oracle"})
+            self.ctx.control_failures["cert:unavailable"] = 1
+            out = {**out, "note": ("this tenant's License or Certificate list does not offer his AWS Certified Cloud Practitioner. "
+                                   "Certificates are optional: press this entry form's Cancel (or delete the empty license "
+                                   "entry), do not add a license or certificate again, and never pick another certificate in "
+                                   "its place. Then continue to submit.")}
         return out, img
 
     def _cert_unavailable(self) -> bool:
