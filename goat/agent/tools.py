@@ -5484,7 +5484,10 @@ class ToolDispatcher:
                              "by graduation. A junior-or-senior rule includes him. Continue the application."}, None
         # A skill or technology the posting asks for is no eligibility rule (Motorola, 2026-10-20: "requires Android Studio and
         # Android SDK knowledge, which is not in Surya's stored profile"): he applies, and his résumé shows what he has.
-        if low.startswith("eligibility") and self.SKILL_ONLY.search(reason) and not self.HARD_REQUIREMENT.search(reason) \
+        # a requirement the reason itself calls met is no hard requirement: Booz Allen's 'degree by Summer 2028 or 2029
+        # (satisfied); however ... lacks cybersecurity/OSI/virtualization experience' was held on the skill (2026-10-25)
+        unmet = re.sub(r"[^;,.]*\((?:satisfied|met|he meets it|meets it)\)[^;,.]*", " ", reason, flags=re.I)
+        if low.startswith("eligibility") and self.SKILL_ONLY.search(unmet) and not self.HARD_REQUIREMENT.search(unmet) \
                 and not self.DISQUALIFIERS.search(non_grad) and self.ctx.control_failures.get("park:skill_eligibility", 0) < 2:
             self.ctx.control_failures["park:skill_eligibility"] = self.ctx.control_failures.get("park:skill_eligibility", 0) + 1
             db.event(self.ctx.job_id, "park:bounced", {"reason": reason[:200], "eligibility": "skill only"})

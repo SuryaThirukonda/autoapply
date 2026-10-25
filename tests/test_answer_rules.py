@@ -1359,6 +1359,31 @@ async def test_a_skill_the_posting_wants_is_not_an_eligibility_hold(store):
     assert ToolDispatcher.HARD_REQUIREMENT.search("eligibility: requires enrollment in a Master's program")
 
 
+@pytest.mark.asyncio
+async def test_a_skill_hold_beside_a_met_requirement_is_bounced(store):
+    """Booz Allen (2026-10-25): the degree clause the reason called satisfied kept the skill-only hold standing."""
+    d, ctx = _dispatcher(_job("Booz Allen", "BA1"))
+
+    async def page_text(n=0):
+        return "Summer Games Cyber Security Intern Apply"
+    ctx.ex.page_text = page_text
+    out, _ = await d.t_park("eligibility: posting requires scheduled Bachelor’s degree by Summer 2028 or 2029 (satisfied); "
+                            "however job is cyber security and profile lacks cybersecurity/OSI/virtualization experience?")
+    assert "not an eligibility rule" in out["error"]
+
+
+@pytest.mark.asyncio
+async def test_an_unmet_degree_rule_still_stands_beside_a_skill(store):
+    d, ctx = _dispatcher(_job("Booz Allen", "BA2"))
+
+    async def page_text(n=0):
+        return "Cyber Security Intern Apply"
+    ctx.ex.page_text = page_text
+    from goat.budget import Parked
+    with pytest.raises(Parked):
+        await d.t_park("eligibility: requires a degree by December 2026 and experience with Splunk")
+
+
 
 @pytest.mark.asyncio
 async def test_a_basis_of_authorization_change_question_is_no_for_a_citizen(store):
